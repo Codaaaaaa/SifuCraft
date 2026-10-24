@@ -14,11 +14,15 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
 /** An invisible target whose position, dimensions and life belong to Sifu. No independent AI. */
 public final class EnemyProxy extends Mob {
+    private boolean capturingDamage;
+    private float capturedDamage;
     private static final EntityDataAccessor<Integer> SIFU_ID = SynchedEntityData.defineId(EnemyProxy.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> SPAWN = SynchedEntityData.defineId(EnemyProxy.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Float> WIDTH = SynchedEntityData.defineId(EnemyProxy.class, EntityDataSerializers.FLOAT);
@@ -85,6 +89,34 @@ public final class EnemyProxy extends Mob {
     @Override public boolean isPushable() { return false; }
     @Override public boolean canBeCollidedWith(Entity other) { return false; }
 
-    // S1 deliberately has no damage path. S2 will route Minecraft's resolved damage to Sifu.
-    @Override public boolean hurtServer(ServerLevel level, DamageSource source, float amount) { return false; }
+    @Override public boolean hurtServer(ServerLevel level, DamageSource source, float amount) {
+        if (!(source.getEntity() instanceof Player attacker) ||
+                (source.getDirectEntity() != attacker && !(source.getDirectEntity() instanceof Projectile)) ||
+                !Float.isFinite(amount) || amount <= 0 || !CombatHits.canCapture(this)) return false;
+        return super.hurtServer(level, source, amount);
+    }
+
+    @Override protected void actuallyHurt(ServerLevel level, DamageSource source, float amount) {
+        capturedDamage = 0;
+        capturingDamage = true;
+        try { super.actuallyHurt(level, source, amount); }
+        finally { capturingDamage = false; }
+        if (capturedDamage > 0) CombatHits.record(this, source, capturedDamage);
+    }
+
+    @Override public void setHealth(float value) {
+        if (capturingDamage && Float.isFinite(value)) {
+            // Vanilla passes before-health minus its fully resolved damage here, before clamping
+            // to zero. Capture overkill too, while keeping this mirror out of MC's death path.
+            capturedDamage += Math.max(0, getHealth() - value);
+            super.setHealth(Math.max(Math.min(1, getMaxHealth()), value));
+        } else super.setHealth(value);
+    }
+
+    @Override public void knockback(double strength, double x, double z, DamageSource source, float damage, boolean extra) {
+        CombatHits.knockback(this, strength, extra);
+    }
+    @Override public void knockback(double strength, double x, double z, DamageSource source, float damage) {
+        knockback(strength, x, z, source, damage, false);
+    }
 }

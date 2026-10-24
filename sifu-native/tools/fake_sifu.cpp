@@ -4,7 +4,7 @@
 //   sifucraft_fake_sifu [seconds] [--collision <grid.scvx>] [--pawn X Y Z [--yaw DEG] [--hand-over]]
 //                       [--key CODE:FROM:TO]... [--button CODE:FROM:TO]... [--mouse DX:DY:AT]...
 //                       [--then AT X Y Z DEG]...
-//                       [--enemies | --enemy-scenario]
+//                       [--enemies | --enemy-scenario | --combat-scenario]
 //     seconds: 0 or omitted = run until Ctrl+C
 //     --collision: also publish that grid file in the CollisionManifest, as the game does
 //     --pawn: a pawn standing still at (X, Y, Z) (Unreal cm, capsule centre) in the grid's map
@@ -15,6 +15,7 @@
 //     --mouse: move the mouse by (DX, DY) pixels AT ms after that (+DY looks down)
 //     --then: AT ms after that, move the pawn to (X, Y, Z) facing DEG and hand it over again
 //             (next anchor epoch): several test runs in one Minecraft session
+//     --combat-scenario: two static test targets; validate damage events and reply with fake HP
 
 #include <windows.h>
 
@@ -30,6 +31,7 @@
 #include <vector>
 
 #include "bridge/sifu_bridge.h"
+#include "combat/damage_ledger.h"
 #include "core/log.h"
 
 namespace {
@@ -150,7 +152,7 @@ int main(int argc, char** argv) {
     StandingPawn pawn;
     std::vector<HeldKey> keys;
     std::vector<PawnMove> moves;
-    bool with_enemies = false, enemy_scenario = false;
+    bool with_enemies = false, enemy_scenario = false, combat_scenario = false;
     struct MouseMove {
         double dx = 0, dy = 0;
         std::uint64_t at_ms = 0;
@@ -197,6 +199,8 @@ int main(int argc, char** argv) {
             with_enemies = true;
         } else if (std::strcmp(argv[i], "--enemy-scenario") == 0) {
             with_enemies = enemy_scenario = true;
+        } else if (std::strcmp(argv[i], "--combat-scenario") == 0) {
+            with_enemies = combat_scenario = true;
         } else {
             seconds = std::atof(argv[i]);
         }
@@ -231,6 +235,10 @@ int main(int argc, char** argv) {
     std::uint32_t blocks_seen = 0;
     ULONGLONG enemies_ready_at = 0;
     int enemy_phase_seen = -1;
+    float enemy_health[2] = {1000, 1000};
+    combat::DamageLedger damage_ledger;
+    std::vector<protocol::Event> damage_events;
+    unsigned applied_damage = 0;
     const ULONGLONG begin = GetTickCount64();
     for (std::uint64_t tick = 1; !g_stop; ++tick) {
         Sleep(kTickMs);
@@ -238,6 +246,7 @@ int main(int argc, char** argv) {
         const double elapsed = (now - begin) / 1000.0;
         if (seconds > 0 && elapsed >= seconds) break;
         bridge::PlayerFrame frame = pawn.enabled ? StandingFrame(pawn) : SyntheticFrame(elapsed);
+        if (combat_scenario) frame.world_path = "/SifuCraft/Test/" + pawn.map + "." + pawn.map;
         if (with_enemies && !enemies_ready_at && bridge.peer_connected() &&
             (bridge.peer_state().flags & protocol::kMcReady)) enemies_ready_at = now;
         // Start the phase clock in Minecraft's world, so client startup cannot skip the test.
@@ -253,10 +262,43 @@ int main(int argc, char** argv) {
             }
         }
         bridge.Tick(frame, now);
+        bridge.DrainEnemyDamage(&damage_events);
+        damage_ledger.SetSession(bridge.peer_connected() ? bridge.peer_session() : 0);
+        for (const auto& event : damage_events) {
+            protocol::EnemyDamagePayload damage;
+            std::memcpy(&damage, event.payload, sizeof(damage));
+            protocol::DamageResultPayload result{event.id, damage.enemy_id, damage.spawn,
+                static_cast<std::uint32_t>(protocol::DamageOutcome::Stale), 0, 0, damage.world_generation};
+            const auto claim = damage_ledger.Begin(event.source_session, event.id, &result);
+            if (claim == combat::DamageLedger::Claim::Fresh) {
+                if (!combat::ValidDamage(damage)) result.result = static_cast<std::uint32_t>(protocol::DamageOutcome::Invalid);
+                else if (frame.input_owner != protocol::InputOwner::Minecraft || damage.anchor_epoch != frame.anchor_epoch) {
+                    result.result = static_cast<std::uint32_t>(protocol::DamageOutcome::NotOwned);
+                } else if (combat_scenario && damage.world_generation == frame.world_generation && damage.spawn == 1 &&
+                           damage.enemy_id >= 101 && damage.enemy_id <= 102) {
+                    auto& hp = enemy_health[damage.enemy_id - 101];
+                    result.result = static_cast<std::uint32_t>(hp > 0 ? protocol::DamageOutcome::Applied : protocol::DamageOutcome::Dead);
+                    if (hp > 0) {
+                        result.sifu_damage = std::min(hp, damage.mc_damage * protocol::kSifuHpPerMcHp);
+                        hp -= result.sifu_damage;
+                        ++applied_damage;
+                    }
+                    result.health_after = hp;
+                }
+                damage_ledger.Complete(event.source_session, event.id, result);
+            }
+            if (claim == combat::DamageLedger::Claim::Fresh || claim == combat::DamageLedger::Claim::Cached) {
+                bridge.SendDamageResult(result);
+                SC_LOG("[fake] damage event=%llu enemy=%u/%u mc=%.3f flags=%u stun=%.3f result=%u lost=%.3f HP=%.3f applications=%u",
+                       static_cast<unsigned long long>(event.id), damage.enemy_id, damage.spawn, damage.mc_damage,
+                       damage.flags, damage.stun_hint, result.result, result.sifu_damage, result.health_after, applied_damage);
+            }
+        }
         if (with_enemies) {
             std::vector<protocol::EnemyEntry> enemies;
             if (phase != 3) {
                 for (std::uint32_t id = 101; id <= (phase == 1 || phase == 2 ? 101u : 102u); ++id) {
+                    if (combat_scenario && enemy_health[id - 101] <= 0) continue;
                     const float angle = static_cast<float>(elapsed * 0.5 + id);
                     // Resize an existing activation too: this exercises dimension synchronization,
                     // separately from replacing an entity when its spawn generation changes.
@@ -265,11 +307,13 @@ int main(int argc, char** argv) {
                     const float radius = resized ? 55.0f : id == 101 ? 35.0f : 45.0f;
                     const float half = resized ? 110.0f : 92.0f;
                     enemies.push_back({id, phase >= 2 ? 2u : 1u,
-                        {frame.player_location.x + 200 + 70 * std::cos(angle),
-                         frame.player_location.y + (id == 101 ? -100.0f : 100.0f) + 70 * std::sin(angle),
+                        {frame.player_location.x + (combat_scenario ? 180.0f : 200 + 70 * std::cos(angle)),
+                         frame.player_location.y + (combat_scenario ? (id == 101 ? 0.0f : 50.0f) :
+                            (id == 101 ? -100.0f : 100.0f) + 70 * std::sin(angle)),
                          frame.player_location.z + 2},
-                        180, radius, half, 60, 100, protocol::kEnemyAlive | protocol::kEnemyCanDie, 1,
-                        {-35 * std::sin(angle), 35 * std::cos(angle), 0}, 0});
+                        180, radius, half, combat_scenario ? enemy_health[id - 101] : 60,
+                        combat_scenario ? 1000.0f : 100.0f, protocol::kEnemyAlive | protocol::kEnemyCanDie, 1,
+                        {combat_scenario ? 0 : -35 * std::sin(angle), combat_scenario ? 0 : 35 * std::cos(angle), 0}, 0});
                 }
             }
             bridge.PublishEnemies(frame.world_generation, enemies);

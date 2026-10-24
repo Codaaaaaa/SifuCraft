@@ -9,7 +9,7 @@ public final class Protocol {
     private Protocol() {}
 
     public static final int MAGIC = 0x52434653; // "SFCR"
-    public static final int VERSION = 7;
+    public static final int VERSION = 8;
     public static final String MAPPING_NAME = "Local\\SifuCraft.Bridge";
     public static final int MAPPING_SIZE = 0x10000;
 
@@ -28,6 +28,20 @@ public final class Protocol {
     public static final int EVENT_KEY = 3;
     public static final int EVENT_MOUSE_BUTTON = 4;
     public static final int EVENT_OWNER_CHANGED = 5;
+    public static final int EVENT_ENEMY_DAMAGE = 6;
+    public static final int EVENT_DAMAGE_RESULT = 7;
+    public static final int DAMAGE_CRITICAL = 1;
+    public static final int DAMAGE_SWEEP = 1 << 1;
+    public static final int DAMAGE_PROJECTILE = 1 << 2;
+    public static final int DAMAGE_SMASH = 1 << 3;
+    public static final int DAMAGE_APPLIED = 0;
+    public static final int DAMAGE_DEAD = 1;
+    public static final int DAMAGE_INVINCIBLE = 2;
+    public static final int DAMAGE_STALE = 3;
+    public static final int DAMAGE_NOT_OWNED = 4;
+    public static final int DAMAGE_INVALID = 5;
+    public static final int DAMAGE_BUSY = 6;
+    public static final int DAMAGE_UNAVAILABLE = 7;
 
     public static final int OWNER_SIFU = 0;
     public static final int OWNER_MINECRAFT = 1;
@@ -194,6 +208,27 @@ public final class Protocol {
         public static final int MODIFIERS = 8;
     }
 
+    public static final class EnemyDamage {
+        public static final int SIZE = 32;
+        public static final int ENEMY_ID = 0;
+        public static final int SPAWN = 4;
+        public static final int MC_DAMAGE = 8;
+        public static final int STUN_HINT = 12;
+        public static final int FLAGS = 16;
+        public static final int WORLD_GENERATION = 20;
+        public static final int ANCHOR_EPOCH = 24;
+    }
+    public static final class DamageResult {
+        public static final int SIZE = 32;
+        public static final int EVENT_ID = 0;
+        public static final int ENEMY_ID = 8;
+        public static final int SPAWN = 12;
+        public static final int RESULT = 16;
+        public static final int SIFU_DAMAGE = 20;
+        public static final int HEALTH_AFTER = 24;
+        public static final int WORLD_GENERATION = 28;
+    }
+
     /** Single-producer single-consumer event ring. */
     public static final class Ring {
         public static final int WRITE_INDEX = 0;
@@ -283,6 +318,20 @@ public final class Protocol {
         Enemies.FLAGS,
         Enemies.FACTION,
         Enemies.VELOCITY,
+        EnemyDamage.SIZE,
+        EnemyDamage.ENEMY_ID,
+        EnemyDamage.MC_DAMAGE,
+        EnemyDamage.STUN_HINT,
+        EnemyDamage.FLAGS,
+        EnemyDamage.WORLD_GENERATION,
+        EnemyDamage.ANCHOR_EPOCH,
+        DamageResult.SIZE,
+        DamageResult.EVENT_ID,
+        DamageResult.ENEMY_ID,
+        DamageResult.RESULT,
+        DamageResult.SIFU_DAMAGE,
+        DamageResult.HEALTH_AFTER,
+        DamageResult.WORLD_GENERATION,
     };
 
     public static final long LAYOUT_HASH = layoutHash();

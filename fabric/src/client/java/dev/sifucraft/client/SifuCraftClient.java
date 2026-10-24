@@ -12,6 +12,8 @@ import dev.sifucraft.collision.SifuCollision;
 import dev.sifucraft.combat.EnemyEntities;
 import dev.sifucraft.combat.EnemyMirrors;
 import dev.sifucraft.combat.EnemyProxy;
+import dev.sifucraft.combat.CombatHits;
+import dev.sifucraft.bridge.DamageResult;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
@@ -66,7 +68,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private static final long RESCUE_COOLDOWN_MS = 1000;
 
     private static final Item[] DEV_HOTBAR = {Items.STONE, Items.GRASS_BLOCK, Items.DIRT,
-            Items.OAK_LOG, Items.OAK_PLANKS, Items.COBBLESTONE, Items.BRICKS, Items.GLOWSTONE, Items.CRAFTING_TABLE};
+            Items.OAK_LOG, Items.OAK_PLANKS, Items.COBBLESTONE, Items.BRICKS, Items.GLOWSTONE, Items.IRON_SWORD};
 
     private static volatile SifuCraftClient instance;
 
@@ -99,6 +101,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         minecraft = Minecraft.getInstance();
         input = new InputInjector(minecraft);
         bridge = new McBridge(new McBridge.Listener() {
+            @Override public void onDamageResult(DamageResult result) { CombatHits.result(result); }
             @Override
             public void log(String message) {
                 LOG.info("[bridge] {}", message);
@@ -146,6 +149,10 @@ public final class SifuCraftClient implements ClientModInitializer {
                 message -> LOG.info("[blocks] {}", message)));
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> PlacedBlocks.close());
         ServerTickEvents.END_SERVER_TICK.register(server -> PlacedBlocks.saveIfDirty());
+        if (Boolean.getBoolean("sifucraft.combatSelfTest")) {
+            CombatCheck check = new CombatCheck();
+            ServerTickEvents.END_SERVER_TICK.register(check::tick);
+        }
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
             collision.close();
             bridge.close();
@@ -192,6 +199,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         bridge.tick(now, currentState(previous));
         SifuFrame frame = bridge.latest();
         publishEnemies(frame);
+        CombatHits.pump(bridge);
         if (frame == null) space.reset();
         input.setOwner(frame != null && frame.minecraftOwnsInput());
         input.applyMotion(frame);
@@ -278,8 +286,9 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerPlayer onServer = server.getPlayerList().getPlayer(id);
             if (onServer == null) return;
             for (int slot = 0; slot < DEV_HOTBAR.length; slot++) {
-                if (onServer.getInventory().getItem(slot).isEmpty()) {
-                    onServer.getInventory().setItem(slot, new ItemStack(DEV_HOTBAR[slot], 64));
+                ItemStack current = onServer.getInventory().getItem(slot);
+                if (current.isEmpty() || (slot == 8 && current.is(Items.CRAFTING_TABLE))) {
+                    onServer.getInventory().setItem(slot, new ItemStack(DEV_HOTBAR[slot], slot == 8 ? 1 : 64));
                 }
             }
         });

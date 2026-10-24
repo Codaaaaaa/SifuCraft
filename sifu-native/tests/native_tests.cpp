@@ -12,6 +12,7 @@
 
 #include "collision/shape_file.h"
 #include "combat/activation_tracker.h"
+#include "combat/damage_ledger.h"
 #include "collision/voxels.h"
 #include "collision/walk_check.h"
 #include "core/build_guard.h"
@@ -632,6 +633,33 @@ void TestEnemyIdentity() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    {
+        using namespace sifucraft;
+        combat::DamageLedger ledger;
+        ledger.SetSession(10);
+        protocol::DamageResultPayload result{1, 42, 9, 0, 54, 6, 3}, cached{};
+        using Claim = combat::DamageLedger::Claim;
+        Expect(ledger.Begin(10, 1, &cached) == Claim::Fresh && ledger.Begin(10, 1, &cached) == Claim::Pending,
+               "damage ledger applies a command once while pending");
+        ledger.Complete(10, 1, result);
+        Expect(ledger.Begin(10, 1, &cached) == Claim::Cached && cached.sifu_damage == 54 && cached.health_after == 6,
+               "damage ledger replays the result, not the damage");
+        for (std::uint64_t id = 2; id < 300; ++id) ledger.Begin(10, id, &cached);
+        Expect(ledger.Begin(10, 1, &cached) == Claim::TooOld && ledger.Begin(10, 0, &cached) == Claim::TooOld,
+               "eviction and reordered old IDs never permit damage replay");
+        Expect(ledger.Begin(11, 1, &cached) == Claim::WrongSession, "damage ledger refuses a foreign session");
+        ledger.SetSession(11);
+        Expect(ledger.Begin(11, 1, &cached) == Claim::Fresh && ledger.Begin(10, 300, &cached) == Claim::WrongSession,
+               "a new session may restart IDs without accepting old-session damage");
+        protocol::EnemyDamagePayload valid{42, 9, 6, 0.25f, 0, 3, 1, 0};
+        Expect(combat::ValidDamage(valid), "combat accepts a finite scoped damage payload");
+        auto bad = valid; bad.mc_damage = NAN;
+        Expect(!combat::ValidDamage(bad), "combat refuses non-finite damage");
+        bad = valid; bad.anchor_epoch = 0;
+        Expect(!combat::ValidDamage(bad), "combat refuses an unanchored damage payload");
+        bad = valid; bad.flags = 16;
+        Expect(!combat::ValidDamage(bad), "combat refuses unknown damage flags");
+    }
     TestGuardedReads();
     TestBuildGuard();
     TestVtableHook();

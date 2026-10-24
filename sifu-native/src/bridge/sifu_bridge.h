@@ -95,6 +95,8 @@ public:
     void PublishCollision(const CollisionInfo& info);
     // Replaces the whole nearby-enemy table (Sifu owns enemy state). Runtime thread only.
     void PublishEnemies(std::uint32_t world_generation, const std::vector<protocol::EnemyEntry>& entries);
+    void DrainEnemyDamage(std::vector<protocol::Event>* events);
+    bool SendDamageResult(const protocol::DamageResultPayload& result);
     const McState& peer_state() const { return peer_state_; }
     // The latest consistent block table; kept while Minecraft is away (its world keeps the blocks).
     const BlockList& blocks() const { return blocks_; }
@@ -102,6 +104,7 @@ public:
     bool started() const { return self_ != nullptr; }
     bool peer_connected() const { return peer_connected_; }
     std::uint32_t peer_pid() const { return peer_pid_; }
+    std::uint64_t peer_session() const { return peer_session_; }
     std::uint64_t session() const { return session_; }
     std::uint64_t frame() const { return frame_; }
     const BridgeStats& stats() const { return stats_; }
@@ -149,6 +152,7 @@ private:
     std::uint64_t block_seq_ = 0;
     BlockList blocks_;
     BridgeStats stats_;
+    std::vector<protocol::Event> damage_events_;
 };
 
 }  // namespace sifucraft::bridge

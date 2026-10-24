@@ -45,6 +45,7 @@ struct PoseOverride {
 void SetPoseOverride(const PoseOverride& pose, const std::vector<std::uintptr_t>& impostors);
 // H1, H5 and the reflected pose functions are all in place.
 bool PoseHooksReady();
+bool PoseActive();
 // Frames in a row on which Sifu itself moved the pawn after our pose write (0 when idle).
 std::uint32_t ConsecutiveDisplacements();
 

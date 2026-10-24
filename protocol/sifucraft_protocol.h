@@ -26,7 +26,7 @@ namespace sifucraft::protocol {
 
 inline constexpr std::uint32_t kMagic = 0x52434653;  // "SFCR"
 // The name carries no version so that mismatched builds see each other and report INCOMPATIBLE.
-inline constexpr std::uint32_t kVersion = 7;
+inline constexpr std::uint32_t kVersion = 8;
 inline constexpr wchar_t kMappingName[] = L"Local\\SifuCraft.Bridge";
 inline constexpr std::uint32_t kMappingSize = 0x10000;
 
@@ -49,6 +49,8 @@ enum class EventType : std::uint32_t {
     Key = 3,           // Sifu -> Minecraft, InputPayload (code = SDL scancode)
     MouseButton = 4,   // Sifu -> Minecraft, InputPayload (code = SDL mouse button)
     OwnerChanged = 5,  // Sifu -> Minecraft, OwnerPayload
+    EnemyDamage = 6,   // Minecraft -> Sifu, EnemyDamagePayload
+    DamageResult = 7,  // Sifu -> Minecraft, DamageResultPayload
 };
 
 // Who receives the player's keyboard and mouse.
@@ -227,6 +229,34 @@ struct OwnerPayload {
     std::uint32_t reserved;
 };
 
+inline constexpr std::uint32_t kDamageCritical = 1u << 0;
+inline constexpr std::uint32_t kDamageSweep = 1u << 1;
+inline constexpr std::uint32_t kDamageProjectile = 1u << 2;
+inline constexpr std::uint32_t kDamageSmash = 1u << 3;
+
+struct EnemyDamagePayload {
+    std::uint32_t enemy_id, spawn;
+    float mc_damage;
+    float stun_hint;
+    std::uint32_t flags;
+    std::uint32_t world_generation;
+    std::uint32_t anchor_epoch;
+    std::uint32_t reserved;
+};
+
+enum class DamageOutcome : std::uint32_t {
+    Applied = 0, Dead = 1, Invincible = 2, Stale = 3, NotOwned = 4, Invalid = 5, Busy = 6, Unavailable = 7,
+};
+
+struct DamageResultPayload {
+    std::uint64_t event_id;     // EnemyDamage being answered, within the Minecraft source session
+    std::uint32_t enemy_id, spawn;
+    std::uint32_t result;       // DamageOutcome
+    float sifu_damage;          // observed health loss; may differ from requested damage
+    float health_after;
+    std::uint32_t world_generation;
+};
+
 struct Event {
     std::uint64_t id;              // strictly increasing per source session, starting at 1
     std::uint64_t source_session;
@@ -275,6 +305,8 @@ static_assert(offsetof(CollisionManifest, path) == 96);
 static_assert(sizeof(BlockEntry) == 16 && offsetof(BlockTable, map) == 16 && offsetof(BlockTable, entries) == 128);
 static_assert(offsetof(BlockTable, palette_generation) == 80);
 static_assert(sizeof(PingPayload) == 16 && sizeof(InputPayload) == 16 && sizeof(OwnerPayload) == 8);
+static_assert(sizeof(EnemyDamagePayload) == 32 && offsetof(EnemyDamagePayload, world_generation) == 20);
+static_assert(sizeof(DamageResultPayload) == 32 && offsetof(DamageResultPayload, health_after) == 24);
 static_assert(sizeof(Event) == 0x40 && offsetof(Event, payload) == 32);
 static_assert(offsetof(EventRing, read_index) == 64 && offsetof(EventRing, slots) == 128);
 static_assert(sizeof(EventRing) == 0x80 + kRingCapacity * sizeof(Event));
@@ -369,6 +401,20 @@ inline constexpr std::uint32_t kLayoutTable[] = {
     offsetof(EnemyEntry, flags),
     offsetof(EnemyEntry, faction),
     offsetof(EnemyEntry, velocity),
+    sizeof(EnemyDamagePayload),
+    offsetof(EnemyDamagePayload, enemy_id),
+    offsetof(EnemyDamagePayload, mc_damage),
+    offsetof(EnemyDamagePayload, stun_hint),
+    offsetof(EnemyDamagePayload, flags),
+    offsetof(EnemyDamagePayload, world_generation),
+    offsetof(EnemyDamagePayload, anchor_epoch),
+    sizeof(DamageResultPayload),
+    offsetof(DamageResultPayload, event_id),
+    offsetof(DamageResultPayload, enemy_id),
+    offsetof(DamageResultPayload, result),
+    offsetof(DamageResultPayload, sifu_damage),
+    offsetof(DamageResultPayload, health_after),
+    offsetof(DamageResultPayload, world_generation),
 };
 
 // FNV-1a 64 over each table entry as 4 little-endian bytes.

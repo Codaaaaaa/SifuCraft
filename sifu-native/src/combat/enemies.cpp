@@ -68,6 +68,7 @@ void Enemies::Update(std::uintptr_t world, std::uint32_t generation, std::uintpt
         next_scan_ms_ = 0;
     }
     entries_.clear();
+    targets_.clear();
     if (!world || !ue::IsLive(pawn)) return;
     if (!fighting_class_) fighting_class_ = ue::FindClass("FightingCharacter");
     if (!health_class_) health_class_ = ue::FindClass("CharacterHealthComponent");
@@ -131,6 +132,7 @@ void Enemies::Update(std::uintptr_t world, std::uint32_t generation, std::uintpt
             (health.can_be_damaged ? 0 : protocol::kEnemyInvincible) | (health.can_die ? protocol::kEnemyCanDie : 0);
         entries_.push_back({id, spawn, {location.x, location.y, location.z}, rotation.yaw, radius, half,
             health.health, max_health, flags, faction, {velocity.x, velocity.y, velocity.z}, 0});
+        targets_.push_back({id, spawn, actor, candidate.identity});
     }
     const auto distance = [&](const protocol::EnemyEntry& e) {
         const float dx = e.location.x - player_location.x, dy = e.location.y - player_location.y;
@@ -142,6 +144,9 @@ void Enemies::Update(std::uintptr_t world, std::uint32_t generation, std::uintpt
         return da != db ? da < db : a.id < b.id;
     });
     if (entries_.size() > protocol::kMaxEnemies) entries_.resize(protocol::kMaxEnemies);
+    std::erase_if(targets_, [&](const Target& target) {
+        return std::none_of(entries_.begin(), entries_.end(), [&](const auto& e) { return e.id == target.id; });
+    });
 }
 
 std::string Enemies::TakeStats() {

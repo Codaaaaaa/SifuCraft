@@ -23,6 +23,7 @@ loom {
 			property "sifucraft.devWorld", "true"
 			property "sifucraft.hideWindow", providers.gradleProperty("sifucraft.hideWindow").getOrElse("true")
 			property "sifucraft.exitWithSifu", "true"
+			property "sifucraft.combatSelfTest", providers.gradleProperty("sifucraft.combatSelfTest").getOrElse("false")
 		}
 	}
 }

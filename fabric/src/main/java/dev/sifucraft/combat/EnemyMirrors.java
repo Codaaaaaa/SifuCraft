@@ -24,13 +24,30 @@ public final class EnemyMirrors {
     private static int loggedDetails;
 
     private EnemyMirrors() {}
-    private record View(EnemyFrame enemies, MapPlacement placement) {}
+    private record View(EnemyFrame enemies, MapPlacement placement, SifuFrame player) {}
 
     /** Called on the bridge/client thread. A mismatch immediately removes the old world's targets. */
     public static void offer(SifuFrame frame, EnemyFrame enemies, MapPlacement placement) {
         requested = frame != null && frame.hasPawn() && enemies != null && placement != null &&
                 enemies.worldGeneration() != 0 && enemies.worldGeneration() == frame.worldGeneration()
-                ? new View(enemies, placement) : null;
+                ? new View(enemies, placement, frame) : null;
+    }
+
+    /** Server thread: only a current proxy under MC ownership can produce a damage command. */
+    public static CombatHits.Scope damageScope(EnemyProxy proxy) {
+        View view = requested;
+        if (view == null || !view.player.minecraftOwnsInput() || view.player.anchorEpoch() == 0 ||
+                System.currentTimeMillis() - view.enemies.receivedMs() > STALE_MS ||
+                session != view.enemies.session() || world != view.enemies.worldGeneration() ||
+                proxies.get(proxy.sifuKey()) != proxy) return null;
+        return new CombatHits.Scope(session, world, view.player.anchorEpoch());
+    }
+
+    public static EnemyProxy testTarget(int id) {
+        View view = requested;
+        if (view == null || !view.player.worldPath().startsWith("/SifuCraft/Test/")) return null;
+        for (var entry : proxies.entrySet()) if (entry.getKey().id() == id) return entry.getValue();
+        return null;
     }
 
     public static void tick(MinecraftServer server) {

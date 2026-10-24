@@ -7,6 +7,7 @@
 #include <unordered_map>
 
 #include "blocks/block_mirror.h"
+#include "combat/damage.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "generated/sifu_build.g.h"
@@ -280,6 +281,7 @@ void EngineTickHook(void* engine, float delta_seconds, bool idle_mode) {
     g_frames.window_ticks.fetch_add(1, std::memory_order_relaxed);
     if (g_stage >= 5) ApplyPose();
     if (g_stage >= 6) blocks::ApplyOnGameThread(g_image_base);
+    if (g_stage >= 7) combat::damage::ApplyOnGameThread(g_image_base);
     g_engine_tick.original<EngineTickFn>()(engine, delta_seconds, idle_mode);
 }
 
@@ -565,6 +567,7 @@ void InstallPlayerHooks() {
 std::uint32_t ConsecutiveDisplacements() { return g_consecutive_displacements.load(std::memory_order_relaxed); }
 
 bool PoseHooksReady() { return g_pose_calls_ready.load() && g_movement_tick.installed() && g_engine_tick.installed(); }
+bool PoseActive() { return g_pose_active.load(std::memory_order_relaxed); }
 
 void SetPoseOverride(const PoseOverride& pose, const std::vector<std::uintptr_t>& impostors) {
     AcquireSRWLockExclusive(&g_pose_lock);

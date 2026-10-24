@@ -221,6 +221,10 @@ void SifuBridge::PumpEvents() {
                 Send(EventType::Pong, &ping, sizeof(ping));
                 break;
             }
+            case EventType::EnemyDamage:
+                if (peer_connected_ && event.size == sizeof(EnemyDamagePayload)) damage_events_.push_back(event);
+                else ++stats_.events_unknown;
+                break;
             default:
                 ++stats_.events_unknown;
                 break;
@@ -228,6 +232,15 @@ void SifuBridge::PumpEvents() {
     }
     Atomic(ring.acked_id).store(last_id, std::memory_order_relaxed);
     Atomic(ring.read_index).store(read, std::memory_order_release);
+}
+
+void SifuBridge::DrainEnemyDamage(std::vector<Event>* events) {
+    events->clear();
+    events->swap(damage_events_);
+}
+
+bool SifuBridge::SendDamageResult(const DamageResultPayload& result) {
+    return self_ && peer_connected_ && Send(EventType::DamageResult, &result, sizeof(result));
 }
 
 bool SifuBridge::Send(EventType type, const void* payload, std::uint32_t size) {

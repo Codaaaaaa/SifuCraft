@@ -46,6 +46,7 @@ public final class McBridge implements AutoCloseable {
 
         /** The Sifu peer connected, or went away for {@code reason} (e.g. "peer closing"). */
         default void onPeerConnection(boolean connected, String reason) {}
+        default void onDamageResult(DamageResult result) {}
     }
 
     /** Counters; read them from the bridge thread. */
@@ -211,6 +212,16 @@ public final class McBridge implements AutoCloseable {
         return true;
     }
 
+    /** Bridge thread only; zero means not published, so this request may be tried later. */
+    public long sendEnemyDamage(int enemyId, int spawn, float damage, float stun, int flags, int world, int epoch) {
+        if (mapping == null || !peerConnected) return 0;
+        byte[] bytes = new byte[Protocol.EnemyDamage.SIZE];
+        var b = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        b.putInt(enemyId).putInt(spawn).putFloat(damage).putFloat(stun).putInt(flags).putInt(world).putInt(epoch).putInt(0);
+        long id = nextEventId;
+        return send(Protocol.EVENT_ENEMY_DAMAGE, MemorySegment.ofArray(bytes)) ? id : 0;
+    }
+
     /** Tells Sifu we are going away. Safe to call from a shutdown hook. */
     public void markClosing() {
         MemorySegment status = self;
@@ -247,6 +258,7 @@ public final class McBridge implements AutoCloseable {
     public long session() {
         return session;
     }
+    public long peerSession() { return peerSession; }
 
     /** The grid Sifu currently publishes; {@link CollisionManifest#NONE} while none or no Sifu. */
     public CollisionManifest collisionManifest() {
@@ -425,6 +437,20 @@ public final class McBridge implements AutoCloseable {
                     }
                 }
                 case Protocol.EVENT_OWNER_CHANGED -> listener.onOwnerChanged(incoming.get(JAVA_INT, payload));
+                case Protocol.EVENT_DAMAGE_RESULT -> {
+                    if (incoming.get(JAVA_INT, slot + Event.PAYLOAD_SIZE) != Protocol.DamageResult.SIZE) {
+                        stats.eventsUnknown++;
+                        break;
+                    }
+                    listener.onDamageResult(new DamageResult(
+                            incoming.get(JAVA_LONG, payload + Protocol.DamageResult.EVENT_ID),
+                            incoming.get(JAVA_INT, payload + Protocol.DamageResult.ENEMY_ID),
+                            incoming.get(JAVA_INT, payload + Protocol.DamageResult.SPAWN),
+                            incoming.get(JAVA_INT, payload + Protocol.DamageResult.RESULT),
+                            incoming.get(JAVA_FLOAT, payload + Protocol.DamageResult.SIFU_DAMAGE),
+                            incoming.get(JAVA_FLOAT, payload + Protocol.DamageResult.HEALTH_AFTER),
+                            incoming.get(JAVA_INT, payload + Protocol.DamageResult.WORLD_GENERATION)));
+                }
                 default -> stats.eventsUnknown++;
             }
         }

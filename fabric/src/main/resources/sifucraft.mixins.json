@@ -6,7 +6,8 @@
 		"BlockCollisionsMixin",
 		"BlockItemMixin",
 		"EntityMixin",
-		"LevelMixin"
+		"LevelMixin",
+		"PlayerAttackMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
