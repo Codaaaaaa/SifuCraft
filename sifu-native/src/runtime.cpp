@@ -1,4 +1,5 @@
 #include "runtime.h"
+#include "render/overlay.h"
 
 #include <windows.h>
 #include <psapi.h>
@@ -695,6 +696,15 @@ void Run(std::uintptr_t image_base) {
             if (world) hooks::camera_fade::Resolve();
         }
         if (settings.stage >= 5) UpdatePoseOverride(player.pawn, frame.capsule_half_height, ownership.epoch(), generation);
+        if (settings.stage >= 8) {
+            render::Scope scope;
+            scope.mc_session = g_bridge.peer_connected() ? g_bridge.peer_session() : 0;
+            scope.sifu_session = g_bridge.session();
+            scope.world = generation; scope.epoch = ownership.epoch(); scope.updated_ms = GetTickCount64();
+            scope.enabled = g_bridge.peer_connected() && frame.input_owner == InputOwner::Minecraft &&
+                hooks::PoseActive() && McAnchoredTo(ownership.epoch(), generation);
+            render::Maintain(image_base, scope);
+        }
         if (settings.stage >= 7) {
             combat::damage::InstallObserver(image_base, player.pawn);
             combat::player_hits::InstallObserver(image_base, player.pawn);
@@ -769,11 +779,12 @@ void Run(std::uintptr_t image_base) {
             if (settings.stage >= 7) SC_LOG("[combat] enemies %s", enemies.TakeStats().c_str());
             if (settings.stage >= 7) SC_LOG("[combat] %s", combat::damage::TakeStats().c_str());
             if (settings.stage >= 7) SC_LOG("[player-hits] %s", combat::player_hits::TakeStats().c_str());
+            if (settings.stage >= 8) SC_LOG("[overlay] %s", render::TakeStats().c_str());
             collision_schedule.FlushCheck();
         }
     }
 }
 
-void OnProcessExit() { g_bridge.MarkClosing(); }
+void OnProcessExit() { render::OnProcessExit(); g_bridge.MarkClosing(); }
 
 }  // namespace sifucraft::runtime

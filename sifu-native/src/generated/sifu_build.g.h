@@ -15,9 +15,19 @@ inline constexpr std::uintptr_t GWorld = 0x5EC09E8;
 inline constexpr std::uintptr_t GEngine = 0x5EBD0E8;
 inline constexpr std::uintptr_t GUObjectArray = 0x5D8A1A0;
 inline constexpr std::uintptr_t NamePoolData = 0x5D71C00;
+inline constexpr std::uintptr_t GD3D11RHI = 0x5D98E78;
+inline constexpr std::uintptr_t GDynamicRHI = 0x5E602C0;
 }  // namespace rva
 
 namespace off {
+namespace FD3D11DynamicRHI {
+inline constexpr std::uint32_t Viewports = 0x2690;
+}
+namespace FD3D11Viewport {
+inline constexpr std::uint32_t WindowHandle = 0x40;
+inline constexpr std::uint32_t SwapChain = 0x70;
+inline constexpr std::uint32_t PixelColorSpace = 0x64;
+}
 namespace UObjectBase {
 inline constexpr std::uint32_t ObjectFlags = 0x8;
 inline constexpr std::uint32_t InternalIndex = 0xC;
@@ -509,6 +519,12 @@ inline constexpr Target InternalApplyDamage{"InternalApplyDamage", 0x4897AC0, 0x
 }  // namespace hook
 
 namespace value {
+namespace EColorSpaceAndEOTF {
+inline constexpr std::int32_t EUnknown = 0;
+inline constexpr std::int32_t ERec709_sRGB = 33;
+inline constexpr std::int32_t ERec709_Linear = 17;
+inline constexpr std::int32_t ERec2020_PQ = 50;
+}
 namespace EFactionsEnums {
 inline constexpr std::int32_t TMP_Neutral = 5;
 inline constexpr std::int32_t Count = 6;

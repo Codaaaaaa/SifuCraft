@@ -79,6 +79,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private McBridge bridge;
     private InputInjector input;
     private final OverlayCapture overlay = new OverlayCapture();
+    private boolean crosshair;
     private CollisionLoader collision;
     private final UnrealSpace space = new UnrealSpace();
     private final RespawnHandshake respawn = new RespawnHandshake();
@@ -196,6 +197,10 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (client != null && client.overlay.enabled()) client.overlay.render(client.minecraft, client.overlayScope());
     }
 
+    public static void beginGuiFrame() { if (instance != null) instance.crosshair = false; }
+    public static void markCrosshair() { if (instance != null) instance.crosshair = true; }
+    static boolean hasCrosshair() { return instance != null && instance.crosshair; }
+
     private OverlayCapture.Scope overlayScope() {
         SifuFrame frame = bridge.latest();
         if (!bridge.peerConnected() || frame == null || !frame.minecraftOwnsInput() ||
@@ -239,6 +244,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (frame == null) space.reset();
         input.setOwner(frame != null && frame.minecraftOwnsInput() && respawn.ready());
         input.applyMotion(frame);
+        overlay.updateViewport(minecraft);
         if (now >= nextStatusMs) {
             nextStatusMs = now + STATUS_EVERY_MS;
             logStatus(frame);

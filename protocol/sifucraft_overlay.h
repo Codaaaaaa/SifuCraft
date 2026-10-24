@@ -8,7 +8,7 @@
 namespace sifucraft::overlay {
 
 inline constexpr std::uint32_t kMagic = 0x564F4653; // SFOV
-inline constexpr std::uint32_t kVersion = 1;
+inline constexpr std::uint32_t kVersion = 2;
 inline constexpr std::uint32_t kMaxWidth = 1920;
 inline constexpr std::uint32_t kMaxHeight = 1080;
 inline constexpr std::uint32_t kSlots = 3;
@@ -25,14 +25,16 @@ enum State : std::uint32_t { Free = 0, Writing = 1, Ready = 2, Reading = 3 };
 
 struct Header {
     std::uint32_t magic, version, mapping_bytes, max_width, max_height, slot_bytes, slots, format;
-    std::uint64_t mc_session, sifu_session, layout_hash, reserved;
+    std::uint64_t mc_session, sifu_session, layout_hash;
+    std::uint64_t viewport; // Sifu writes (width << 32) | height atomically, after magic is ready
 };
 
 struct FrameHeader {
     std::uint32_t state, width, height, stride;
     std::uint64_t frame_id;
     std::uint32_t world_generation, anchor_epoch, flags, payload_bytes;
-    std::uint8_t reserved[24];
+    std::uint32_t invert_left, invert_top, invert_right, invert_bottom; // top-down source pixels; zero = none
+    std::uint32_t gui_scale, reserved;
 };
 
 static_assert(sizeof(Header) == 64 && sizeof(FrameHeader) == 64);
@@ -42,7 +44,7 @@ static_assert(offsetof(FrameHeader, frame_id) == 16 && offsetof(FrameHeader, pay
 inline constexpr std::uint32_t kLayout[] = {
     kMagic, kVersion, kMaxWidth, kMaxHeight, kSlots, kSlotBytes, kMappingBytes, kRgba8,
     sizeof(Header), sizeof(FrameHeader), 0, 4, 8, 12, 16, 24, 28, 32, 36,
-    Free, Writing, Ready, Reading, kPremultiplied, kBottomUp
+    Free, Writing, Ready, Reading, kPremultiplied, kBottomUp, 40, 44, 48, 52, 56, 56
 };
 inline constexpr std::uint64_t kLayoutHash = [] {
     std::uint64_t hash = 14695981039346656037ull;
@@ -57,7 +59,9 @@ inline bool ValidFrame(const FrameHeader& frame) {
     return frame.width > 0 && frame.width <= kMaxWidth && frame.height > 0 && frame.height <= kMaxHeight &&
         frame.stride == frame.width * 4 && frame.payload_bytes == frame.stride * frame.height &&
         frame.frame_id != 0 && frame.world_generation != 0 && frame.anchor_epoch != 0 &&
-        (frame.flags & kPremultiplied) && !(frame.flags & ~(kPremultiplied | kBottomUp));
+        (frame.flags & kPremultiplied) && !(frame.flags & ~(kPremultiplied | kBottomUp)) &&
+        frame.invert_left <= frame.invert_right && frame.invert_right <= frame.width &&
+        frame.invert_top <= frame.invert_bottom && frame.invert_bottom <= frame.height && frame.gui_scale <= 16;
 }
 
 } // namespace sifucraft::overlay

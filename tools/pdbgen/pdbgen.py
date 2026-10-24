@@ -20,7 +20,7 @@ from pathlib import Path
 EXE_NAME = "Sifu-Win64-Shipping.exe"
 
 # Global variables whose RVA the native module reads.
-SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData"]
+SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData", "GD3D11RHI", "GDynamicRHI"]
 
 # Vtable hook plan: name -> (class whose vftable is patched, class that introduces the virtual,
 # method, implementation the slot must hold). Checked against the exe file here and against live
@@ -67,6 +67,8 @@ TYPE_ALIASES = {
 
 # type -> members. A member may live in a base class; its offset is then made absolute.
 MEMBERS = {
+    "FD3D11DynamicRHI": ["Viewports"],
+    "FD3D11Viewport": ["WindowHandle", "SwapChain", "PixelColorSpace"],
     # CoreUObject
     "UObjectBase": ["ObjectFlags", "InternalIndex", "ClassPrivate", "NamePrivate", "OuterPrivate"],
     "UStruct": ["SuperStruct", "Children", "ChildProperties", "PropertiesSize", "Script"],
@@ -180,6 +182,7 @@ BITFIELDS = {
 }
 
 ENUMS = {
+    "EColorSpaceAndEOTF": ["EUnknown", "ERec709_sRGB", "ERec709_Linear", "ERec2020_PQ"],
     "EFactionsEnums": ["TMP_Neutral", "Count"],
     "EGuardType": ["None", "Guard", "Deflect", "Count"],
     "EImpactType": ["Hit"],

@@ -22,6 +22,9 @@ set(SIFUCRAFT_BRIDGE_SOURCES
 add_library(sifucraft_native SHARED
     src/dllmain.cpp
     src/runtime.cpp
+    src/render/overlay.cpp
+    src/render/compositor.cpp
+    src/bridge/overlay_reader.cpp
     src/proxy/dsound_proxy.cpp
     src/proxy/dsound.def
     src/core/build_guard.cpp
@@ -64,6 +67,9 @@ set_target_properties(sifucraft_native PROPERTIES OUTPUT_NAME dsound PREFIX "")
 add_executable(sifucraft_fake_sifu tools/fake_sifu.cpp src/bridge/overlay_reader.cpp ${SIFUCRAFT_BRIDGE_SOURCES})
 add_executable(sifucraft_overlay_tests tests/overlay_tests.cpp src/bridge/overlay_reader.cpp src/bridge/shared_mapping.cpp)
 add_test(NAME overlay_tests COMMAND sifucraft_overlay_tests)
+add_executable(sifucraft_render_tests tests/render_tests.cpp src/render/compositor.cpp)
+target_link_libraries(sifucraft_render_tests PRIVATE d3d11 d3dcompiler dxgi dxguid)
+add_test(NAME render_tests COMMAND sifucraft_render_tests)
 
 # Re-runs the voxelization on shapes saved by the game and scores it against recorded walks.
 set(SIFUCRAFT_VOXEL_SOURCES
@@ -93,7 +99,7 @@ add_executable(sifucraft_native_tests
 add_dependencies(sifucraft_native_tests sifucraft_native)
 add_test(NAME native_tests COMMAND sifucraft_native_tests $<TARGET_FILE:sifucraft_native>)
 
-foreach(target sifucraft_native sifucraft_fake_sifu sifucraft_collision_replay sifucraft_native_tests sifucraft_overlay_tests)
+foreach(target sifucraft_native sifucraft_fake_sifu sifucraft_collision_replay sifucraft_native_tests sifucraft_overlay_tests sifucraft_render_tests)
     set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     target_include_directories(${target} PRIVATE ${SIFUCRAFT_INCLUDE_DIRS})
     target_compile_definitions(${target} PRIVATE ${SIFUCRAFT_COMMON_DEFINITIONS})
@@ -102,4 +108,4 @@ foreach(target sifucraft_native sifucraft_fake_sifu sifucraft_collision_replay s
     target_link_options(${target} PRIVATE -static -static-libgcc -static-libstdc++)
 endforeach()
 
-target_link_libraries(sifucraft_native PRIVATE psapi)
+target_link_libraries(sifucraft_native PRIVATE psapi d3d11 d3dcompiler dxgi dxguid)

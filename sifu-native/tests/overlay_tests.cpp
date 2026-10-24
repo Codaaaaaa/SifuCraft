@@ -16,7 +16,7 @@ FrameHeader* Slot(std::vector<std::uint8_t>& memory, int i) {
 }
 void Put(std::vector<std::uint8_t>& memory, int i, std::uint64_t id, std::uint32_t world = 3, std::uint32_t epoch = 4) {
     auto* slot = Slot(memory, i);
-    *slot = {Writing, 4, 2, 16, id, world, epoch, kPremultiplied | kBottomUp, 32, {}};
+    *slot = {Writing, 4, 2, 16, id, world, epoch, kPremultiplied | kBottomUp, 32, 0, 0, 0, 0, 0, 0};
     std::memset(reinterpret_cast<std::uint8_t*>(slot) + 64, static_cast<int>(id & 255), 32);
     std::atomic_ref(slot->state).store(Ready, std::memory_order_release);
 }
@@ -39,6 +39,8 @@ int main() {
     Check(!Consume(memory.data(), 1, 2, 3, 4, &last, &result), "reject oversized source before copying");
     Put(memory, 0, 13); Slot(memory, 0)->payload_bytes = kPixels + 1;
     Check(!Consume(memory.data(), 1, 2, 3, 4, &last, &result), "reject malformed stride and payload length");
+    Put(memory, 0, 14); Slot(memory, 0)->invert_right = 99;
+    Check(!Consume(memory.data(), 1, 2, 3, 4, &last, &result), "reject inverse bounds beyond the source texture");
     Put(memory, 0, 14); Slot(memory, 0)->state = Writing;
     Check(!Consume(memory.data(), 1, 2, 3, 4, &last, &result), "never inspect or free a writing slot");
     Check(Slot(memory, 0)->state == Writing, "producer ownership preserved");
@@ -56,7 +58,7 @@ int main() {
             auto state = std::atomic_ref(slot->state).load(std::memory_order_acquire);
             if ((state == Free || state == Ready) &&
                 std::atomic_ref(slot->state).compare_exchange_strong(state, Writing, std::memory_order_acquire)) {
-                const FrameHeader metadata{Writing, 4, 2, 16, id, 3, 4, kPremultiplied, 32, {}};
+                const FrameHeader metadata{Writing, 4, 2, 16, id, 3, 4, kPremultiplied, 32, 0, 0, 0, 0, 0, 0};
                 std::memcpy(reinterpret_cast<std::uint8_t*>(slot) + 4,
                             reinterpret_cast<const std::uint8_t*>(&metadata) + 4, sizeof(metadata) - 4);
                 std::memset(reinterpret_cast<std::uint8_t*>(slot) + 64, static_cast<int>(id & 255), 32);

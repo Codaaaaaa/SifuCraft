@@ -6,7 +6,7 @@ import java.util.Locale;
 public final class OverlayProtocol {
     private OverlayProtocol() {}
     public static final int MAGIC = 0x564F4653;
-    public static final int VERSION = 1;
+    public static final int VERSION = 2;
     public static final int MAX_WIDTH = 1920, MAX_HEIGHT = 1080, SLOTS = 3;
     public static final int SLOT_BYTES = 64 + MAX_WIDTH * MAX_HEIGHT * 4;
     public static final int MAPPING_BYTES = 64 + SLOTS * SLOT_BYTES;
@@ -15,7 +15,8 @@ public final class OverlayProtocol {
     public static final long LAYOUT_HASH;
     static {
         int[] values = {MAGIC, VERSION, MAX_WIDTH, MAX_HEIGHT, SLOTS, SLOT_BYTES, MAPPING_BYTES, RGBA8,
-                64, 64, 0, 4, 8, 12, 16, 24, 28, 32, 36, FREE, WRITING, READY, READING, PREMULTIPLIED, BOTTOM_UP};
+                64, 64, 0, 4, 8, 12, 16, 24, 28, 32, 36, FREE, WRITING, READY, READING, PREMULTIPLIED, BOTTOM_UP,
+                40, 44, 48, 52, 56, 56};
         long hash = 0xcbf29ce484222325L;
         for (int value : values) for (int shift = 0; shift < 32; shift += 8) {
             hash ^= (value >>> shift) & 255;

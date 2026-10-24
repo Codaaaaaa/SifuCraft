@@ -20,7 +20,7 @@ Sifu 与 Minecraft 作为两个独立进程运行：
 | P3 | Sifu 地形碰撞导入 Minecraft 物理 | 已通过 |
 | P4 | 方块放置/破坏的渲染与碰撞闭环 | 已通过 |
 | P5 | 敌人代理与双向伤害 | 已通过（武馆、第一关、跨图及 F8 实机验收） |
-| P6 | 核心物品系统与 GUI | S0 开发中：透明 HUD/手部帧导出；Sifu 渲染接入待确认 |
+| P6 | 核心物品系统与 GUI | S0 G2 显示已通过（手部 60 FPS）；后续物品步骤待开发 |
 
 ## 目录
 
@@ -63,7 +63,7 @@ Sifu 的玩家由 Minecraft 驱动：键鼠输入转给 Minecraft，Minecraft �
 
 Esc 永远交给 Sifu，F8 切换。每次交给 Minecraft 都是一个新的锚定纪元（anchor epoch），Minecraft 从角色当前所在位置和朝向继续，不会把角色拉回之前的位置。
 
-逐步上线由 `SifuCraft\stage`（0–7，6 = P4 方块，7 = P5 敌人代理与 MC 攻击转发）控制，`SifuCraft\no-hooks` 只保留只读探针，`SifuCraft\disabled` 完全停用。
+逐步上线由 `SifuCraft\stage`（0–8，6 = P4 方块，7 = P5 敌人代理与 MC 攻击转发，8 = P6 GUI 合成）控制，`SifuCraft\no-hooks` 只保留只读探针，`SifuCraft\disabled` 完全停用。
 
 P5 的只读普查在 stage 0 也可运行：日志中的 `[combat-census]` 检查命中/生命组件与候选 Hook 槽位、反射参数、胶囊尺寸及难度生命倍率，并采样生命与池化状态变化。它不安装战斗 Hook、不调用伤害函数；`last-hit` 是最近一次命中的采样，不能用于统计每次伤害的执行次数。
 
@@ -117,13 +117,19 @@ MC 位姿和重锚请求还绑定目标 Sifu 会话与世界代数；Sifu 重启
 
 `runClient -Psifucraft.overlay=true` 启用透明 HUD 与第一人称手部的异步 GPU 回读，默认关闭。
 图像通过独立的共享内存三缓冲传给原生读取端，使用 RGBA8、预乘 alpha，最高 1920×1080；
-`-Psifucraft.overlayFps=30` 控制回读频率（1–60）。映射绑定双方会话，每帧带地图代数与锚定纪元，切换后丢弃旧帧。
+`-Psifucraft.overlayFps=60` 控制回读频率（默认 60，范围 1–60）。映射绑定双方会话，每帧带地图代数与锚定纪元，切换后丢弃旧帧。
 
-目前实现的是帧导出与离线接收，Sifu 内合成仍待接入。背包输入和 Sifu 血条隐藏属于后续步骤。
+stage 8 在 Sifu 的 D3D11 Present 中合成 MC 图像；使用独立的 D3D11.1 状态对象隔离和恢复宿主渲染状态，
+支持 8 位及 10 位 SDR 后缓冲。MC 分辨率随 Sifu 视口调整（源图像上限 1080p），准星按最终背景反色。
+F8 交还、菜单、失去所有权或断线时停止绘制，旧帧最多复用 250 ms。背包输入和 Sifu 血条隐藏属于后续步骤。
 加载期间保持原版渲染；导出时跳过 MC 世界和暗角，保留原版 HUD/手部，且不修改暗角设置。
 离线验证可给 `sifucraft_fake_sifu.exe` 增加 `--overlay-output <输出.rgba>`：运行至少 30 帧后，
 保存一个 64 字节帧头及其 RGBA 像素，并检查透明背景与可见内容。格式定义在
 [protocol/sifucraft_overlay.h](protocol/sifucraft_overlay.h)，不改变现有 v12 游戏协议。
+
+调试控制文件位于游戏的 `SifuCraft` 目录：`overlay-off` 关闭并恢复 Present 槽，删除后重新安装；
+`overlay-pattern` 绘制一次诊断图并保存 `overlay-pattern.bmp`；`overlay-capture` 保存下一次合成到 `overlay.bmp`。
+日志前缀为 `[overlay]`。诊断文件用后自动移除；HDR/PQ 色彩空间暂不参与合成。
 
 ## Fabric Mod（Minecraft 26.3）
 

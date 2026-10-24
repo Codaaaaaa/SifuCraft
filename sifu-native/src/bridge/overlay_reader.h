@@ -25,6 +25,7 @@ public:
     bool Read(std::uint64_t mc_session, std::uint64_t sifu_session, std::uint32_t world,
               std::uint32_t epoch, Frame* frame);
     void Close();
+    void SetViewport(std::uint32_t width, std::uint32_t height);
 private:
     bridge::SharedMapping mapping_;
     std::uint64_t mc_session_ = 0, sifu_session_ = 0, last_id_ = 0;

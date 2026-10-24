@@ -10,6 +10,7 @@ import java.lang.invoke.VarHandle;
 /** Nonblocking latest-frame mailbox. Runs only on the Minecraft render thread. */
 public final class OverlayWriter implements AutoCloseable {
     private static final VarHandle INT = JAVA_INT.varHandle();
+    private static final VarHandle LONG = JAVA_LONG.varHandle();
     private final MemorySegment memory;
     private final SharedMapping mapping;
     private int nextSlot;
@@ -55,10 +56,19 @@ public final class OverlayWriter implements AutoCloseable {
     }
 
     public boolean publish(MemorySegment pixels, int width, int height, long frameId, int world, int epoch, boolean bottomUp) {
+        return publish(pixels, width, height, frameId, world, epoch, bottomUp, 0, 0, 0, 0, 0);
+    }
+
+    public long viewport() { return closed ? 0 : (long) LONG.getAcquire(memory, 56L); }
+
+    public boolean publish(MemorySegment pixels, int width, int height, long frameId, int world, int epoch, boolean bottomUp,
+                           int left, int top, int right, int bottom, int guiScale) {
         if (closed) return false;
         int bytes = pixelBytes(width, height);
         if (pixels.byteSize() != bytes || frameId <= 0 || world == 0 || epoch == 0)
             throw new IllegalArgumentException("invalid overlay frame");
+        if (left < 0 || top < 0 || right < left || right > width || bottom < top || bottom > height || guiScale < 0 || guiScale > 16)
+            throw new IllegalArgumentException("invalid overlay GUI bounds");
         for (int attempt = 0; attempt < SLOTS; ++attempt) {
             int slot = nextSlot;
             nextSlot = (nextSlot + 1) % SLOTS;
@@ -74,6 +84,11 @@ public final class OverlayWriter implements AutoCloseable {
                 memory.set(JAVA_INT, offset + 28, epoch);
                 memory.set(JAVA_INT, offset + 32, PREMULTIPLIED | (bottomUp ? BOTTOM_UP : 0));
                 memory.set(JAVA_INT, offset + 36, bytes);
+                memory.set(JAVA_INT, offset + 40, left);
+                memory.set(JAVA_INT, offset + 44, top);
+                memory.set(JAVA_INT, offset + 48, right);
+                memory.set(JAVA_INT, offset + 52, bottom);
+                memory.set(JAVA_INT, offset + 56, guiScale);
                 MemorySegment.copy(pixels, 0, memory, offset + 64, bytes);
                 INT.setRelease(memory, offset, READY);
                 return true;

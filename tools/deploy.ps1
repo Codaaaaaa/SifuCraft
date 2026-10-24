@@ -6,13 +6,13 @@
     powershell -File tools/deploy.ps1 -Stage 1
     powershell -File tools/deploy.ps1 -Uninstall
 .PARAMETER Stage
-    Rollout stage written to SifuCraft\stage (0 = read-only, 5 = P2 complete, 6 = P4 blocks, 7 = P5 enemies).
+    Rollout stage written to SifuCraft\stage (0 = read-only, 5 = P2 complete, 6 = P4 blocks, 7 = P5 enemies, 8 = P6 GUI).
     Omit to keep the current one.
 #>
 param(
     [string]$GameDir,
     [string]$Dll,
-    [ValidateRange(-1, 7)][int]$Stage = -1,
+    [ValidateRange(-1, 8)][int]$Stage = -1,
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'

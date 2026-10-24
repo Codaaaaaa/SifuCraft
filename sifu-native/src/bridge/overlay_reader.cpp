@@ -71,4 +71,11 @@ void Reader::Close() {
     mc_session_ = sifu_session_ = last_id_ = 0;
 }
 
+void Reader::SetViewport(std::uint32_t width, std::uint32_t height) {
+    if (!mapping_.data() || !width || !height || width > 16384 || height > 16384) return;
+    auto& header = *reinterpret_cast<Header*>(mapping_.data());
+    if (std::atomic_ref(header.magic).load(std::memory_order_acquire) != kMagic || header.layout_hash != kLayoutHash) return;
+    std::atomic_ref(header.viewport).store((std::uint64_t{width} << 32) | height, std::memory_order_release);
+}
+
 } // namespace sifucraft::overlay
