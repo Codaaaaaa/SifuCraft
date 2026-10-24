@@ -97,6 +97,7 @@ public:
     void PublishEnemies(std::uint32_t world_generation, const std::vector<protocol::EnemyEntry>& entries);
     void DrainEnemyDamage(std::vector<protocol::Event>* events);
     bool SendDamageResult(const protocol::DamageResultPayload& result);
+    bool SendPlayerHit(const protocol::PlayerHitPayload& hit);
     const McState& peer_state() const { return peer_state_; }
     // The latest consistent block table; kept while Minecraft is away (its world keeps the blocks).
     const BlockList& blocks() const { return blocks_; }

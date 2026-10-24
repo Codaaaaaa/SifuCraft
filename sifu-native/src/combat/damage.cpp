@@ -9,6 +9,7 @@
 #include <deque>
 
 #include "combat/damage_ledger.h"
+#include "combat/player_hits.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "hooks/game_hooks.h"
@@ -57,13 +58,18 @@ thread_local Application* g_application = nullptr;
 using InternalDamageFn = void (*)(void*, void*);
 
 void ObserveDamage(void* health, void* infos) {
+    if (player_hits::BlockHealthDamage(reinterpret_cast<std::uintptr_t>(health), reinterpret_cast<std::uintptr_t>(infos))) return;
     // S2 never suppresses damage, especially the local player's. The shared vtable is filtered
     // against the one health component whose MC event is currently being applied.
     if (g_application && reinterpret_cast<std::uintptr_t>(health) == g_application->health) {
         ++g_application->calls;
         g_observed.fetch_add(1, std::memory_order_relaxed);
     }
+    const auto component = reinterpret_cast<std::uintptr_t>(health);
+    const float before = mem::ReadOr<float>(component + off::UHealthComponent::m_fHealth, NAN);
     g_observer.original<InternalDamageFn>()(health, infos);
+    player_hits::ObserveHealthDamage(component, reinterpret_cast<std::uintptr_t>(infos), before,
+                                    mem::ReadOr<float>(component + off::UHealthComponent::m_fHealth, NAN));
 }
 
 protocol::DamageResultPayload Result(const Job& job, DamageOutcome outcome, float health = 0, float lost = 0) {
@@ -169,6 +175,12 @@ bool UninstallObserver() {
     g_ready.store(false, std::memory_order_release);
     return !g_observer.installed() || g_observer.Uninstall();
 }
+
+bool OwnsObserver(std::uintptr_t value) {
+    return g_ready.load(std::memory_order_acquire) && value == reinterpret_cast<std::uintptr_t>(&ObserveDamage);
+}
+
+bool ObserverReady() { return g_ready.load(std::memory_order_acquire); }
 
 void UpdateContext(std::uintptr_t world, std::uint32_t generation, std::uintptr_t pawn, bool active,
                    std::uint32_t epoch, std::uint64_t peer_session, const std::vector<Enemies::Target>& targets) {

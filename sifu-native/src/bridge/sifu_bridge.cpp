@@ -243,6 +243,10 @@ bool SifuBridge::SendDamageResult(const DamageResultPayload& result) {
     return self_ && peer_connected_ && Send(EventType::DamageResult, &result, sizeof(result));
 }
 
+bool SifuBridge::SendPlayerHit(const PlayerHitPayload& hit) {
+    return self_ && peer_connected_ && Send(EventType::PlayerHit, &hit, sizeof(hit));
+}
+
 bool SifuBridge::Send(EventType type, const void* payload, std::uint32_t size) {
     EventRing& ring = *outgoing_;
     const std::uint64_t write = Atomic(ring.write_index).load(std::memory_order_relaxed);

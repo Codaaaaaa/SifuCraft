@@ -66,6 +66,23 @@ public final class EnemyFrameTest {
         bytes = table();
         ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putInt(20, 0);
         check(EnemyFrame.decode(1, MemorySegment.ofArray(bytes), 2).entries().isEmpty(), "empty table clears enemies");
-        System.out.printf("EnemyFrame tests PASS; protocol v%d layout=%016X%n", Protocol.VERSION, Protocol.LAYOUT_HASH);
+        var hitBytes = ByteBuffer.allocate(32).order(ByteOrder.LITTLE_ENDIAN);
+        hitBytes.putInt(101).putInt(2).putFloat(18).putInt(0x107).putInt(3).putInt(4).putFloat(-1).putFloat(0);
+        var hit = PlayerHit.decode(hitBytes.array());
+        check(hit.attackerId() == 101 && hit.spawn() == 2 && hit.sifuDamage() == 18 && hit.attackPower() == 1 &&
+                hit.worldGeneration() == 3 && hit.anchorEpoch() == 4 && hit.dirX() == -1, "golden C++ PlayerHit layout");
+        for (int offset : new int[] {8, 24, 28}) {
+            byte[] badHit = hitBytes.array().clone();
+            ByteBuffer.wrap(badHit).order(ByteOrder.LITTLE_ENDIAN).putFloat(offset, Float.NaN);
+            try { PlayerHit.decode(badHit); throw new AssertionError("accepted non-finite player hit"); }
+            catch (IllegalArgumentException expected) { }
+        }
+        for (int offset : new int[] {16, 20}) {
+            byte[] badHit = hitBytes.array().clone();
+            ByteBuffer.wrap(badHit).order(ByteOrder.LITTLE_ENDIAN).putInt(offset, 0);
+            try { PlayerHit.decode(badHit); throw new AssertionError("accepted unscoped player hit"); }
+            catch (IllegalArgumentException expected) { }
+        }
+        System.out.printf("EnemyFrame/PlayerHit tests PASS; protocol v%d layout=%016X%n", Protocol.VERSION, Protocol.LAYOUT_HASH);
     }
 }

@@ -4,7 +4,7 @@
 //   sifucraft_fake_sifu [seconds] [--collision <grid.scvx>] [--pawn X Y Z [--yaw DEG] [--hand-over]]
 //                       [--key CODE:FROM:TO]... [--button CODE:FROM:TO]... [--mouse DX:DY:AT]...
 //                       [--then AT X Y Z DEG]...
-//                       [--enemies | --enemy-scenario | --combat-scenario]
+//                       [--enemies | --enemy-scenario | --combat-scenario | --player-hit-scenario]
 //     seconds: 0 or omitted = run until Ctrl+C
 //     --collision: also publish that grid file in the CollisionManifest, as the game does
 //     --pawn: a pawn standing still at (X, Y, Z) (Unreal cm, capsule centre) in the grid's map
@@ -153,6 +153,7 @@ int main(int argc, char** argv) {
     std::vector<HeldKey> keys;
     std::vector<PawnMove> moves;
     bool with_enemies = false, enemy_scenario = false, combat_scenario = false;
+    bool player_hit_scenario = false;
     struct MouseMove {
         double dx = 0, dy = 0;
         std::uint64_t at_ms = 0;
@@ -201,6 +202,8 @@ int main(int argc, char** argv) {
             with_enemies = enemy_scenario = true;
         } else if (std::strcmp(argv[i], "--combat-scenario") == 0) {
             with_enemies = combat_scenario = true;
+        } else if (std::strcmp(argv[i], "--player-hit-scenario") == 0) {
+            with_enemies = combat_scenario = player_hit_scenario = true;
         } else {
             seconds = std::atof(argv[i]);
         }
@@ -218,6 +221,9 @@ int main(int argc, char** argv) {
            seconds > 0 ? FormatString("%.0f s", seconds).c_str() : "until Ctrl+C");
     bridge::SifuBridge bridge;
     if (!bridge.Start()) return 1;
+    bridge::SharedMapping test_mapping;
+    if (player_hit_scenario && !test_mapping.Open(protocol::kMappingName, protocol::kMappingSize)) return 1;
+    int hit_phase = 0;
     bridge::CollisionInfo grid;
     if (!grid_file.empty()) {
         if (!DescribeGridFile(grid_file, &grid)) {
@@ -333,6 +339,25 @@ int main(int argc, char** argv) {
             pawn.mouse_dx += move.dx;
             pawn.mouse_dy += move.dy;
             SC_LOG("[fake] mouse moved by (%.0f, %.0f)", move.dx, move.dy);
+        }
+        if (player_hit_scenario && handed_over_at && now - handed_over_at >= (hit_phase ? 2500u : 1000u) && hit_phase < 2) {
+            protocol::PlayerHitPayload hit{101, 1, hit_phase ? 36.0f : 18.0f,
+                protocol::kHitCanDefend | protocol::kHitParriable | (1u << 8), frame.world_generation, pawn.epoch, -1, 0};
+            if (hit_phase == 0) {
+                auto& ring = *reinterpret_cast<protocol::EventRing*>(test_mapping.data() + protocol::kSifuToMcRingOffset);
+                const auto before = std::atomic_ref<std::uint64_t>(ring.write_index).load();
+                if (!bridge.SendPlayerHit(hit)) continue;
+                // Same producer thread: inject an exact wire duplicate before sending newer IDs.
+                const auto write = std::atomic_ref<std::uint64_t>(ring.write_index).load();
+                ring.slots[write % protocol::kRingCapacity] = ring.slots[before % protocol::kRingCapacity];
+                std::atomic_ref<std::uint64_t>(ring.write_index).store(write + 1, std::memory_order_release);
+                bridge.SendPlayerHit(hit); // different ID, same damage inside vanilla invulnerability frames
+                auto stale = hit; ++stale.world_generation; bridge.SendPlayerHit(stale);
+                stale = hit; ++stale.anchor_epoch; bridge.SendPlayerHit(stale);
+                auto invalid = hit; invalid.sifu_damage = NAN; bridge.SendPlayerHit(invalid);
+            } else bridge.SendPlayerHit(hit);
+            SC_LOG("[fake] player-hit phase=%d: base=%.1f; first phase includes duplicate, immediate second hit, stale world/epoch and NaN", hit_phase, hit.sifu_damage);
+            ++hit_phase;
         }
         for (PawnMove& move : moves) {
             if (!handed_over_at || move.done || now - handed_over_at < move.at_ms) continue;

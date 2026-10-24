@@ -13,6 +13,8 @@ import dev.sifucraft.combat.EnemyEntities;
 import dev.sifucraft.combat.EnemyMirrors;
 import dev.sifucraft.combat.EnemyProxy;
 import dev.sifucraft.combat.CombatHits;
+import dev.sifucraft.combat.PlayerDamage;
+import dev.sifucraft.bridge.PlayerHit;
 import dev.sifucraft.bridge.DamageResult;
 import java.nio.file.Path;
 import java.util.HashSet;
@@ -102,6 +104,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         input = new InputInjector(minecraft);
         bridge = new McBridge(new McBridge.Listener() {
             @Override public void onDamageResult(DamageResult result) { CombatHits.result(result); }
+            @Override public void onPlayerHit(long session, long eventId, PlayerHit hit) { PlayerDamage.receive(session, eventId, hit); }
             @Override
             public void log(String message) {
                 LOG.info("[bridge] {}", message);
@@ -153,6 +156,11 @@ public final class SifuCraftClient implements ClientModInitializer {
             CombatCheck check = new CombatCheck();
             ServerTickEvents.END_SERVER_TICK.register(check::tick);
         }
+        if (Boolean.getBoolean("sifucraft.playerDamageTest") || Boolean.getBoolean("sifucraft.playerHitSelfTest")) {
+            PlayerHitCheck check = new PlayerHitCheck();
+            ServerTickEvents.END_SERVER_TICK.register(check::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
+        }
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
             collision.close();
             bridge.close();
@@ -200,6 +208,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         SifuFrame frame = bridge.latest();
         publishEnemies(frame);
         CombatHits.pump(bridge);
+        PlayerDamage.pump(bridge, minecraft.getSingleplayerServer(), minecraft.player == null ? null : minecraft.player.getUUID());
         if (frame == null) space.reset();
         input.setOwner(frame != null && frame.minecraftOwnsInput());
         input.applyMotion(frame);

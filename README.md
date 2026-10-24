@@ -19,7 +19,7 @@ Sifu 与 Minecraft 作为两个独立进程运行：
 | P2 | Minecraft 输入与位姿接管 Sifu 玩家 | 已通过 |
 | P3 | Sifu 地形碰撞导入 Minecraft 物理 | 已通过 |
 | P4 | 方块放置/破坏的渲染与碰撞闭环 | 已通过 |
-| P5 | 敌人代理与双向伤害 | S1、S2 普通剑击实机通过；S3 玩家受击开发中 |
+| P5 | 敌人代理与双向伤害 | S1–S3 核心战斗实机通过；S4 死亡与边界开发中 |
 
 ## 目录
 
@@ -33,7 +33,7 @@ tools/         部署、卸载、启动与 bridge 测试脚本；tools/collision
 
 ## 共享内存 Bridge（P1）
 
-两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v8）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
+两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v9）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
 
 - 每个字段只有一个写入方；双方各自写自己的 `EndpointStatus`（pid、session、心跳），心跳 2 秒不前进即判定断连；
 - 高频位姿走 seqlock 快照（Sifu → MC 的 `SifuSnapshot`，MC → Sifu 的 `McSnapshot`）；
@@ -99,6 +99,12 @@ stage 7 每 20 ms 发布 30 m 内最近的存活敌人，最多 32 个。角色�
 Minecraft 在集成服务器线程维护 `sifucraft:enemy_proxy`，同步位置、朝向、生命和客户端碰撞箱；代理无 AI、无重力、不可推、不存档，使用空渲染器。切图、断线或表格停止更新时清理代理。
 
 MC 接管时，代理通过原版伤害流程采集玩家近战与弹射物的最终伤害（含冷却、无敌帧、附魔、暴击和横扫），经事件队列发给 Sifu。游戏线程重新校验会话、地图、锚定纪元和敌人身份后，以 9:1 换算调用 `BPF_LaunchImpact`；H7 观测扣血次数，账本防止重复执行，结果通过 `DamageResult` 返回。代理生命跟随 Sifu，死亡由 Sifu 决定。开发快捷栏第 9 格提供铁剑。Sifu → MC 的玩家受击转发留到 S3。
+
+stage 7 的 S3 使用 H6 读取命中请求：有缓存时读取内联行，否则只读查询数据表；显式伤害与 GuardDB 默认伤害分别处理。MC 接管时取消 Sifu 原生命中，以 `PlayerHit` 发给 MC，除以 9 后调用原版 `hurtServer`；护甲、吸收和无敌帧由 MC 处理。H7 拦截其他原生玩家扣血并记录。Sifu 接管时继续原生战斗，日志前缀为 `[player-hits]`。
+
+S3 实机已验证普通命中转发和 F8 交还后的原生扣血。H7 拦截扣血；Sifu 自身的回血仍可能改变其生命。默认伤害、抓取、Boss 等特殊情况继续在 P5 校准验收中覆盖。
+
+开发验收可用 `runClient '-Psifucraft.playerDamageTest=true'` 临时使用生存模式、普通难度并保留物品；退出时恢复原模式、生命、难度及规则。`-Psifucraft.playerHitSelfTest=true` 另对假 Sifu 的测试地图自动核对重复事件、无敌帧和过期事件。正式初始游戏模式留待 P6 决定。
 
 离线场景可用 `sifucraft_fake_sifu.exe --enemies`，或 `--enemy-scenario` 自动测试增删、尺寸变化、激活复用和世界切换。Java 协议解析测试随 `tools/gradle.ps1 build` 运行；单独运行用 `tools/gradle.ps1 protocolTest`。日志前缀为 `[combat]`；需要查看 Minecraft 的 F3+B 碰撞箱时，可用 `tools/gradle.ps1 runClient -Psifucraft.hideWindow=false` 显示开发窗口。
 

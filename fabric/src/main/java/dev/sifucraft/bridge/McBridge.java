@@ -47,6 +47,7 @@ public final class McBridge implements AutoCloseable {
         /** The Sifu peer connected, or went away for {@code reason} (e.g. "peer closing"). */
         default void onPeerConnection(boolean connected, String reason) {}
         default void onDamageResult(DamageResult result) {}
+        default void onPlayerHit(long sourceSession, long eventId, PlayerHit hit) {}
     }
 
     /** Counters; read them from the bridge thread. */
@@ -437,6 +438,16 @@ public final class McBridge implements AutoCloseable {
                     }
                 }
                 case Protocol.EVENT_OWNER_CHANGED -> listener.onOwnerChanged(incoming.get(JAVA_INT, payload));
+                case Protocol.EVENT_PLAYER_HIT -> {
+                    if (incoming.get(JAVA_INT, slot + Event.PAYLOAD_SIZE) != Protocol.PlayerHit.SIZE) {
+                        stats.eventsUnknown++;
+                        break;
+                    }
+                    try {
+                        byte[] bytes = incoming.asSlice(payload, Protocol.PlayerHit.SIZE).toArray(JAVA_BYTE);
+                        listener.onPlayerHit(source, id, PlayerHit.decode(bytes));
+                    } catch (IllegalArgumentException invalid) { stats.eventsUnknown++; }
+                }
                 case Protocol.EVENT_DAMAGE_RESULT -> {
                     if (incoming.get(JAVA_INT, slot + Event.PAYLOAD_SIZE) != Protocol.DamageResult.SIZE) {
                         stats.eventsUnknown++;

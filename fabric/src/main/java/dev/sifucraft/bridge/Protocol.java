@@ -9,7 +9,7 @@ public final class Protocol {
     private Protocol() {}
 
     public static final int MAGIC = 0x52434653; // "SFCR"
-    public static final int VERSION = 8;
+    public static final int VERSION = 9;
     public static final String MAPPING_NAME = "Local\\SifuCraft.Bridge";
     public static final int MAPPING_SIZE = 0x10000;
 
@@ -30,6 +30,10 @@ public final class Protocol {
     public static final int EVENT_OWNER_CHANGED = 5;
     public static final int EVENT_ENEMY_DAMAGE = 6;
     public static final int EVENT_DAMAGE_RESULT = 7;
+    public static final int EVENT_PLAYER_HIT = 8;
+    public static final int HIT_CAN_DEFEND = 1;
+    public static final int HIT_PARRIABLE = 1 << 1;
+    public static final int HIT_CAN_BE_LETHAL = 1 << 2;
     public static final int DAMAGE_CRITICAL = 1;
     public static final int DAMAGE_SWEEP = 1 << 1;
     public static final int DAMAGE_PROJECTILE = 1 << 2;
@@ -229,6 +233,12 @@ public final class Protocol {
         public static final int WORLD_GENERATION = 28;
     }
 
+    public static final class PlayerHit {
+        public static final int SIZE = 32;
+        public static final int ATTACKER_ID = 0, SPAWN = 4, SIFU_DAMAGE = 8, FLAGS = 12;
+        public static final int WORLD_GENERATION = 16, ANCHOR_EPOCH = 20, DIR_X = 24, DIR_Y = 28;
+    }
+
     /** Single-producer single-consumer event ring. */
     public static final class Ring {
         public static final int WRITE_INDEX = 0;
@@ -332,6 +342,15 @@ public final class Protocol {
         DamageResult.SIFU_DAMAGE,
         DamageResult.HEALTH_AFTER,
         DamageResult.WORLD_GENERATION,
+        PlayerHit.SIZE,
+        PlayerHit.ATTACKER_ID,
+        PlayerHit.SPAWN,
+        PlayerHit.SIFU_DAMAGE,
+        PlayerHit.FLAGS,
+        PlayerHit.WORLD_GENERATION,
+        PlayerHit.ANCHOR_EPOCH,
+        PlayerHit.DIR_X,
+        PlayerHit.DIR_Y,
     };
 
     public static final long LAYOUT_HASH = layoutHash();

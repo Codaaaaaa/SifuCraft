@@ -29,6 +29,7 @@ add_library(sifucraft_native SHARED
     src/core/safe_memory.cpp
     src/combat/enemies.cpp
     src/combat/damage.cpp
+    src/combat/player_hits.cpp
     src/hooks/camera_fade.cpp
     src/hooks/game_hooks.cpp
     src/hooks/hook_plan.cpp

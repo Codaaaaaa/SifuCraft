@@ -11,6 +11,8 @@ namespace sifucraft::combat::damage {
 // Runtime thread: lazily resolve the approved function and install H7 as an observer only.
 void InstallObserver(std::uintptr_t image_base, std::uintptr_t pawn);
 bool UninstallObserver();
+bool OwnsObserver(std::uintptr_t slot_value);
+bool ObserverReady();
 void UpdateContext(std::uintptr_t world, std::uint32_t generation, std::uintptr_t pawn, bool active,
                    std::uint32_t epoch, std::uint64_t peer_session, const std::vector<Enemies::Target>& targets);
 void Submit(const protocol::Event& event);

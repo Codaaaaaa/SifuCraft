@@ -48,6 +48,20 @@ FUNCTIONS = {"FKey_Destructor": "FKey::~FKey"}
 # Virtual slots used for calls (dispatched through the object's own vtable): introducing class -> methods.
 CALL_SLOTS = {"UObject": ["ProcessEvent"]}
 
+# Short C++ namespaces for PDB template types used by read-only combat inspection.
+TYPE_ALIASES = {
+    "DataTableMap": "TMap<FName,unsigned char *,FDefaultSetAllocator,TDefaultMapHashableKeyFuncs<FName,unsigned char *,0> >",
+    "DataTableSet": "TSet<TTuple<FName,unsigned char *>,TDefaultMapHashableKeyFuncs<FName,unsigned char *,0>,FDefaultSetAllocator>",
+    "DataTableSparse": "TSparseArray<TSetElement<TTuple<FName,unsigned char *> >,TSparseArrayAllocator<TSizedDefaultAllocator<32>,FDefaultBitArrayAllocator> >",
+    "DataTableBits": "TBitArray<FDefaultBitArrayAllocator>",
+    "DataTableBitAllocator": "TInlineAllocator<4,TSizedDefaultAllocator<32> >::ForElementType<unsigned int>",
+    "DataTableElement": "TSetElement<TTuple<FName,unsigned char *> >",
+    "DataTablePair": "TTuple<FName,unsigned char *>",
+    "GuardStack": "TSCNamedValueStack<TWeakObjectPtr<UGuardDB,FWeakObjectPtr>,1>",
+    "GuardStackValue": "TSCNamedValueStack<TWeakObjectPtr<UGuardDB,FWeakObjectPtr>,1>::FNameValue",
+    "GuardValueGetter": "UE4Function_Private::TFunctionRefBase<UE4Function_Private::TFunctionStorage<0>,TWeakObjectPtr<UGuardDB,FWeakObjectPtr> __cdecl(void)>",
+}
+
 # type -> members. A member may live in a base class; its offset is then made absolute.
 MEMBERS = {
     # CoreUObject
@@ -61,6 +75,15 @@ MEMBERS = {
     "FObjectPropertyBase": ["PropertyClass"],
     "FStructProperty": ["Struct"],
     "FArrayProperty": ["Inner"],
+    "UDataTable": ["RowStruct", "RowMap"],
+    "FDataTableRowHandle": ["DataTable", "RowName"],
+    "DataTableMap": ["Pairs"],
+    "DataTableSet": ["Elements"],
+    "DataTableSparse": ["Data", "AllocationFlags"],
+    "DataTableBits": ["AllocatorInstance", "NumBits", "MaxBits"],
+    "DataTableBitAllocator": ["InlineData", "SecondaryData"],
+    "DataTableElement": ["Value"],
+    "DataTablePair": ["Key", "Value"],
     "FBoolProperty": ["FieldSize", "ByteOffset", "ByteMask", "FieldMask"],
     "FUObjectArray": ["ObjObjects"],
     "FChunkedFixedUObjectArray": ["Objects", "MaxElements", "NumElements", "MaxChunks", "NumChunks"],
@@ -119,13 +142,18 @@ MEMBERS = {
     "UHealthComponent": ["m_fHealth", "m_fMaxHealth", "m_bCanBeDamaged", "m_bCanDieByDamage",
                          "m_bForceDeathOnApplyDamage"],
     "UCharacterHealthComponent": ["m_fMaxHealthMultiplier", "m_bIsDown", "m_eDownState"],
+    "UDefenseComponent": ["m_GuardDB", "m_DefaultGuardDB"],
+    "UGuardDB": ["m_DefaultHitImpact", "m_DefaultGuardImpact", "m_DefaultDeflectImpact"],
+    "GuardStack": ["m_Stack"],
+    "GuardStackValue": ["m_Value", "m_ValueGetter"],
+    "GuardValueGetter": ["Callable"],
     "FDamageInfos": ["m_fDamage", "m_fHealthBeforeDamage", "m_Instigator", "m_uiApplyDamageBehavior"],
     "FHitRequest": ["m_Instigator", "m_HitBox", "m_uiApplyDamageBehavior", "m_vDamageDir",
                     "m_AttackProperties", "m_bCanBeDefended"],
     "FHitBox": ["m_HitRow", "m_CachedRow", "m_bCachedRowSetup"],
     "FHitboxDataRow": ["m_bCanBeLethal", "m_bCanBreakStructure", "m_OnHitImpact", "m_OnGuardImpact",
                        "m_OnDeflectImpact", "m_eHitType", "m_eAttackPower", "m_bParriable"],
-    "FHitImpact": ["m_bUseDamage", "m_fDamage", "m_fStructureDamage"],
+    "FHitImpact": ["m_eGuardType", "m_bUseDamage", "m_fDamage", "m_fStructureDamage"],
     "FHitDescription": ["m_Request", "m_Result", "m_ImpactResult"],
     "FImpactResult": ["m_bIsValid", "m_fDamage", "m_bLethal", "m_HitImpact"],
     "UAbilitySystemComponent": ["SpawnedAttributes"],
@@ -135,7 +163,7 @@ MEMBERS = {
 
 SIZES = ["FUObjectItem", "UObjectBase", "FName", "FNameEntryAllocator", "FTransform", "FKConvexElem", "FKBoxElem", "FKSphereElem",
          "FKSphylElem", "FKTaperedCapsuleElem", "FInstancedStaticMeshInstanceData", "FDamageInfos",
-         "FHitRequest", "FHitBox", "FHitboxDataRow", "FHitImpact", "FHitDescription", "FImpactResult"]
+         "FHitRequest", "FHitBox", "FHitboxDataRow", "FHitImpact", "FHitDescription", "FImpactResult", "GuardStackValue", "DataTableElement"]
 
 # type -> bitfield members whose bit position/width are emitted.
 BITFIELDS = {
@@ -147,7 +175,7 @@ BITFIELDS = {
     "FBodyInstance": ["bOverrideWalkableSlopeOnInstance"],
 }
 
-ENUMS = {"EFactionsEnums": ["TMP_Neutral", "Count"]}
+ENUMS = {"EFactionsEnums": ["TMP_Neutral", "Count"], "EGuardType": ["None", "Guard", "Deflect", "Count"]}
 
 # --- dbghelp ---------------------------------------------------------------------------
 
@@ -493,12 +521,12 @@ def main() -> int:
             members[type_name] = {}
             for field in fields:
                 try:
-                    members[type_name][field] = pdb.member_offset(type_name, field)
+                    members[type_name][field] = pdb.member_offset(TYPE_ALIASES.get(type_name, type_name), field)
                 except LookupError as e:
                     errors.append(str(e))
         for type_name in SIZES:
             try:
-                sizes[type_name] = pdb.size_of(type_name)
+                sizes[type_name] = pdb.size_of(TYPE_ALIASES.get(type_name, type_name))
             except LookupError as e:
                 errors.append(str(e))
         for type_name, fields in BITFIELDS.items():

@@ -4,6 +4,8 @@
 #include <cmath>
 #include <set>
 
+#include "combat/damage.h"
+#include "combat/player_hits.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "hooks/vtable_hook.h"
@@ -40,10 +42,12 @@ void LogFunction(std::uintptr_t owner, const char* name) {
 
 void LogTarget(std::uintptr_t base, const gen::hook::Target& target, std::uintptr_t component) {
     const auto resolution = hooks::Resolve(base, target, component);
+    const bool own_observer = resolution.vtable_ok &&
+        (combat::damage::OwnsObserver(resolution.slot_value) || combat::player_hits::OwnsObserver(resolution.slot_value));
     SC_LOG("[combat-census] %s class=%s vtable=0x%llX expected=0x%llX slot+0x%X=0x%llX %s (read-only)",
            target.name, ue::ClassName(component).c_str(), static_cast<unsigned long long>(resolution.vtable),
            static_cast<unsigned long long>(base + target.vftable), target.slot,
-           static_cast<unsigned long long>(resolution.slot_value), resolution.ready() ? "READY" : "REFUSE");
+           static_cast<unsigned long long>(resolution.slot_value), own_observer ? "OUR_OBSERVER" : resolution.ready() ? "READY" : "REFUSE");
 }
 
 std::string Capsule(std::uintptr_t component) {
@@ -69,6 +73,11 @@ void SelfCheck() {
         {"CharacterHealthComponent", "m_fMaxHealthMultiplier", off::UCharacterHealthComponent::m_fMaxHealthMultiplier},
         {"CharacterHealthComponent", "m_bIsDown", off::UCharacterHealthComponent::m_bIsDown},
         {"CharacterStatAttributeSet", "GameDifficulty", off::UCharacterStatAttributeSet::GameDifficulty},
+        {"DefenseComponent", "m_DefaultGuardDB", off::UDefenseComponent::m_DefaultGuardDB},
+        {"GuardDB", "m_DefaultHitImpact", off::UGuardDB::m_DefaultHitImpact},
+        {"GuardDB", "m_DefaultGuardImpact", off::UGuardDB::m_DefaultGuardImpact},
+        {"GuardDB", "m_DefaultDeflectImpact", off::UGuardDB::m_DefaultDeflectImpact},
+        {"DataTable", "RowStruct", off::UDataTable::RowStruct},
         {"AbilitySystemComponent", "SpawnedAttributes", off::UAbilitySystemComponent::SpawnedAttributes},
     };
     int matched = 0, mismatched = 0, unknown = 0;
@@ -119,7 +128,7 @@ void CombatCensus::InspectCharacter(std::uintptr_t base, std::uintptr_t actor, b
     const auto resolution = hooks::Resolve(base, gen::hook::ValidateHit, hit);
     // Native code is reached only if the effective UFunction still belongs to the native class.
     const bool native_validation = function && ue::OuterOf(function) == native_owner && (flags & kFuncNative);
-    const bool h6_ready = native_validation && resolution.ready();
+    const bool h6_ready = native_validation && (resolution.ready() || combat::player_hits::OwnsObserver(resolution.slot_value));
     const auto faction = mem::ReadOr<std::uint8_t>(actor + off::AFightingCharacter::m_eFaction, 0xFF);
     const std::string key = FormatString("%s %s hit=%s health=%s faction=%u validation=%s move[%s] hit[%s] avoid[%s]",
         player ? "PLAYER" : "enemy", ue::ClassName(actor).c_str(), ue::ClassName(hit).c_str(),

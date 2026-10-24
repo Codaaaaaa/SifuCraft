@@ -61,6 +61,40 @@ inline constexpr std::uint32_t Struct = 0x78;
 namespace FArrayProperty {
 inline constexpr std::uint32_t Inner = 0x78;
 }
+namespace UDataTable {
+inline constexpr std::uint32_t RowStruct = 0x28;
+inline constexpr std::uint32_t RowMap = 0x30;
+}
+namespace FDataTableRowHandle {
+inline constexpr std::uint32_t DataTable = 0x0;
+inline constexpr std::uint32_t RowName = 0x8;
+}
+namespace DataTableMap {
+inline constexpr std::uint32_t Pairs = 0x0;
+}
+namespace DataTableSet {
+inline constexpr std::uint32_t Elements = 0x0;
+}
+namespace DataTableSparse {
+inline constexpr std::uint32_t Data = 0x0;
+inline constexpr std::uint32_t AllocationFlags = 0x10;
+}
+namespace DataTableBits {
+inline constexpr std::uint32_t AllocatorInstance = 0x0;
+inline constexpr std::uint32_t NumBits = 0x18;
+inline constexpr std::uint32_t MaxBits = 0x1C;
+}
+namespace DataTableBitAllocator {
+inline constexpr std::uint32_t InlineData = 0x0;
+inline constexpr std::uint32_t SecondaryData = 0x10;
+}
+namespace DataTableElement {
+inline constexpr std::uint32_t Value = 0x0;
+}
+namespace DataTablePair {
+inline constexpr std::uint32_t Key = 0x0;
+inline constexpr std::uint32_t Value = 0x8;
+}
 namespace FBoolProperty {
 inline constexpr std::uint32_t FieldSize = 0x78;
 inline constexpr std::uint32_t ByteOffset = 0x79;
@@ -290,6 +324,25 @@ inline constexpr std::uint32_t m_fMaxHealthMultiplier = 0x178;
 inline constexpr std::uint32_t m_bIsDown = 0x19C;
 inline constexpr std::uint32_t m_eDownState = 0x19D;
 }
+namespace UDefenseComponent {
+inline constexpr std::uint32_t m_GuardDB = 0x200;
+inline constexpr std::uint32_t m_DefaultGuardDB = 0x210;
+}
+namespace UGuardDB {
+inline constexpr std::uint32_t m_DefaultHitImpact = 0xA70;
+inline constexpr std::uint32_t m_DefaultGuardImpact = 0xAA0;
+inline constexpr std::uint32_t m_DefaultDeflectImpact = 0xA28;
+}
+namespace GuardStack {
+inline constexpr std::uint32_t m_Stack = 0x0;
+}
+namespace GuardStackValue {
+inline constexpr std::uint32_t m_Value = 0x8;
+inline constexpr std::uint32_t m_ValueGetter = 0x10;
+}
+namespace GuardValueGetter {
+inline constexpr std::uint32_t Callable = 0x0;
+}
 namespace FDamageInfos {
 inline constexpr std::uint32_t m_fDamage = 0x0;
 inline constexpr std::uint32_t m_fHealthBeforeDamage = 0x4;
@@ -320,6 +373,7 @@ inline constexpr std::uint32_t m_eAttackPower = 0x1A8;
 inline constexpr std::uint32_t m_bParriable = 0x1B2;
 }
 namespace FHitImpact {
+inline constexpr std::uint32_t m_eGuardType = 0x8;
 inline constexpr std::uint32_t m_bUseDamage = 0x9;
 inline constexpr std::uint32_t m_fDamage = 0xC;
 inline constexpr std::uint32_t m_fStructureDamage = 0x14;
@@ -366,6 +420,8 @@ inline constexpr std::uint32_t FHitboxDataRow = 0x240;
 inline constexpr std::uint32_t FHitImpact = 0x30;
 inline constexpr std::uint32_t FHitDescription = 0x5A0;
 inline constexpr std::uint32_t FImpactResult = 0xC0;
+inline constexpr std::uint32_t GuardStackValue = 0x50;
+inline constexpr std::uint32_t DataTableElement = 0x18;
 }  // namespace size
 
 namespace bits {
@@ -452,6 +508,12 @@ namespace value {
 namespace EFactionsEnums {
 inline constexpr std::int32_t TMP_Neutral = 5;
 inline constexpr std::int32_t Count = 6;
+}
+namespace EGuardType {
+inline constexpr std::int32_t None = 0;
+inline constexpr std::int32_t Guard = 1;
+inline constexpr std::int32_t Deflect = 2;
+inline constexpr std::int32_t Count = 3;
 }
 }  // namespace value
 

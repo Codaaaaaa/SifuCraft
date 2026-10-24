@@ -26,7 +26,7 @@ namespace sifucraft::protocol {
 
 inline constexpr std::uint32_t kMagic = 0x52434653;  // "SFCR"
 // The name carries no version so that mismatched builds see each other and report INCOMPATIBLE.
-inline constexpr std::uint32_t kVersion = 8;
+inline constexpr std::uint32_t kVersion = 9;
 inline constexpr wchar_t kMappingName[] = L"Local\\SifuCraft.Bridge";
 inline constexpr std::uint32_t kMappingSize = 0x10000;
 
@@ -51,6 +51,7 @@ enum class EventType : std::uint32_t {
     OwnerChanged = 5,  // Sifu -> Minecraft, OwnerPayload
     EnemyDamage = 6,   // Minecraft -> Sifu, EnemyDamagePayload
     DamageResult = 7,  // Sifu -> Minecraft, DamageResultPayload
+    PlayerHit = 8,     // Sifu -> Minecraft, PlayerHitPayload
 };
 
 // Who receives the player's keyboard and mouse.
@@ -257,6 +258,18 @@ struct DamageResultPayload {
     std::uint32_t world_generation;
 };
 
+inline constexpr std::uint32_t kHitCanDefend = 1u << 0;
+inline constexpr std::uint32_t kHitParriable = 1u << 1;
+inline constexpr std::uint32_t kHitCanBeLethal = 1u << 2;
+// Attack power occupies bits 8..15; world/epoch scope takes the space of the draft's Z direction.
+struct PlayerHitPayload {
+    std::uint32_t attacker_id, spawn;
+    float sifu_damage;
+    std::uint32_t flags;
+    std::uint32_t world_generation, anchor_epoch;
+    float dir_x, dir_y;
+};
+
 struct Event {
     std::uint64_t id;              // strictly increasing per source session, starting at 1
     std::uint64_t source_session;
@@ -307,6 +320,7 @@ static_assert(offsetof(BlockTable, palette_generation) == 80);
 static_assert(sizeof(PingPayload) == 16 && sizeof(InputPayload) == 16 && sizeof(OwnerPayload) == 8);
 static_assert(sizeof(EnemyDamagePayload) == 32 && offsetof(EnemyDamagePayload, world_generation) == 20);
 static_assert(sizeof(DamageResultPayload) == 32 && offsetof(DamageResultPayload, health_after) == 24);
+static_assert(sizeof(PlayerHitPayload) == 32 && offsetof(PlayerHitPayload, world_generation) == 16);
 static_assert(sizeof(Event) == 0x40 && offsetof(Event, payload) == 32);
 static_assert(offsetof(EventRing, read_index) == 64 && offsetof(EventRing, slots) == 128);
 static_assert(sizeof(EventRing) == 0x80 + kRingCapacity * sizeof(Event));
@@ -415,6 +429,15 @@ inline constexpr std::uint32_t kLayoutTable[] = {
     offsetof(DamageResultPayload, sifu_damage),
     offsetof(DamageResultPayload, health_after),
     offsetof(DamageResultPayload, world_generation),
+    sizeof(PlayerHitPayload),
+    offsetof(PlayerHitPayload, attacker_id),
+    offsetof(PlayerHitPayload, spawn),
+    offsetof(PlayerHitPayload, sifu_damage),
+    offsetof(PlayerHitPayload, flags),
+    offsetof(PlayerHitPayload, world_generation),
+    offsetof(PlayerHitPayload, anchor_epoch),
+    offsetof(PlayerHitPayload, dir_x),
+    offsetof(PlayerHitPayload, dir_y),
 };
 
 // FNV-1a 64 over each table entry as 4 little-endian bytes.

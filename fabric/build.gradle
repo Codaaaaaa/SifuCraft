@@ -24,6 +24,8 @@ loom {
 			property "sifucraft.hideWindow", providers.gradleProperty("sifucraft.hideWindow").getOrElse("true")
 			property "sifucraft.exitWithSifu", "true"
 			property "sifucraft.combatSelfTest", providers.gradleProperty("sifucraft.combatSelfTest").getOrElse("false")
+			property "sifucraft.playerDamageTest", providers.gradleProperty("sifucraft.playerDamageTest").getOrElse("false")
+			property "sifucraft.playerHitSelfTest", providers.gradleProperty("sifucraft.playerHitSelfTest").getOrElse("false")
 		}
 	}
 }

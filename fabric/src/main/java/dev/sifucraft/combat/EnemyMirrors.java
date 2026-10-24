@@ -50,6 +50,16 @@ public final class EnemyMirrors {
         return null;
     }
 
+    /** Server thread recheck, including ownership changes while an incoming hit was in flight. */
+    public static boolean acceptsHit(long expectedSession, int expectedWorld, int epoch) {
+        View view = requested;
+        return view != null && view.player.minecraftOwnsInput() && view.player.anchorEpoch() == epoch &&
+                session == expectedSession && view.enemies.session() == expectedSession && world == expectedWorld &&
+                view.player.worldGeneration() == expectedWorld && System.currentTimeMillis() - view.enemies.receivedMs() <= STALE_MS;
+    }
+
+    public static EnemyProxy hitAttacker(int id, int spawn) { return proxies.get(new EnemyFrame.Key(id, spawn)); }
+
     public static void tick(MinecraftServer server) {
         View view = requested;
         long now = System.currentTimeMillis();

@@ -15,6 +15,7 @@
 #include "bridge/sifu_bridge.h"
 #include "combat/enemies.h"
 #include "combat/damage.h"
+#include "combat/player_hits.h"
 #include "core/config.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
@@ -587,6 +588,9 @@ void Run(std::uintptr_t image_base) {
     std::vector<protocol::Event> damage_events;
     std::vector<combat::damage::Reply> damage_replies;
     std::deque<combat::damage::Reply> pending_damage_replies;
+    std::vector<combat::player_hits::Hit> player_hits;
+    std::deque<combat::player_hits::Hit> pending_player_hits;
+    unsigned logged_player_hits = 0;
     input::InputRouter::Drained drained;
 
     std::uintptr_t world_ptr = 0;
@@ -674,7 +678,11 @@ void Run(std::uintptr_t image_base) {
         if (settings.stage >= 5) UpdatePoseOverride(player.pawn, frame.capsule_half_height, ownership.epoch());
         if (settings.stage >= 7) {
             combat::damage::InstallObserver(image_base, player.pawn);
+            combat::player_hits::InstallObserver(image_base, player.pawn);
             combat::damage::UpdateContext(world, generation, player.pawn,
+                g_bridge.peer_connected() && frame.input_owner == InputOwner::Minecraft && hooks::PoseActive(),
+                ownership.epoch(), g_bridge.peer_connected() ? g_bridge.peer_session() : 0, enemies.targets());
+            combat::player_hits::UpdateContext(world, generation, player.pawn,
                 g_bridge.peer_connected() && frame.input_owner == InputOwner::Minecraft && hooks::PoseActive(),
                 ownership.epoch(), g_bridge.peer_connected() ? g_bridge.peer_session() : 0, enemies.targets());
             g_bridge.DrainEnemyDamage(&damage_events);
@@ -691,6 +699,24 @@ void Run(std::uintptr_t image_base) {
                 }
                 if (!g_bridge.SendDamageResult(reply.payload)) break;
                 pending_damage_replies.pop_front();
+            }
+            if (pending_player_hits.size() < 128) {
+                combat::player_hits::DrainHits(&player_hits);
+                for (const auto& hit : player_hits) pending_player_hits.push_back(hit);
+            }
+            while (!pending_player_hits.empty()) {
+                const auto& hit = pending_player_hits.front();
+                if (!g_bridge.peer_connected() || hit.session != g_bridge.peer_session() ||
+                    frame.input_owner != InputOwner::Minecraft || hit.payload.world_generation != generation ||
+                    hit.payload.anchor_epoch != ownership.epoch() || GetTickCount64() - hit.created_ms > 2000) {
+                    if (logged_player_hits++ < 200) SC_LOG("[player-hits] discarded queued hit after scope change or timeout");
+                    pending_player_hits.pop_front(); continue;
+                }
+                if (!g_bridge.SendPlayerHit(hit.payload)) break;
+                if (logged_player_hits++ < 200) SC_LOG("[player-hits] sent attacker=%u/%u base=%.3f flags=0x%X world=%u epoch=%u",
+                    hit.payload.attacker_id, hit.payload.spawn, hit.payload.sifu_damage, hit.payload.flags,
+                    hit.payload.world_generation, hit.payload.anchor_epoch);
+                pending_player_hits.pop_front();
             }
         }
         // The P5 S0 census remains read-only even at stage 0 / no-hooks, independently of
@@ -722,6 +748,7 @@ void Run(std::uintptr_t image_base) {
             SC_LOG("[combat-census] %s", combat_census.TakeStats().c_str());
             if (settings.stage >= 7) SC_LOG("[combat] enemies %s", enemies.TakeStats().c_str());
             if (settings.stage >= 7) SC_LOG("[combat] %s", combat::damage::TakeStats().c_str());
+            if (settings.stage >= 7) SC_LOG("[player-hits] %s", combat::player_hits::TakeStats().c_str());
             collision_schedule.FlushCheck();
         }
     }

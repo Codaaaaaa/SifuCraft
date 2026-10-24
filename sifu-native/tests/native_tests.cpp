@@ -13,6 +13,7 @@
 #include "collision/shape_file.h"
 #include "combat/activation_tracker.h"
 #include "combat/damage_ledger.h"
+#include "combat/hit_sample.h"
 #include "collision/voxels.h"
 #include "collision/walk_check.h"
 #include "core/build_guard.h"
@@ -23,6 +24,7 @@
 #include "input/key_map.h"
 #include "probe/combat_sample.h"
 #include "ue/transform.h"
+#include "ue/data_table.h"
 
 namespace {
 
@@ -630,6 +632,78 @@ void TestEnemyIdentity() {
     Expect(tracker.Observe(10, 2, true) != returned, "world reset does not reuse an old activation identity");
 }
 
+void TestLiveHitSamples() {
+    using namespace sifucraft;
+    namespace off = gen::off;
+    std::vector<std::uint8_t> request(gen::size::FHitRequest, 0);
+    const auto address = reinterpret_cast<std::uintptr_t>(request.data());
+    const auto box = address + off::FHitRequest::m_HitBox;
+    const auto impact = box + off::FHitBox::m_CachedRow + off::FHitboxDataRow::m_OnHitImpact;
+    const auto put = [](std::uintptr_t at, const auto& value) { std::memcpy(reinterpret_cast<void*>(at), &value, sizeof(value)); };
+    combat::HitRequestSample hit;
+    put(impact + off::FHitImpact::m_bUseDamage, std::uint8_t{1});
+    put(impact + off::FHitImpact::m_fDamage, 30.0f);
+    Expect(!combat::ReadCachedHitRequest(address, &hit), "live hit parser refuses an uninitialized inline row cache");
+    put(box + off::FHitBox::m_bCachedRowSetup, std::uint8_t{1});
+    float damage = NAN;
+    Expect(combat::ReadCachedHitRequest(address, &hit) && combat::ResolveHitDamage(hit, NAN, &damage) && damage == 30,
+           "live hit parser reads explicit request damage without needing a default");
+    put(impact + off::FHitImpact::m_bUseDamage, std::uint8_t{0});
+    put(impact + off::FHitImpact::m_fDamage, float{NAN});
+    Expect(combat::ReadCachedHitRequest(address, &hit) && !combat::ResolveHitDamage(hit, NAN, &damage) &&
+           combat::ResolveHitDamage(hit, 15, &damage) && damage == 15,
+           "default hit damage never treats an unused raw field as zero or as the effective damage");
+    put(impact + off::FHitImpact::m_bUseDamage, std::uint8_t{1});
+    Expect(!combat::ReadCachedHitRequest(address, &hit), "live hit parser refuses non-finite explicit damage");
+    put(impact + off::FHitImpact::m_fDamage, 15.0f);
+    put(box + off::FHitBox::m_bCachedRowSetup, std::uint8_t{0});
+    Expect(combat::ReadHitRequest(address, box + off::FHitBox::m_CachedRow, &hit) && hit.cached == 0 && hit.raw_damage == 15,
+           "live hit parser accepts a separately resolved data-table row for an uncached request");
+
+    std::vector<std::uint8_t> defense(off::UDefenseComponent::m_GuardDB + sizeof(mem::RawArray), 0);
+    std::vector<std::uint8_t> nodes(2 * gen::size::GuardStackValue, 0);
+    const auto defense_at = reinterpret_cast<std::uintptr_t>(defense.data());
+    const auto nodes_at = reinterpret_cast<std::uintptr_t>(nodes.data());
+    Expect(combat::StaticGuardValue(defense_at) == 0, "empty GuardDB stack remains unresolved");
+    put(defense_at + off::UDefenseComponent::m_GuardDB, mem::RawArray{nodes_at, 2, 2});
+    const auto top = nodes_at + gen::size::GuardStackValue;
+    Expect(combat::StaticGuardValue(defense_at) == top + off::GuardStackValue::m_Value,
+           "GuardDB reader chooses the current override, rather than the default or first entry");
+    put(top + off::GuardStackValue::m_ValueGetter + off::GuardValueGetter::Callable, std::uintptr_t{1});
+    Expect(combat::StaticGuardValue(defense_at) == 0, "dynamic GuardDB getter is not invoked or guessed from stale cached data");
+}
+
+void TestDataTableRows() {
+    using namespace sifucraft;
+    namespace off = gen::off;
+    std::vector<std::uint8_t> table(off::UDataTable::RowMap + 128, 0);
+    std::vector<std::uint8_t> slots(130 * gen::size::DataTableElement, 0);
+    std::uint32_t heap_bits[5] = {};
+    const auto at = reinterpret_cast<std::uintptr_t>(table.data());
+    const auto data = reinterpret_cast<std::uintptr_t>(slots.data());
+    const auto sparse = at + off::UDataTable::RowMap + off::DataTableMap::Pairs + off::DataTableSet::Elements;
+    const auto bits = sparse + off::DataTableSparse::AllocationFlags;
+    const auto allocator = bits + off::DataTableBits::AllocatorInstance;
+    const auto put = [](std::uintptr_t address, const auto& value) { std::memcpy(reinterpret_cast<void*>(address), &value, sizeof(value)); };
+    const auto entry = [&](int i, ue::FName name, std::uintptr_t row) {
+        const auto pair = data + i * gen::size::DataTableElement + off::DataTableElement::Value;
+        put(pair + off::DataTablePair::Key, name); put(pair + off::DataTablePair::Value, row);
+    };
+    put(sparse + off::DataTableSparse::Data, mem::RawArray{data, 2, 130});
+    put(bits + off::DataTableBits::NumBits, 2); put(bits + off::DataTableBits::MaxBits, 128);
+    entry(0, {42, 0}, 123); entry(1, {42, 1}, 456);
+    put(allocator + off::DataTableBitAllocator::InlineData, std::uint32_t{2});
+    Expect(ue::DataTableRow(at, {42, 0}) == 0 && ue::DataTableRow(at, {42, 1}) == 456,
+           "row-map lookup skips free sparse entries and compares both FName fields");
+    put(sparse + off::DataTableSparse::Data, mem::RawArray{data, 130, 130});
+    put(bits + off::DataTableBits::NumBits, 130); put(bits + off::DataTableBits::MaxBits, 160);
+    put(allocator + off::DataTableBitAllocator::SecondaryData, reinterpret_cast<std::uintptr_t>(heap_bits));
+    heap_bits[4] = 2; entry(129, {99, 0}, 789);
+    Expect(ue::DataTableRow(at, {99, 0}) == 789, "row-map lookup reads heap allocation flags beyond the inline capacity");
+    put(bits + off::DataTableBits::NumBits, 129);
+    Expect(ue::DataTableRow(at, {99, 0}) == 0, "row-map lookup refuses inconsistent sparse array and bit counts");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -670,6 +744,8 @@ int main(int argc, char** argv) {
     TestVoxels();
     TestCollisionFiles();
     TestCombatSamples();
+    TestLiveHitSamples();
+    TestDataTableRows();
     TestEnemyIdentity();
     if (argc > 1) TestProxy(argv[1]);
     std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED", g_failures, g_failures == 1 ? "" : "s");
