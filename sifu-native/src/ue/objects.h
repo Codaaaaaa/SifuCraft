@@ -42,6 +42,9 @@ std::string PathName(std::uintptr_t object);
 
 // False for CDOs/archetypes and objects that are pending kill or unreachable.
 bool IsLive(std::uintptr_t object);
+// Read-only metadata/assets may legitimately be CDOs or archetypes. Still verifies the object
+// array entry and excludes pending-kill/unreachable objects; never use for actor activation.
+bool IsRegistered(std::uintptr_t object);
 
 bool IsChildOf(std::uintptr_t ustruct, std::uintptr_t base);
 bool IsA(std::uintptr_t object, std::uintptr_t ustruct);

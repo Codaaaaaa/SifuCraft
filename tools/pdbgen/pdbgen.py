@@ -43,7 +43,10 @@ HOOKS = {
 }
 
 # Functions sifu-native calls directly: identifier -> symbol.
-FUNCTIONS = {"FKey_Destructor": "FKey::~FKey"}
+FUNCTIONS = {
+    "FKey_Destructor": "FKey::~FKey",
+    "LaunchImpactInternal": "UHitComponent::LaunchImpactInternal",
+}
 
 # Virtual slots used for calls (dispatched through the object's own vtable): introducing class -> methods.
 CALL_SLOTS = {"UObject": ["ProcessEvent"]}
@@ -143,6 +146,7 @@ MEMBERS = {
                          "m_bForceDeathOnApplyDamage"],
     "UCharacterHealthComponent": ["m_fMaxHealthMultiplier", "m_bIsDown", "m_eDownState"],
     "UDefenseComponent": ["m_GuardDB", "m_DefaultGuardDB"],
+    "USCGameSettings": ["m_DefaultHitbox"],
     "UGuardDB": ["m_DefaultHitImpact", "m_DefaultGuardImpact", "m_DefaultDeflectImpact"],
     "GuardStack": ["m_Stack"],
     "GuardStackValue": ["m_Value", "m_ValueGetter"],
@@ -175,7 +179,15 @@ BITFIELDS = {
     "FBodyInstance": ["bOverrideWalkableSlopeOnInstance"],
 }
 
-ENUMS = {"EFactionsEnums": ["TMP_Neutral", "Count"], "EGuardType": ["None", "Guard", "Deflect", "Count"]}
+ENUMS = {
+    "EFactionsEnums": ["TMP_Neutral", "Count"],
+    "EGuardType": ["None", "Guard", "Deflect", "Count"],
+    "EImpactType": ["Hit"],
+    "EAttackPowers": ["Light"],
+    "EHeight": ["Mid"],
+    "EQuadrantTypes": ["FrontLeft"],
+    "ESCCardinalPoints": ["North"],
+}
 
 # --- dbghelp ---------------------------------------------------------------------------
 

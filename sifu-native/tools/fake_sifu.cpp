@@ -311,7 +311,7 @@ int main(int argc, char** argv) {
                     auto& hp = enemy_health[damage.enemy_id - 101];
                     result.result = static_cast<std::uint32_t>(hp > 0 ? protocol::DamageOutcome::Applied : protocol::DamageOutcome::Dead);
                     if (hp > 0) {
-                        result.sifu_damage = std::min(hp, damage.mc_damage * protocol::kSifuHpPerMcHp);
+                        result.sifu_damage = std::min(hp, damage.mc_damage * protocol::kEnemySifuHpPerMcHp);
                         hp -= result.sifu_damage;
                         ++applied_damage;
                     }

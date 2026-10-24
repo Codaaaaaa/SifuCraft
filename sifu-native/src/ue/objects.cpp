@@ -130,6 +130,13 @@ bool IsChildOf(std::uintptr_t ustruct, std::uintptr_t base) {
     return false;
 }
 
+bool IsRegistered(std::uintptr_t object) {
+    if (!object) return false;
+    const auto index = mem::ReadOr<std::int32_t>(object + off::UObjectBase::InternalIndex, -1);
+    std::int32_t internal = 0;
+    return ObjectAt(index, &internal) == object && (internal & (kInternalPendingKill | kInternalUnreachable)) == 0;
+}
+
 bool IsA(std::uintptr_t object, std::uintptr_t ustruct) { return object && IsChildOf(ClassOf(object), ustruct); }
 
 std::uintptr_t FindClass(std::string_view name) {

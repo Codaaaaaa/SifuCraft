@@ -70,7 +70,7 @@ public final class BridgeStub {
                 if (expected == null || result.result() != expected || result.enemyId() != 101 || result.worldGeneration() == 0) {
                     damageFailures++;
                 }
-                if (result.result() == Protocol.DAMAGE_APPLIED && result.sifuDamage() != 9) damageFailures++;
+                if (result.result() == Protocol.DAMAGE_APPLIED && result.sifuDamage() != Protocol.ENEMY_SIFU_HP_PER_MC_HP) damageFailures++;
                 damageResults++;
                 log("[damage-test] result " + result);
             }

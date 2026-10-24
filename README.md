@@ -19,7 +19,7 @@ Sifu 与 Minecraft 作为两个独立进程运行：
 | P2 | Minecraft 输入与位姿接管 Sifu 玩家 | 已通过 |
 | P3 | Sifu 地形碰撞导入 Minecraft 物理 | 已通过 |
 | P4 | 方块放置/破坏的渲染与碰撞闭环 | 已通过 |
-| P5 | 敌人代理与双向伤害 | S1–S4 核心链路实机通过；S5 校准与完整验收进行中 |
+| P5 | 敌人代理与双向伤害 | 核心链路、伤害与轻击校准已通过；武馆及跨图矩阵待补 |
 
 ## 目录
 
@@ -33,7 +33,7 @@ tools/         部署、卸载、启动与 bridge 测试脚本；tools/collision
 
 ## 共享内存 Bridge（P1）
 
-两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v11）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
+两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v12）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
 
 - 每个字段只有一个写入方；双方各自写自己的 `EndpointStatus`（pid、session、心跳），心跳 2 秒不前进即判定断连；
 - 高频位姿走 seqlock 快照（Sifu → MC 的 `SifuSnapshot`，MC → Sifu 的 `McSnapshot`）；
@@ -98,7 +98,7 @@ stage 7 每 20 ms 发布 30 m 内最近的存活敌人，最多 32 个。角色�
 
 Minecraft 在集成服务器线程维护 `sifucraft:enemy_proxy`，同步位置、朝向、生命和客户端碰撞箱；代理无 AI、无重力、不可推、不存档，使用空渲染器。切图、断线或表格停止更新时清理代理。
 
-MC 接管时，代理通过原版伤害流程采集玩家近战与弹射物的最终伤害（含冷却、无敌帧、附魔、暴击和横扫），经事件队列发给 Sifu。游戏线程重新校验会话、地图、锚定纪元和敌人身份后，以 9:1 换算调用 `BPF_LaunchImpact`；H7 观测扣血次数，账本防止重复执行，结果通过 `DamageResult` 返回。代理生命跟随 Sifu，死亡由 Sifu 决定。开发快捷栏第 9 格提供铁剑。Sifu → MC 的玩家受击转发留到 S3。
+MC 接管时，代理通过原版伤害流程采集玩家近战与弹射物的最终伤害（含冷却、无敌帧、附魔、暴击和横扫），经事件队列发给 Sifu。游戏线程重新校验会话、地图、锚定纪元和敌人身份后，每 1 点 MC 伤害换算为 3 点 Sifu 敌人生命，调用 `UHitComponent::LaunchImpactInternal`；H7 观测扣血次数，账本防止重复执行，结果通过 `DamageResult` 返回。使用普通 `Hit` 类型，并在调用前确认项目默认命中行的强度为 `Light`，普通攻击、暴击和横扫统一 0.15 秒轻击硬直；击退附魔不增加 Sifu 硬直。用户实机确认杂兵、Boss 的受击和死亡表现正常。代理生命跟随 Sifu，死亡由 Sifu 决定。60 血杂兵等效 20 点 MC 生命，铁剑满冷却普通攻击扣 18/60，约四剑击杀；100 血敌人保留更高耐久。玩家承受伤害继续按 9 点 Sifu 基础伤害换算 1 点 MC 伤害。开发快捷栏第 9 格提供铁剑。
 
 stage 7 的 S3 使用 H6 读取命中请求：有缓存时读取内联行，否则只读查询数据表；显式伤害与 GuardDB 默认伤害分别处理。MC 接管时取消 Sifu 原生命中，以 `PlayerHit` 发给 MC，除以 9 后调用原版 `hurtServer`；护甲、吸收和无敌帧由 MC 处理。H7 拦截其他原生玩家扣血并记录。Sifu 接管时继续原生战斗，日志前缀为 `[player-hits]`。
 

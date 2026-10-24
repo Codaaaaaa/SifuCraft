@@ -9,7 +9,7 @@ public final class Protocol {
     private Protocol() {}
 
     public static final int MAGIC = 0x52434653; // "SFCR"
-    public static final int VERSION = 11;
+    public static final int VERSION = 12;
     public static final String MAPPING_NAME = "Local\\SifuCraft.Bridge";
     public static final int MAPPING_SIZE = 0x10000;
 
@@ -17,7 +17,8 @@ public final class Protocol {
     public static final int RING_CAPACITY = 256;
     public static final int MAX_BLOCKS = 1536;
     public static final int MAX_ENEMIES = 32;
-    public static final float SIFU_HP_PER_MC_HP = 9.0f;
+    public static final float PLAYER_SIFU_HP_PER_MC_HP = 9.0f;
+    public static final float ENEMY_SIFU_HP_PER_MC_HP = 3.0f;
 
     public static final int STATE_ABSENT = 0;
     public static final int STATE_RUNNING = 1;
@@ -255,6 +256,8 @@ public final class Protocol {
     /** Same entries, same order as {@code kLayoutTable} in sifucraft_protocol.h. */
     static final int[] LAYOUT_TABLE = {
         VERSION,
+        Float.floatToRawIntBits(PLAYER_SIFU_HP_PER_MC_HP),
+        Float.floatToRawIntBits(ENEMY_SIFU_HP_PER_MC_HP),
         MAPPING_SIZE,
         RING_CAPACITY,
         HEADER_OFFSET,

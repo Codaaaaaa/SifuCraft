@@ -78,6 +78,7 @@ void SelfCheck() {
         {"GuardDB", "m_DefaultGuardImpact", off::UGuardDB::m_DefaultGuardImpact},
         {"GuardDB", "m_DefaultDeflectImpact", off::UGuardDB::m_DefaultDeflectImpact},
         {"DataTable", "RowStruct", off::UDataTable::RowStruct},
+        {"SCGameSettings", "m_DefaultHitbox", off::USCGameSettings::m_DefaultHitbox},
         {"AbilitySystemComponent", "SpawnedAttributes", off::UAbilitySystemComponent::SpawnedAttributes},
     };
     int matched = 0, mismatched = 0, unknown = 0;

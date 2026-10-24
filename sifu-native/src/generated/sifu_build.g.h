@@ -328,6 +328,9 @@ namespace UDefenseComponent {
 inline constexpr std::uint32_t m_GuardDB = 0x200;
 inline constexpr std::uint32_t m_DefaultGuardDB = 0x210;
 }
+namespace USCGameSettings {
+inline constexpr std::uint32_t m_DefaultHitbox = 0x6E0;
+}
 namespace UGuardDB {
 inline constexpr std::uint32_t m_DefaultHitImpact = 0xA70;
 inline constexpr std::uint32_t m_DefaultGuardImpact = 0xAA0;
@@ -469,6 +472,7 @@ inline constexpr std::uint32_t bOverrideWalkableSlopeOnInstance_Width = 1;
 // Functions called directly.
 namespace fn {
 inline constexpr std::uintptr_t FKey_Destructor = 0xF523F0;
+inline constexpr std::uintptr_t LaunchImpactInternal = 0x1A64D30;
 }  // namespace fn
 
 // Virtual slots used for calls through an object's own vtable.
@@ -514,6 +518,21 @@ inline constexpr std::int32_t None = 0;
 inline constexpr std::int32_t Guard = 1;
 inline constexpr std::int32_t Deflect = 2;
 inline constexpr std::int32_t Count = 3;
+}
+namespace EImpactType {
+inline constexpr std::int32_t Hit = 0;
+}
+namespace EAttackPowers {
+inline constexpr std::int32_t Light = 0;
+}
+namespace EHeight {
+inline constexpr std::int32_t Mid = 1;
+}
+namespace EQuadrantTypes {
+inline constexpr std::int32_t FrontLeft = 0;
+}
+namespace ESCCardinalPoints {
+inline constexpr std::int32_t North = 0;
 }
 }  // namespace value
 

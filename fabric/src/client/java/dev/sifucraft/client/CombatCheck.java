@@ -58,6 +58,7 @@ final class CombatCheck {
         if (tick == 90) {
             ItemStack sword = new ItemStack(Items.IRON_SWORD);
             sword.enchant(server.registryAccess().lookupOrThrow(Registries.ENCHANTMENT).getOrThrow(Enchantments.SHARPNESS), 3);
+            sword.enchant(server.registryAccess().lookupOrThrow(Registries.ENCHANTMENT).getOrThrow(Enchantments.KNOCKBACK), 2);
             player.getInventory().setItem(8, sword);
         }
         if (tick == 120) {
@@ -69,7 +70,8 @@ final class CombatCheck {
             player.getInventory().setSelectedSlot(oldSlot);
             player.connection.send(new ClientboundSetHeldSlotPacket(oldSlot));
             CombatHits.diagnostic(null);
-            LOG.info("[combat-test] PASS: vanilla normal, cooldown/invulnerability, sweep, critical overkill, Sharpness III; hits={}", hits);
+            LOG.info("[combat-test] PASS: vanilla normal, cooldown/invulnerability, sweep, critical overkill, " +
+                    "Sharpness III + Knockback II, uniform Light stun; hits={}", hits);
         }
     }
 
@@ -78,7 +80,8 @@ final class CombatCheck {
     }
     private void expect(int index, int enemy, float amount, int flags) {
         var hit = hits.get(index);
-        if (hit.enemyId() != enemy || Math.abs(hit.damage() - amount) > 0.001f || hit.flags() != flags) {
+        if (hit.enemyId() != enemy || Math.abs(hit.damage() - amount) > 0.001f || hit.flags() != flags ||
+                Math.abs(hit.stun() - 0.15f) > 0.0001f) {
             throw new AssertionError("combat hit mismatch " + hit);
         }
     }

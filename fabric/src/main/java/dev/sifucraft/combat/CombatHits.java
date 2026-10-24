@@ -36,14 +36,10 @@ public final class CombatHits {
         final float damage;
         final long createdMs = System.currentTimeMillis();
         int flags;
-        float extraStun;
         Hit(Scope scope, EnemyProxy proxy, float damage, int flags) {
             this.scope = scope; key = proxy.sifuKey(); entityId = proxy.getId(); this.damage = damage; this.flags = flags;
         }
-        float stun() {
-            float base = (flags & Protocol.DAMAGE_SWEEP) != 0 ? 0.15f : (flags & Protocol.DAMAGE_CRITICAL) != 0 ? 0.5f : 0.25f;
-            return Math.min(5, base + extraStun);
-        }
+        float stun() { return 0.15f; } // every attack uses Sifu's short Light reaction
     }
     private static final class Batch {
         final Batch parent;
@@ -74,7 +70,7 @@ public final class CombatHits {
     public static void endAttack() {
         Batch batch = attack.get();
         attack.set(batch.parent);
-        for (Hit hit : batch.hits) publish(hit); // after vanilla supplied crit and knockback feedback
+        for (Hit hit : batch.hits) publish(hit); // after vanilla supplied critical feedback
     }
     private static void publish(Hit hit) {
         outgoing.add(hit);
@@ -87,15 +83,6 @@ public final class CombatHits {
         if (!critical || batch == null) return;
         for (Hit hit : batch.hits) if (hit.entityId == target.getId()) hit.flags |= Protocol.DAMAGE_CRITICAL;
     }
-    public static void knockback(EnemyProxy proxy, double strength, boolean extra) {
-        Batch batch = attack.get();
-        if (!extra || batch == null || !Double.isFinite(strength) || strength <= 0) return;
-        for (int i = batch.hits.size() - 1; i >= 0; i--) {
-            Hit hit = batch.hits.get(i);
-            if (hit.entityId == proxy.getId()) { hit.extraStun += (float) strength * 0.4f; return; }
-        }
-    }
-
     /** Client/bridge thread, after its snapshot and events have been read for this frame. */
     public static void pump(McBridge bridge) {
         long now = System.currentTimeMillis();

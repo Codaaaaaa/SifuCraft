@@ -19,6 +19,7 @@
 // 8-byte aligned so both sides can access them atomically.
 #pragma once
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 
@@ -26,7 +27,7 @@ namespace sifucraft::protocol {
 
 inline constexpr std::uint32_t kMagic = 0x52434653;  // "SFCR"
 // The name carries no version so that mismatched builds see each other and report INCOMPATIBLE.
-inline constexpr std::uint32_t kVersion = 11;
+inline constexpr std::uint32_t kVersion = 12;
 inline constexpr wchar_t kMappingName[] = L"Local\\SifuCraft.Bridge";
 inline constexpr std::uint32_t kMappingSize = 0x10000;
 
@@ -35,7 +36,8 @@ inline constexpr std::uint32_t kHeartbeatTimeoutMs = 2000;
 inline constexpr std::uint32_t kRingCapacity = 256;
 inline constexpr std::uint32_t kMaxBlocks = 1536;
 inline constexpr std::uint32_t kMaxEnemies = 32;
-inline constexpr float kSifuHpPerMcHp = 9.0f;
+inline constexpr float kPlayerSifuHpPerMcHp = 9.0f; // incoming player hits: 180 Sifu HP ~= 20 MC HP
+inline constexpr float kEnemySifuHpPerMcHp = 3.0f;  // outgoing damage/proxy HP: 60 Sifu HP = 20 MC HP
 
 enum class EndpointState : std::uint32_t {
     Absent = 0,
@@ -343,6 +345,8 @@ static_assert(kEnemyTableOffset + sizeof(EnemyTable) <= kMappingSize);
 // Hashed in this order by both sides; keep it identical to Protocol.LAYOUT_TABLE in Java.
 inline constexpr std::uint32_t kLayoutTable[] = {
     kVersion,
+    std::bit_cast<std::uint32_t>(kPlayerSifuHpPerMcHp),
+    std::bit_cast<std::uint32_t>(kEnemySifuHpPerMcHp),
     kMappingSize,
     kRingCapacity,
     kHeaderOffset,

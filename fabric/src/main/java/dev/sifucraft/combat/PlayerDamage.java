@@ -55,7 +55,7 @@ public final class PlayerDamage {
                     var attacker = EnemyMirrors.hitAttacker(hit.attackerId(), hit.spawn());
                     var source = attacker != null ? player.damageSources().mobAttack(attacker) : player.damageSources().generic();
                     float before = player.getHealth(), absorption = player.getAbsorptionAmount();
-                    float amount = hit.sifuDamage() / Protocol.SIFU_HP_PER_MC_HP;
+                    float amount = hit.sifuDamage() / Protocol.PLAYER_SIFU_HP_PER_MC_HP;
                     boolean accepted = player.hurtServer(player.level(), source, amount);
                     if (diagnostic != null) diagnostic.accept(new Applied(pending.id, before, player.getHealth(), accepted));
                     if (logged.getAndIncrement() < 200) LOG.info("[player-hits] applied event={} attacker={}/{} source={} base={} mc={} accepted={} " +

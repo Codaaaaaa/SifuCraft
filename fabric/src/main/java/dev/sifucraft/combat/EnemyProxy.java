@@ -62,9 +62,9 @@ public final class EnemyProxy extends Mob {
         setYBodyRot(yaw);
         setDeltaMovement(Vec3.ZERO);
         var max = getAttribute(Attributes.MAX_HEALTH);
-        double wantedMax = Math.clamp(enemy.maxHealth() / Protocol.SIFU_HP_PER_MC_HP, 1.0, 1024.0);
+        double wantedMax = Math.clamp(enemy.maxHealth() / Protocol.ENEMY_SIFU_HP_PER_MC_HP, 1.0, 1024.0);
         if (max != null && max.getBaseValue() != wantedMax) max.setBaseValue(wantedMax);
-        setHealth(Math.max(1.0f, enemy.health() / Protocol.SIFU_HP_PER_MC_HP));
+        setHealth(Math.max(1.0f, enemy.health() / Protocol.ENEMY_SIFU_HP_PER_MC_HP));
     }
 
     @Override
@@ -114,7 +114,7 @@ public final class EnemyProxy extends Mob {
     }
 
     @Override public void knockback(double strength, double x, double z, DamageSource source, float damage, boolean extra) {
-        CombatHits.knockback(this, strength, extra);
+        // Sifu owns movement; all mirrored hits use the same short Light reaction.
     }
     @Override public void knockback(double strength, double x, double z, DamageSource source, float damage) {
         knockback(strength, x, z, source, damage, false);

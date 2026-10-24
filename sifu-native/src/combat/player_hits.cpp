@@ -27,6 +27,8 @@ hooks::VtableHook g_observer;
 std::atomic<bool> g_ready{false};
 bool g_failed = false; // runtime thread only
 std::uintptr_t g_base = 0, g_guard_class = 0, g_table_class = 0;
+std::atomic<std::uintptr_t> g_settings_default{0};
+std::uint64_t g_settings_retry_ms = 0; // runtime thread
 std::atomic<std::uint64_t> g_hits{0}, g_resolved{0}, g_unresolved{0}, g_health_calls{0};
 std::atomic<std::uint64_t> g_forwarded{0}, g_cancelled{0}, g_dropped{0}, g_blocked{0};
 SRWLOCK g_lock = SRWLOCK_INIT;
@@ -60,21 +62,29 @@ bool Active(std::uintptr_t pawn, Context* context) {
         context->world == mem::ReadPtr(g_base + gen::rva::GWorld) && GetTickCount64() - context->updated_ms < 2000;
 }
 
+std::uintptr_t RowHandle(std::uintptr_t handle, std::string* name) {
+    const auto table = mem::ReadPtr(handle + off::FDataTableRowHandle::DataTable);
+    ue::FName key{};
+    if (!ue::IsRegistered(table) || !ue::IsA(table, g_table_class) ||
+        !mem::Read(handle + off::FDataTableRowHandle::RowName, &key)) return 0;
+    const auto row_struct = mem::ReadPtr(table + off::UDataTable::RowStruct);
+    if (!ue::IsRegistered(row_struct) || ue::ObjectName(row_struct) != "HitboxDataRow" ||
+        mem::ReadOr<std::uint32_t>(row_struct + off::UStruct::PropertiesSize, 0) != gen::size::FHitboxDataRow) return 0;
+    *name = ue::ObjectName(table) + ":" + ue::NameToString(key);
+    return ue::DataTableRow(table, key);
+}
+
 std::uintptr_t HitRow(std::uintptr_t request, std::string* name) {
     const auto box = request + off::FHitRequest::m_HitBox;
     const auto cached = mem::ReadOr<std::uint8_t>(box + off::FHitBox::m_bCachedRowSetup, 0xFF);
     if (cached == 1) { *name = "inline"; return box + off::FHitBox::m_CachedRow; }
     if (cached != 0) return 0;
-    const auto handle = box + off::FHitBox::m_HitRow;
-    const auto table = mem::ReadPtr(handle + off::FDataTableRowHandle::DataTable);
-    ue::FName key{};
-    if (!ue::IsLive(table) || !ue::IsA(table, g_table_class) ||
-        !mem::Read(handle + off::FDataTableRowHandle::RowName, &key)) return 0;
-    const auto row_struct = mem::ReadPtr(table + off::UDataTable::RowStruct);
-    if (!ue::IsLive(row_struct) || ue::ObjectName(row_struct) != "HitboxDataRow" ||
-        mem::ReadOr<int>(row_struct + off::UStruct::PropertiesSize, 0) != gen::size::FHitboxDataRow) return 0;
-    *name = ue::ObjectName(table) + ":" + ue::NameToString(key);
-    return ue::DataTableRow(table, key);
+    if (const auto row = RowHandle(box + off::FHitBox::m_HitRow, name)) return row;
+    const auto settings = g_settings_default.load(std::memory_order_acquire);
+    if (!ue::IsRegistered(settings)) return 0;
+    const auto row = RowHandle(settings + off::USCGameSettings::m_DefaultHitbox, name);
+    if (row) *name = "settings-default:" + *name;
+    return row;
 }
 
 float DefaultDamage(std::uintptr_t pawn, std::uint8_t guard_type, std::uintptr_t* db) {
@@ -82,7 +92,7 @@ float DefaultDamage(std::uintptr_t pawn, std::uint8_t guard_type, std::uintptr_t
     if (!ue::IsLive(defense)) return NAN;
     const auto weak = StaticGuardValue(defense);
     *db = weak ? ue::ResolveWeak(weak) : 0;
-    if (!ue::IsLive(*db) || !ue::IsA(*db, g_guard_class)) return NAN;
+    if (!ue::IsRegistered(*db) || !ue::IsA(*db, g_guard_class)) return NAN;
     std::uint32_t at = off::UGuardDB::m_DefaultHitImpact;
     if (guard_type == gen::value::EGuardType::Guard) at = off::UGuardDB::m_DefaultGuardImpact;
     if (guard_type == gen::value::EGuardType::Deflect) at = off::UGuardDB::m_DefaultDeflectImpact;
@@ -151,6 +161,12 @@ bool ObserveHit(void* component, const void* result, const void* request_ptr) {
 }  // namespace
 
 void InstallObserver(std::uintptr_t base, std::uintptr_t pawn) {
+    if (!g_settings_default.load(std::memory_order_acquire) && GetTickCount64() >= g_settings_retry_ms) {
+        g_settings_retry_ms = GetTickCount64() + 1000;
+        const auto cls = ue::FindClass("SCGameSettings");
+        const auto defaults = cls ? ue::DefaultObject(cls) : 0;
+        if (ue::IsRegistered(defaults)) g_settings_default.store(defaults, std::memory_order_release);
+    }
     if (g_ready.load() || g_failed || !ue::IsLive(pawn)) return;
     const auto hit = mem::ReadPtr(pawn + off::AFightingCharacter::m_HitComponent);
     if (!ue::IsLive(hit) || !hooks::Resolve(base, gen::hook::ValidateHit, hit).ready()) return;
@@ -172,6 +188,18 @@ void InstallObserver(std::uintptr_t base, std::uintptr_t pawn) {
     SC_LOG("[player-hits] H6 uninstall/reinstall -> %s; forwarding=MC_ONLY (native control remains observable)", reinstalled ? "PASS" : "FAIL");
     g_failed = !reinstalled;
     g_ready.store(reinstalled, std::memory_order_release);
+    if (reinstalled) {
+        std::uintptr_t db = 0;
+        const float hit = DefaultDamage(pawn, gen::value::EGuardType::None, &db);
+        const float guard = DefaultDamage(pawn, gen::value::EGuardType::Guard, &db);
+        const float deflect = DefaultDamage(pawn, gen::value::EGuardType::Deflect, &db);
+        std::string row_name;
+        const auto settings = g_settings_default.load(std::memory_order_acquire);
+        const auto row = ue::IsRegistered(settings) ? RowHandle(settings + off::USCGameSettings::m_DefaultHitbox, &row_name) : 0;
+        SC_LOG("[player-hits] read-only defaults: GuardDB=%s flags=0x%X damage(hit/guard/deflect)=%.3f/%.3f/%.3f "
+               "settings_hitbox=%s resolved=%d", ue::ObjectName(db).c_str(), ue::FlagsOf(db), hit, guard, deflect,
+               row_name.c_str(), row != 0);
+    }
 }
 
 bool UninstallObserver() {

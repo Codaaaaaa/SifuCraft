@@ -14,6 +14,7 @@
 #include "combat/activation_tracker.h"
 #include "combat/damage_ledger.h"
 #include "combat/hit_sample.h"
+#include "combat/light_impact.h"
 #include "collision/voxels.h"
 #include "collision/walk_check.h"
 #include "core/build_guard.h"
@@ -34,6 +35,47 @@ int g_failures = 0;
 void Expect(bool condition, const char* what) {
     std::printf("%s  %s\n", condition ? "ok  " : "FAIL", what);
     if (!condition) ++g_failures;
+}
+
+struct ImpactArguments {
+    void* component = nullptr;
+    std::uint8_t type = 0xFF, quadrant = 0xFF, cardinal = 0xFF, height = 0xFF;
+    float freeze = -1, stun = -1, damage = -1, extra = -1;
+    bool first = true, second = true;
+    void* instigator = reinterpret_cast<void*>(1);
+    sifucraft::ue::FVector location{}, direction{};
+    unsigned calls = 0;
+} g_impact;
+
+void CaptureImpact(void* component, std::uint8_t type, std::uint8_t quadrant, std::uint8_t cardinal,
+                   std::uint8_t height, float freeze, float stun, const sifucraft::ue::FVector* location,
+                   float damage, float extra, bool first, bool second, void* instigator,
+                   const sifucraft::ue::FVector* direction) {
+    g_impact = {component, type, quadrant, cardinal, height, freeze, stun, damage, extra,
+                first, second, instigator, *location, *direction, g_impact.calls + 1};
+}
+
+void TestLightImpactCall() {
+    using namespace sifucraft;
+    // Volatile pointer forces the same indirect x64 call as the generated in-game RVA.
+    combat::LaunchImpactFn volatile entry = &CaptureImpact;
+    int component = 0;
+    const ue::FVector location{12.5f, -91.25f, 103.75f};
+    combat::LaunchLightImpact(entry, &component, location, 18.125f);
+    Expect(g_impact.calls == 1 && g_impact.component == &component &&
+           g_impact.type == gen::value::EImpactType::Hit &&
+           g_impact.quadrant == gen::value::EQuadrantTypes::FrontLeft &&
+           g_impact.cardinal == gen::value::ESCCardinalPoints::North &&
+           g_impact.height == gen::value::EHeight::Mid,
+           "light impact x64 call keeps this and all byte-sized enum arguments");
+    Expect(g_impact.freeze == 0 && g_impact.stun == 0.15f && g_impact.damage == 18.125f &&
+           g_impact.extra == 0 && !g_impact.first && !g_impact.second && !g_impact.instigator &&
+           g_impact.location.x == location.x && g_impact.location.y == location.y && g_impact.location.z == location.z &&
+           g_impact.direction.x == 0 && g_impact.direction.y == 0 && g_impact.direction.z == 0,
+           "light impact x64 stack preserves float, vector, bool and null-instigator arguments");
+    Expect(combat::ImpactDamage(18, 60, true) == 18 && combat::ImpactDamage(27, 6, true) == 6 &&
+           combat::ImpactDamage(27, 6, false) == 27,
+           "light impact preserves ordinary, lethal and cannot-die wrapper damage semantics");
 }
 
 void TestGuardedReads() {
@@ -654,6 +696,8 @@ void TestLiveHitSamples() {
     Expect(combat::ReadCachedHitRequest(address, &hit) && !combat::ResolveHitDamage(hit, NAN, &damage) &&
            combat::ResolveHitDamage(hit, 15, &damage) && damage == 15,
            "default hit damage never treats an unused raw field as zero or as the effective damage");
+    Expect(combat::ResolveHitDamage(hit, 0, &damage) && damage == 0,
+           "a verified zero default is distinct from an unresolved default");
     put(impact + off::FHitImpact::m_bUseDamage, std::uint8_t{1});
     Expect(!combat::ReadCachedHitRequest(address, &hit), "live hit parser refuses non-finite explicit damage");
     put(impact + off::FHitImpact::m_fDamage, 15.0f);
@@ -749,6 +793,7 @@ int main(int argc, char** argv) {
         Expect(!combat::ValidDamage(bad), "combat refuses unknown damage flags");
     }
     TestGuardedReads();
+    TestLightImpactCall();
     TestBuildGuard();
     TestVtableHook();
     TestKeyMap();
