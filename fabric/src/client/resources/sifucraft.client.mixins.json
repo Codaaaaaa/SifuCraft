@@ -1,0 +1,17 @@
+{
+	"required": true,
+	"package": "dev.sifucraft.client.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"MinecraftMixin",
+		"MouseHandlerAccessor",
+		"MouseHandlerMixin",
+		"SDLEventHandlerMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}

@@ -1,0 +1,32 @@
+{
+	"schemaVersion": 1,
+	"id": "sifucraft",
+	"version": "${version}",
+	"name": "SifuCraft",
+	"description": "Plays Minecraft rules inside Sifu's world: the bridge between a running Sifu and this client.",
+	"authors": [
+		"Codaaaaaa"
+	],
+	"contact": {
+		"sources": "https://github.com/Codaaaaaa/SifuCraft"
+	},
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"dev.sifucraft.client.SifuCraftClient"
+		]
+	},
+	"mixins": [
+		"sifucraft.mixins.json",
+		{
+			"config": "sifucraft.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

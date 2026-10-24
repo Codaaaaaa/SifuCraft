@@ -1,0 +1,33 @@
+# Local design notes, research log and compatibility matrix (kept out of the repo)
+/docs/
+
+# Build output
+/build/
+/out/
+/dist/
+*.o
+*.obj
+*.dll
+*.exe
+*.pdb
+*.lib
+*.a
+
+# Java / Gradle
+.gradle/
+/fabric/build/
+/fabric/run/
+*.class
+
+# Python
+__pycache__/
+*.pyc
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+
+# Probe logs copied out of the game folder
+/logs/

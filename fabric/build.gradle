@@ -1,0 +1,70 @@
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+// The bridge talks to Sifu through kernel32 via the Foreign Function & Memory API.
+def nativeAccess = '--enable-native-access=ALL-UNNAMED'
+
+loom {
+	// main: bridge + common code; client: Minecraft client integration.
+	splitEnvironmentSourceSets()
+
+	mods {
+		"sifucraft" {
+			sourceSet sourceSets.main
+			sourceSet sourceSets.client
+		}
+	}
+
+	runs {
+		client {
+			vmArg nativeAccess
+			// Development: enter the superflat test world directly and keep Sifu in the foreground.
+			property "sifucraft.devWorld", "true"
+			property "sifucraft.hideWindow", "true"
+			property "sifucraft.exitWithSifu", "true"
+		}
+	}
+}
+
+sourceSets {
+	// Standalone stand-in for the mod, used to validate the protocol against Sifu.
+	stub {
+		compileClasspath += sourceSets.main.output
+		runtimeClasspath += sourceSets.main.output
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+
+processResources {
+	def version = project.version
+	inputs.property "version", version
+
+	filesMatching("fabric.mod.json") {
+		expand "version": version
+	}
+}
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(25)
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+	it.options.compilerArgs += ['-Xlint:all,-restricted,-serial,-processing']
+}
+
+tasks.register('runStub', JavaExec) {
+	group = 'sifucraft'
+	description = 'Runs the bridge stub (Minecraft endpoint stand-in). Pass --args="--duration 30".'
+	classpath = sourceSets.stub.runtimeClasspath
+	mainClass = 'dev.sifucraft.stub.BridgeStub'
+	jvmArgs nativeAccess
+}

@@ -1,0 +1,17 @@
+{
+	"required": true,
+	"package": "dev.sifucraft.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"mixins": [
+		"BlockCollisionsMixin",
+		"BlockItemMixin",
+		"EntityMixin",
+		"LevelMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}

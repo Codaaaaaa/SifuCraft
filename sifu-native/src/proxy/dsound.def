@@ -1,0 +1,16 @@
+; Sifu imports DSOUND.dll by ordinal (1, 3, 6, 8, 11, 12), so every ordinal must
+; match the system dsound.dll exactly.
+LIBRARY dsound.dll
+EXPORTS
+    DirectSoundCreate            = SC_DirectSoundCreate            @1
+    DirectSoundEnumerateA        = SC_DirectSoundEnumerateA        @2
+    DirectSoundEnumerateW        = SC_DirectSoundEnumerateW        @3
+    DllCanUnloadNow              = SC_DllCanUnloadNow              @4  PRIVATE
+    DllGetClassObject            = SC_DllGetClassObject            @5  PRIVATE
+    DirectSoundCaptureCreate     = SC_DirectSoundCaptureCreate     @6
+    DirectSoundCaptureEnumerateA = SC_DirectSoundCaptureEnumerateA @7
+    DirectSoundCaptureEnumerateW = SC_DirectSoundCaptureEnumerateW @8
+    GetDeviceID                  = SC_GetDeviceID                  @9
+    DirectSoundFullDuplexCreate  = SC_DirectSoundFullDuplexCreate  @10
+    DirectSoundCreate8           = SC_DirectSoundCreate8           @11
+    DirectSoundCaptureCreate8    = SC_DirectSoundCaptureCreate8    @12
