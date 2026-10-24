@@ -51,8 +51,9 @@ FUNCTIONS = {
 # Virtual slots used for calls (dispatched through the object's own vtable): introducing class -> methods.
 CALL_SLOTS = {"UObject": ["ProcessEvent"]}
 
-# Short C++ namespaces for PDB template types used by read-only combat inspection.
+# Short C++ namespaces for PDB template types used by native inspection.
 TYPE_ALIASES = {
+    "ScriptDelegate": "TScriptDelegate<FWeakObjectPtr>",
     "DataTableMap": "TMap<FName,unsigned char *,FDefaultSetAllocator,TDefaultMapHashableKeyFuncs<FName,unsigned char *,0> >",
     "DataTableSet": "TSet<TTuple<FName,unsigned char *>,TDefaultMapHashableKeyFuncs<FName,unsigned char *,0>,FDefaultSetAllocator>",
     "DataTableSparse": "TSparseArray<TSetElement<TTuple<FName,unsigned char *> >,TSparseArrayAllocator<TSizedDefaultAllocator<32>,FDefaultBitArrayAllocator> >",
@@ -67,6 +68,10 @@ TYPE_ALIASES = {
 
 # type -> members. A member may live in a base class; its offset is then made absolute.
 MEMBERS = {
+    "UWidget": ["Visibility", "VisibilityDelegate", "NativeBindings", "Slot"],
+    "UUserWidget": ["WidgetTree"],
+    "UPanelSlot": ["Parent", "Content"],
+    "ScriptDelegate": ["Object", "FunctionName"],
     "FD3D11DynamicRHI": ["Viewports"],
     "FD3D11Viewport": ["WindowHandle", "SwapChain", "PixelColorSpace"],
     # CoreUObject
@@ -182,6 +187,7 @@ BITFIELDS = {
 }
 
 ENUMS = {
+    "ESlateVisibility": ["Visible", "Collapsed", "Hidden", "HitTestInvisible", "SelfHitTestInvisible"],
     "EColorSpaceAndEOTF": ["EUnknown", "ERec709_sRGB", "ERec709_Linear", "ERec2020_PQ"],
     "EFactionsEnums": ["TMP_Neutral", "Count"],
     "EGuardType": ["None", "Guard", "Deflect", "Count"],

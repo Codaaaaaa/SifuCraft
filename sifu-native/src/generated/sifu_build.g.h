@@ -20,6 +20,23 @@ inline constexpr std::uintptr_t GDynamicRHI = 0x5E602C0;
 }  // namespace rva
 
 namespace off {
+namespace UWidget {
+inline constexpr std::uint32_t Visibility = 0xC3;
+inline constexpr std::uint32_t VisibilityDelegate = 0x80;
+inline constexpr std::uint32_t NativeBindings = 0xF8;
+inline constexpr std::uint32_t Slot = 0x28;
+}
+namespace UUserWidget {
+inline constexpr std::uint32_t WidgetTree = 0x1E0;
+}
+namespace UPanelSlot {
+inline constexpr std::uint32_t Parent = 0x28;
+inline constexpr std::uint32_t Content = 0x30;
+}
+namespace ScriptDelegate {
+inline constexpr std::uint32_t Object = 0x0;
+inline constexpr std::uint32_t FunctionName = 0x8;
+}
 namespace FD3D11DynamicRHI {
 inline constexpr std::uint32_t Viewports = 0x2690;
 }
@@ -519,6 +536,13 @@ inline constexpr Target InternalApplyDamage{"InternalApplyDamage", 0x4897AC0, 0x
 }  // namespace hook
 
 namespace value {
+namespace ESlateVisibility {
+inline constexpr std::int32_t Visible = 0;
+inline constexpr std::int32_t Collapsed = 1;
+inline constexpr std::int32_t Hidden = 2;
+inline constexpr std::int32_t HitTestInvisible = 3;
+inline constexpr std::int32_t SelfHitTestInvisible = 4;
+}
 namespace EColorSpaceAndEOTF {
 inline constexpr std::int32_t EUnknown = 0;
 inline constexpr std::int32_t ERec709_sRGB = 33;

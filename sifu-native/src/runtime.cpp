@@ -37,6 +37,7 @@
 #include "ue/objects.h"
 #include "ue/reflection.h"
 #include "ue/transform.h"
+#include "ui/player_hud.h"
 
 namespace sifucraft::runtime {
 
@@ -704,6 +705,7 @@ void Run(std::uintptr_t image_base) {
             scope.enabled = g_bridge.peer_connected() && frame.input_owner == InputOwner::Minecraft &&
                 hooks::PoseActive() && McAnchoredTo(ownership.epoch(), generation);
             render::Maintain(image_base, scope);
+            ui::UpdateHudContext(world, player.controller, player.pawn, scope);
         }
         if (settings.stage >= 7) {
             combat::damage::InstallObserver(image_base, player.pawn);
@@ -780,6 +782,7 @@ void Run(std::uintptr_t image_base) {
             if (settings.stage >= 7) SC_LOG("[combat] %s", combat::damage::TakeStats().c_str());
             if (settings.stage >= 7) SC_LOG("[player-hits] %s", combat::player_hits::TakeStats().c_str());
             if (settings.stage >= 8) SC_LOG("[overlay] %s", render::TakeStats().c_str());
+            if (settings.stage >= 8) SC_LOG("[hud] %s", ui::TakeHudStats().c_str());
             collision_schedule.FlushCheck();
         }
     }

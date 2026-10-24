@@ -22,8 +22,9 @@ std::atomic<IDXGISwapChain*> target{nullptr};
 std::atomic<std::int32_t> pixel_color_space{-1};
 std::atomic<bool> exiting{false}, drawing{false}, capture{false}, pattern{false};
 std::atomic<std::uint64_t> presents{0}, draws{0}, uploads{0}, expired{0}, failures{0}, active{0};
-SRWLOCK scope_lock = SRWLOCK_INIT, render_lock = SRWLOCK_INIT;
+SRWLOCK scope_lock = SRWLOCK_INIT, render_lock = SRWLOCK_INIT, presentation_lock = SRWLOCK_INIT;
 Scope current;
+Presentation presented;
 hooks::VtableHook hook;
 gen::hook::Target plan{"Present", 0, 8 * sizeof(void*), 0};
 overlay::Reader reader;
@@ -34,10 +35,6 @@ std::uint64_t received_ms = 0;
 // by the CRT under the loader lock; device changes reset this object on the render thread.
 Compositor& compositor = *new Compositor;
 bool last_error_logged = false;
-
-bool SameScope(const Scope& a, const Scope& b) {
-    return a.mc_session == b.mc_session && a.sifu_session == b.sifu_session && a.world == b.world && a.epoch == b.epoch;
-}
 
 bool DxgiCode(std::uintptr_t address) {
     MEMORY_BASIC_INFORMATION page{};
@@ -101,13 +98,13 @@ bool SaveCapture(ID3D11Device* device, ID3D11Texture2D* image, const wchar_t* fi
     return false;
 }
 
-void Paint(IDXGISwapChain* chain) {
+Presentation Paint(IDXGISwapChain* chain) {
     const auto color_space = pixel_color_space.load();
     // HDR/PQ and linear scRGB require a separate luminance conversion; do not blend SDR UI as-is.
     if (color_space != gen::value::EColorSpaceAndEOTF::ERec709_sRGB) {
         if (!last_error_logged) SC_LOG("[overlay] unsupported swap-chain color space %u", color_space);
         last_error_logged = true;
-        return;
+        return {};
     }
     // One diagnostic frame, including transparent, premultiplied and inverse pixels, on the
     // real game device before enabling live image consumption. Does not require input ownership.
@@ -115,7 +112,7 @@ void Paint(IDXGISwapChain* chain) {
         Com<ID3D11Device> device;
         Com<ID3D11Texture2D> image;
         if (FAILED(chain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(device.put()))) ||
-            FAILED(chain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(image.put())))) return;
+            FAILED(chain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(image.put())))) return {};
         overlay::Frame test;
         test.header = {overlay::Ready, 4, 4, 16, 1, 1, 1, overlay::kPremultiplied, 64, 1, 1, 2, 2, 1, 0};
         test.pixels.assign(64, 0);
@@ -128,12 +125,12 @@ void Paint(IDXGISwapChain* chain) {
         SC_LOG("[overlay] game-device pattern %s HRESULT=0x%08lX capture=%d backbuffer=%ux%u format=%u colorspace=%u",
             SUCCEEDED(result) ? "PASS" : "FAIL", static_cast<unsigned long>(result), saved, desc.Width, desc.Height, desc.Format, color_space);
         compositor.Reset(); received_ms = 0;
-        return;
+        return {};
     }
     Scope scope;
     AcquireSRWLockShared(&scope_lock); scope = current; ReleaseSRWLockShared(&scope_lock);
     const auto now = GetTickCount64();
-    if (!scope.enabled || now - scope.updated_ms > 250) { received_ms = 0; return; }
+    if (!scope.enabled || !Recent(scope.updated_ms, now)) { received_ms = 0; return {}; }
     if (!SameScope(scope, previous_scope)) {
         received_ms = 0; previous_scope = scope;
     }
@@ -141,19 +138,19 @@ void Paint(IDXGISwapChain* chain) {
     if (fresh) { received_ms = now; ++uploads; }
     Com<ID3D11Texture2D> backbuffer;
     HRESULT hr = chain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(backbuffer.put()));
-    if (FAILED(hr)) return;
+    if (FAILED(hr)) return {};
     D3D11_TEXTURE2D_DESC desc{}; backbuffer->GetDesc(&desc);
     reader.SetViewport(desc.Width, desc.Height);
-    if (!received_ms || now - received_ms > 250) { ++expired; return; }
+    if (!Recent(received_ms, now)) { ++expired; return {}; }
     Com<ID3D11Device> device;
-    if (FAILED(chain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(device.put())))) return;
+    if (FAILED(chain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(device.put())))) return {};
     hr = compositor.Draw(device.get(), backbuffer.get(), latest, fresh);
     if (FAILED(hr)) {
         ++failures;
         if (!last_error_logged) SC_LOG("[overlay] draw failed HRESULT=0x%08lX", static_cast<unsigned long>(hr));
         last_error_logged = true;
         compositor.Reset(); received_ms = 0;
-        return;
+        return {};
     }
     if (draws.fetch_add(1) == 0) SC_LOG("[overlay] first draw: source=%ux%u backbuffer=%ux%u format=%u frame=%llu",
         latest.header.width, latest.header.height, desc.Width, desc.Height, desc.Format,
@@ -162,19 +159,29 @@ void Paint(IDXGISwapChain* chain) {
         const bool saved = SaveCapture(device.get(), backbuffer.get());
         SC_LOG("[overlay] diagnostic capture %s", saved ? "saved to SifuCraft/overlay.bmp" : "failed");
     }
+    return {scope, received_ms, 0};
 }
 
 HRESULT WINAPI PresentHook(IDXGISwapChain* chain, UINT interval, UINT flags) {
     active.fetch_add(1);
     ++presents;
+    Presentation candidate;
+    bool attempted = false;
     if (!exiting.load() && drawing.load() && chain == target.load() && !(flags & DXGI_PRESENT_TEST) &&
         TryAcquireSRWLockExclusive(&render_lock)) {
-        try { Paint(chain); }
+        attempted = true;
+        try { candidate = Paint(chain); }
         catch (...) { ++failures; received_ms = 0; }
         ReleaseSRWLockExclusive(&render_lock);
     }
     const auto forward = original.load();
     const HRESULT hr = forward ? forward(chain, interval, flags) : DXGI_ERROR_INVALID_CALL;
+    if (attempted) {
+        // Occluded and failed Presents do not prove that the user has a replacement HUD.
+        if (hr == S_OK && candidate.image_ms) candidate.presented_ms = GetTickCount64();
+        else candidate = {};
+        AcquireSRWLockExclusive(&presentation_lock); presented = candidate; ReleaseSRWLockExclusive(&presentation_lock);
+    }
     active.fetch_sub(1);
     return hr;
 }
@@ -227,7 +234,7 @@ void Maintain(std::uintptr_t image_base, const Scope& scope) {
     const auto pattern_request = root + L"\\overlay-pattern";
     if (GetFileAttributesW(pattern_request.c_str()) != INVALID_FILE_ATTRIBUTES && DeleteFileW(pattern_request.c_str())) pattern = true;
     auto* chain = FindSwapChain(image_base);
-    if (!chain) return;
+    if (!chain) { drawing = false; return; }
     const auto vtable = mem::ReadPtr(reinterpret_cast<std::uintptr_t>(chain));
     if (hook.installed()) {
         if (vtable == plan.vftable) target = chain;
@@ -256,6 +263,12 @@ std::string TakeStats() {
         static_cast<unsigned long long>(presents.load()), static_cast<unsigned long long>(uploads.load()),
         static_cast<unsigned long long>(draws.load()), static_cast<unsigned long long>(expired.load()),
         static_cast<unsigned long long>(failures.load()));
+}
+Presentation LastPresentation() {
+    if (exiting.load() || !drawing.load()) return {};
+    Presentation shown;
+    AcquireSRWLockShared(&presentation_lock); shown = presented; ReleaseSRWLockShared(&presentation_lock);
+    return shown;
 }
 void OnProcessExit() { exiting = true; drawing = false; }
 }

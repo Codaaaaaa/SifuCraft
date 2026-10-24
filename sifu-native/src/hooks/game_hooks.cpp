@@ -16,6 +16,8 @@
 #include "input/input_router.h"
 #include "input/key_map.h"
 #include "probe/probe.h"
+#include "render/overlay.h"
+#include "ui/player_hud.h"
 #include "ue/function_call.h"
 #include "ue/names.h"
 #include "ue/objects.h"
@@ -283,6 +285,8 @@ void EngineTickHook(void* engine, float delta_seconds, bool idle_mode) {
     if (g_stage >= 6) blocks::ApplyOnGameThread(g_image_base);
     if (g_stage >= 7) combat::damage::ApplyOnGameThread(g_image_base);
     g_engine_tick.original<EngineTickFn>()(engine, delta_seconds, idle_mode);
+    if (g_stage >= 8) ui::ApplyHudOnGameThread(g_image_base,
+        input::Router().owner() == protocol::InputOwner::Minecraft && PoseActive(), render::LastPresentation());
 }
 
 std::uintptr_t Engine() { return mem::ReadPtr(g_image_base + gen::rva::GEngine); }

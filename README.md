@@ -20,7 +20,7 @@ Sifu 与 Minecraft 作为两个独立进程运行：
 | P3 | Sifu 地形碰撞导入 Minecraft 物理 | 已通过 |
 | P4 | 方块放置/破坏的渲染与碰撞闭环 | 已通过 |
 | P5 | 敌人代理与双向伤害 | 已通过（武馆、第一关、跨图及 F8 实机验收） |
-| P6 | 核心物品系统与 GUI | S0 G2 显示已通过（手部 60 FPS）；后续物品步骤待开发 |
+| P6 | 核心物品系统与 GUI | S0 G2 显示与 S1 HUD 已通过（手部 60 FPS）；背包及后续物品待开发 |
 
 ## 目录
 
@@ -113,7 +113,7 @@ MC 位姿和重锚请求还绑定目标 Sifu 会话与世界代数；Sifu 重启
 
 离线场景可用 `sifucraft_fake_sifu.exe --enemies`，或 `--enemy-scenario` 自动测试增删、尺寸变化、激活复用和世界切换。Java 协议解析测试随 `tools/gradle.ps1 build` 运行；单独运行用 `tools/gradle.ps1 protocolTest`。日志前缀为 `[combat]`；需要查看 Minecraft 的 F3+B 碰撞箱时，可用 `tools/gradle.ps1 runClient -Psifucraft.hideWindow=false` 显示开发窗口。
 
-## GUI 帧导出（P6 S0，实验功能）
+## GUI 帧导出与玩家血条（P6 S0–S1）
 
 `runClient -Psifucraft.overlay=true` 启用透明 HUD 与第一人称手部的异步 GPU 回读，默认关闭。
 图像通过独立的共享内存三缓冲传给原生读取端，使用 RGBA8、预乘 alpha，最高 1920×1080；
@@ -121,7 +121,11 @@ MC 位姿和重锚请求还绑定目标 Sifu 会话与世界代数；Sifu 重启
 
 stage 8 在 Sifu 的 D3D11 Present 中合成 MC 图像；使用独立的 D3D11.1 状态对象隔离和恢复宿主渲染状态，
 支持 8 位及 10 位 SDR 后缓冲。MC 分辨率随 Sifu 视口调整（源图像上限 1080p），准星按最终背景反色。
-F8 交还、菜单、失去所有权或断线时停止绘制，旧帧最多复用 250 ms。背包输入和 Sifu 血条隐藏属于后续步骤。
+F8 交还、菜单、失去所有权或断线时停止绘制，旧帧最多复用 250 ms。背包输入留待后续步骤。
+stage 8 仅在 MC 接管且当前会话的图像确实合成并成功 Present 时隐藏 Sifu 玩家血条，
+叠加过期、禁用或交还控制后恢复该控件原有可见性；保留架势、敌人血条与其他界面。
+隐藏/恢复通过游戏线程的反射 `SetVisibility` 调用完成，按对象 serial 和 HUD 引用关系校验。
+日志前缀 `[hud]` 记录目标核对、隐藏、恢复和拒绝计数；S1 显示与交接恢复已通过实机验收。
 加载期间保持原版渲染；导出时跳过 MC 世界和暗角，保留原版 HUD/手部，且不修改暗角设置。
 离线验证可给 `sifucraft_fake_sifu.exe` 增加 `--overlay-output <输出.rgba>`：运行至少 30 帧后，
 保存一个 64 字节帧头及其 RGBA 像素，并检查透明背景与可见内容。格式定义在
