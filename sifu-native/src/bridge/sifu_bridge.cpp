@@ -231,6 +231,10 @@ void SifuBridge::PumpEvents() {
                 if (peer_connected_ && event.size == sizeof(EnemyDamagePayload)) damage_events_.push_back(event);
                 else ++stats_.events_unknown;
                 break;
+            case EventType::PlayerBlocked:
+                if (peer_connected_ && event.size == sizeof(PlayerBlockedPayload)) damage_events_.push_back(event);
+                else ++stats_.events_unknown;
+                break;
             default:
                 ++stats_.events_unknown;
                 break;
@@ -249,8 +253,11 @@ bool SifuBridge::SendDamageResult(const DamageResultPayload& result) {
     return self_ && peer_connected_ && Send(EventType::DamageResult, &result, sizeof(result));
 }
 
-bool SifuBridge::SendPlayerHit(const PlayerHitPayload& hit) {
-    return self_ && peer_connected_ && Send(EventType::PlayerHit, &hit, sizeof(hit));
+bool SifuBridge::SendPlayerHit(const PlayerHitPayload& hit, std::uint64_t* published_id) {
+    const auto id = next_event_id_;
+    if (!self_ || !peer_connected_ || !Send(EventType::PlayerHit, &hit, sizeof(hit))) return false;
+    if (published_id) *published_id = id;
+    return true;
 }
 
 bool SifuBridge::Send(EventType type, const void* payload, std::uint32_t size) {
@@ -373,6 +380,7 @@ void SifuBridge::ReadPeerSnapshot() {
         peer_state_.sifu_session = copy.sifu_session;
         peer_state_.world_generation = copy.world_generation;
         peer_state_.gui_input_ack = copy.gui_input_ack;
+        peer_state_.use_binding = copy.use_binding;
         return;
     }
 }

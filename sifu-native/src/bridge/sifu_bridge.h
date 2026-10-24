@@ -49,6 +49,7 @@ struct McState {
     std::uint64_t sifu_session = 0;
     std::uint32_t world_generation = 0;
     std::uint32_t gui_input_ack = 0;
+    std::uint32_t use_binding = 0;
 };
 
 // The voxel grid Sifu currently publishes (protocol::CollisionManifest).
@@ -102,7 +103,7 @@ public:
     void PublishEnemies(std::uint32_t world_generation, const std::vector<protocol::EnemyEntry>& entries);
     void DrainEnemyDamage(std::vector<protocol::Event>* events);
     bool SendDamageResult(const protocol::DamageResultPayload& result);
-    bool SendPlayerHit(const protocol::PlayerHitPayload& hit);
+    bool SendPlayerHit(const protocol::PlayerHitPayload& hit, std::uint64_t* published_id = nullptr);
     const McState& peer_state() const { return peer_state_; }
     // The latest consistent block table; kept while Minecraft is away (its world keeps the blocks).
     const BlockList& blocks() const { return blocks_; }

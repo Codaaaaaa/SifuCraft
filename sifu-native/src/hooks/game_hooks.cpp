@@ -8,6 +8,7 @@
 
 #include "blocks/block_mirror.h"
 #include "combat/damage.h"
+#include "combat/shield_timing.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "generated/sifu_build.g.h"
@@ -404,7 +405,7 @@ bool InputKeyHook(void* controller, FKeyRaw* key, int event, float amount_depres
         int action = 0;
         const bool has_action = input::MapAction(event, &action);
         const bool to_minecraft =
-            g_stage >= 3 && has_action && !gamepad && input::Router().OnKey(info.mapped, *info.name, action);
+            g_stage >= 3 && has_action && !gamepad && input::Router().OnKey(info.mapped, *info.name, action, combat::GameSeconds(g_image_base));
         if (g_logged_key_events < kMaxLoggedKeyEvents) {
             ++g_logged_key_events;
             SC_LOG("[input] key %-18s %-11s -> %s %d action=%s%s -> %s", info.name->c_str(), input::EventName(event),

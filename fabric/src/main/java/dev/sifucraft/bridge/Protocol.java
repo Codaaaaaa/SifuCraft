@@ -9,7 +9,7 @@ public final class Protocol {
     private Protocol() {}
 
     public static final int MAGIC = 0x52434653; // "SFCR"
-    public static final int VERSION = 14;
+    public static final int VERSION = 17;
     public static final String MAPPING_NAME = "Local\\SifuCraft.Bridge";
     public static final int MAPPING_SIZE = 0x10000;
 
@@ -34,6 +34,9 @@ public final class Protocol {
     public static final int EVENT_PLAYER_HIT = 8;
     public static final int EVENT_GUI_MOUSE_MOTION = 9;
     public static final int GUI_MOUSE_SIZE = 24;
+    public static final int EVENT_PLAYER_BLOCKED = 10, PLAYER_BLOCKED_SIZE = 32;
+    public static final int HIT_PERFECT_WINDOW = 1 << 3, BLOCKED_PERFECT = 1;
+    public static final int HIT_GUARD_BREAKER = 1 << 4;
     public static final int HIT_CAN_DEFEND = 1;
     public static final int HIT_PARRIABLE = 1 << 1;
     public static final int HIT_CAN_BE_LETHAL = 1 << 2;
@@ -153,6 +156,7 @@ public final class Protocol {
         public static final int SIFU_SESSION = 112;
         public static final int WORLD_GENERATION = 120;
         public static final int GUI_INPUT_ACK = 124;
+        public static final int USE_BINDING = 128;
     }
 
     /** CollisionManifest (seqlock, written by Sifu): the current voxel grid file. */
@@ -266,6 +270,7 @@ public final class Protocol {
         VERSION,
         SNAPSHOT_GUI_AVAILABLE, MC_GUI_AVAILABLE, MC_GUI_OPEN,
         EVENT_GUI_MOUSE_MOTION, GUI_MOUSE_SIZE,
+        EVENT_PLAYER_BLOCKED, PLAYER_BLOCKED_SIZE, HIT_PERFECT_WINDOW, BLOCKED_PERFECT, HIT_GUARD_BREAKER,
         Float.floatToRawIntBits(PLAYER_SIFU_HP_PER_MC_HP),
         Float.floatToRawIntBits(ENEMY_SIFU_HP_PER_MC_HP),
         MAPPING_SIZE,
@@ -303,6 +308,7 @@ public final class Protocol {
         McSnap.SIFU_SESSION,
         McSnap.WORLD_GENERATION,
         McSnap.GUI_INPUT_ACK,
+        McSnap.USE_BINDING,
         SIFU_TO_MC_RING_OFFSET,
         MC_TO_SIFU_RING_OFFSET,
         Ring.SIZE,

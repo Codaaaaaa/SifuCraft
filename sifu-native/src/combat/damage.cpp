@@ -10,6 +10,7 @@
 
 #include "combat/damage_ledger.h"
 #include "combat/light_impact.h"
+#include "combat/shield_ledger.h"
 #include "combat/player_hits.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
@@ -41,6 +42,7 @@ struct Job {
     std::uint64_t session = 0, id = 0, queued_ms = 0;
     protocol::EnemyDamagePayload payload{};
     Enemies::Target target{};
+    bool shield_feedback = false;
 };
 SRWLOCK g_lock = SRWLOCK_INIT;
 Context g_context;
@@ -48,6 +50,8 @@ std::deque<Job> g_jobs;
 std::size_t g_inflight = 0;
 std::vector<Reply> g_replies;
 DamageLedger g_ledger;
+ShieldLedger g_shield_ledger;
+std::atomic<bool> g_shield_failed{false};
 hooks::VtableHook g_observer;
 LaunchImpactFn g_launch = nullptr;
 std::uintptr_t g_health_class = 0, g_hit_class = 0, g_settings_class = 0, g_settings = 0, g_table_class = 0;
@@ -105,6 +109,7 @@ void FinishLocked(const Job& job, const protocol::DamageResultPayload& result, b
 
 protocol::DamageResultPayload Apply(std::uintptr_t base, const Context& context, const Job& job) {
     if (!g_ready.load(std::memory_order_acquire) || g_failed.load()) return Result(job, DamageOutcome::Unavailable);
+    if (job.shield_feedback && g_shield_failed.load()) return Result(job, DamageOutcome::Unavailable);
     if (!context.active || input::Router().owner() != protocol::InputOwner::Minecraft || !hooks::PoseActive() ||
         job.session != context.session || job.payload.anchor_epoch != context.epoch) return Result(job, DamageOutcome::NotOwned);
     const auto world = mem::ReadPtr(base + gen::rva::GWorld);
@@ -150,19 +155,25 @@ protocol::DamageResultPayload Apply(std::uintptr_t base, const Context& context,
     }
     const float requested = job.payload.mc_damage * protocol::kEnemySifuHpPerMcHp;
     Application observation{health_component};
-    g_application = &observation;
+    g_application = job.shield_feedback ? nullptr : &observation;
     LaunchLightImpact(g_launch, reinterpret_cast<void*>(hit_component), location,
                       ImpactDamage(requested, health.health, health.can_die));
     g_application = nullptr;
     const float after = mem::ReadOr<float>(health_component + off::UHealthComponent::m_fHealth, NAN);
     const float lost = std::isfinite(after) ? std::max(0.0f, health.health - after) : 0;
-    if (!std::isfinite(after) || observation.calls > 1 || (lost > 0 && observation.calls != 1)) {
+    if (!job.shield_feedback && (!std::isfinite(after) || observation.calls > 1 || (lost > 0 && observation.calls != 1))) {
         g_mismatch.fetch_add(1, std::memory_order_relaxed);
         g_failed.store(true); // no further game calls until the mismatch has been investigated
     }
-    const auto outcome = lost > 0 ? DamageOutcome::Applied : DamageOutcome::Invincible;
-    if (outcome == DamageOutcome::Applied) g_applied.fetch_add(1, std::memory_order_relaxed);
-    if (g_logged++ < 200) {
+    const auto outcome = job.shield_feedback ? (after == health.health ? DamageOutcome::Applied : DamageOutcome::Unavailable)
+                                            : (lost > 0 ? DamageOutcome::Applied : DamageOutcome::Invincible);
+    if (!job.shield_feedback && outcome == DamageOutcome::Applied) g_applied.fetch_add(1, std::memory_order_relaxed);
+    if (job.shield_feedback) {
+        if (!std::isfinite(after) || after != health.health) g_shield_failed.store(true);
+        if (g_logged++ < 200) SC_LOG("[shield] perfect feedback event=%llu enemy=%u/%u HP=%.3f->%.3f stun=%.3f outcome=%u%s",
+            static_cast<unsigned long long>(job.id), job.payload.enemy_id, job.payload.spawn, health.health, after,
+            kLightStunSeconds, static_cast<unsigned>(outcome), g_shield_failed.load() ? " DISABLED: unexpected health change" : "");
+    } else if (g_logged++ < 200) {
         SC_LOG("[combat] damage event=%llu session=%016llX enemy=%u/%u world=%u mc=%.3f requested=%.3f "
                "HP=%.3f->%.3f observed=%u outcome=%u impact=%u power=%u stun=%.3f row=%s%s", static_cast<unsigned long long>(job.id),
                static_cast<unsigned long long>(job.session), job.payload.enemy_id, job.payload.spawn,
@@ -217,6 +228,8 @@ void UpdateContext(std::uintptr_t world, std::uint32_t generation, std::uintptr_
                    std::uint32_t epoch, std::uint64_t peer_session, const std::vector<Enemies::Target>& targets) {
     const auto identity = ue::IdentityOf(pawn);
     AcquireSRWLockExclusive(&g_lock);
+    if (g_context.world != world || g_context.generation != generation || g_context.pawn != pawn || g_context.pawn_identity != identity || g_context.epoch != epoch ||
+        g_context.session != peer_session || g_context.active != (active && identity.valid())) g_shield_ledger.Reset();
     g_context = {world, pawn, identity, generation, epoch, peer_session, active && identity.valid(), targets};
     g_ledger.SetSession(peer_session);
     ReleaseSRWLockExclusive(&g_lock);
@@ -267,6 +280,41 @@ void DrainReplies(std::vector<Reply>* replies) {
     ReleaseSRWLockExclusive(&g_lock);
 }
 
+void RecordPlayerHit(std::uint64_t id, std::uint64_t peer_session, const protocol::PlayerHitPayload& hit, std::uint64_t created_ms) {
+    AcquireSRWLockExclusive(&g_lock);
+    if (g_context.active && g_context.session == peer_session && g_context.generation == hit.world_generation && g_context.epoch == hit.anchor_epoch)
+        g_shield_ledger.Record(id, peer_session, hit, created_ms);
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
+void SubmitBlocked(const protocol::Event& event) {
+    protocol::PlayerBlockedPayload reply{};
+    if (event.size != sizeof(reply)) return;
+    std::memcpy(&reply, event.payload, sizeof(reply));
+    AcquireSRWLockExclusive(&g_lock);
+    std::uint64_t created_ms = 0;
+    bool accepted = g_context.active && event.source_session == g_context.session && reply.world_generation == g_context.generation &&
+        reply.anchor_epoch == g_context.epoch && g_shield_ledger.Consume(event.source_session, reply, GetTickCount64(), &created_ms);
+    const auto target = std::find_if(g_context.targets.begin(), g_context.targets.end(), [&](const auto& value) {
+        return value.id == reply.attacker_id && value.spawn == reply.spawn;
+    });
+    accepted = accepted && target != g_context.targets.end();
+    bool queued = false;
+    if (accepted && (reply.flags & protocol::kBlockedPerfect) && !g_shield_failed.load() && g_jobs.size() < kMaxJobs) {
+        Job job;
+        job.session = event.source_session; job.id = event.id; job.queued_ms = created_ms;
+        job.payload = {reply.attacker_id, reply.spawn, 0, kLightStunSeconds, 0, reply.world_generation, reply.anchor_epoch, 0};
+        job.target = *target; job.shield_feedback = true;
+        g_jobs.push_back(job);
+        queued = true;
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+    static unsigned logged = 0;
+    if (logged++ < 200) SC_LOG("[shield] reply original=%llu enemy=%u/%u blocked=%.3f perfect=%d accepted=%d queued=%d",
+        static_cast<unsigned long long>(reply.origin_hit_id), reply.attacker_id, reply.spawn, reply.blocked_damage,
+        (reply.flags & protocol::kBlockedPerfect) != 0, accepted, queued);
+}
+
 void ApplyOnGameThread(std::uintptr_t base) {
     for (int i = 0; i < 8; ++i) {
         AcquireSRWLockExclusive(&g_lock);
@@ -279,7 +327,8 @@ void ApplyOnGameThread(std::uintptr_t base) {
         const auto result = Apply(base, context, job);
         if (result.result != static_cast<std::uint32_t>(DamageOutcome::Applied)) g_rejected.fetch_add(1, std::memory_order_relaxed);
         AcquireSRWLockExclusive(&g_lock);
-        FinishLocked(job, result, true);
+        if (job.shield_feedback) --g_inflight;
+        else FinishLocked(job, result, true);
         ReleaseSRWLockExclusive(&g_lock);
     }
 }

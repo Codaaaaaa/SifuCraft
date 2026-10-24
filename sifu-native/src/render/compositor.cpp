@@ -25,12 +25,17 @@ float4 readImage(float2 uv) {
     return image.Sample(nearestPixel, uv);
 }
 float4 normalPixel(Vertex vertex) : SV_Target {
-    if (inversePixel(vertex.uv)) discard;
-    return readImage(vertex.uv);
+    float4 pixel = readImage(vertex.uv);
+    // Inverse GUI blending preserves the alpha of the hand underneath. Only a pure
+    // crosshair contribution on transparent background needs the host inverse pass.
+    if (inversePixel(vertex.uv) && pixel.a == 0) discard;
+    return pixel;
 }
 float4 inversePixelShader(Vertex vertex) : SV_Target {
     if (!inversePixel(vertex.uv)) discard;
-    return float4(readImage(vertex.uv).rgb, 0);
+    float4 pixel = readImage(vertex.uv);
+    if (pixel.a != 0) discard;
+    return float4(pixel.rgb, 0);
 }
 )hlsl";
 

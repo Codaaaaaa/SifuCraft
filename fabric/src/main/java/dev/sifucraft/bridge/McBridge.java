@@ -102,6 +102,8 @@ public final class McBridge implements AutoCloseable {
     private long frame;
     private long nextEventId = 1;
     private long nextNonce = 1;
+    private int useBinding;
+    public void setUseBinding(int binding) { useBinding = binding; }
 
     private boolean peerConnected;
     private boolean peerIncompatible;
@@ -223,6 +225,11 @@ public final class McBridge implements AutoCloseable {
         b.putInt(enemyId).putInt(spawn).putFloat(damage).putFloat(stun).putInt(flags).putInt(world).putInt(epoch).putInt(0);
         long id = nextEventId;
         return send(Protocol.EVENT_ENEMY_DAMAGE, MemorySegment.ofArray(bytes)) ? id : 0;
+    }
+
+    /** Tells Sifu we are going away. Safe to call from a shutdown hook. */
+    public boolean sendPlayerBlocked(PlayerBlocked blocked) {
+        return mapping != null && peerConnected && send(Protocol.EVENT_PLAYER_BLOCKED, MemorySegment.ofArray(blocked.encode()));
     }
 
     /** Tells Sifu we are going away. Safe to call from a shutdown hook. */
@@ -619,6 +626,7 @@ public final class McBridge implements AutoCloseable {
         s.set(JAVA_LONG, McSnap.SIFU_SESSION, state.sifuSession());
         s.set(JAVA_INT, McSnap.WORLD_GENERATION, state.worldGeneration());
         s.set(JAVA_INT, McSnap.GUI_INPUT_ACK, state.guiInputAck());
+        s.set(JAVA_INT, McSnap.USE_BINDING, useBinding);
         LONG.setRelease(s, (long) McSnap.SEQ, start + 2);
     }
 

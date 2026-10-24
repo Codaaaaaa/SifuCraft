@@ -134,6 +134,16 @@ namespace DataTablePair {
 inline constexpr std::uint32_t Key = 0x0;
 inline constexpr std::uint32_t Value = 0x8;
 }
+namespace ComboAttackMap {
+inline constexpr std::uint32_t Pairs = 0x0;
+}
+namespace ComboAttackElement {
+inline constexpr std::uint32_t Value = 0x0;
+}
+namespace ComboAttackPair {
+inline constexpr std::uint32_t Key = 0x0;
+inline constexpr std::uint32_t Value = 0x8;
+}
 namespace FBoolProperty {
 inline constexpr std::uint32_t FieldSize = 0x78;
 inline constexpr std::uint32_t ByteOffset = 0x79;
@@ -175,6 +185,7 @@ namespace UWorld {
 inline constexpr std::uint32_t PersistentLevel = 0x30;
 inline constexpr std::uint32_t OwningGameInstance = 0x180;
 inline constexpr std::uint32_t Levels = 0x138;
+inline constexpr std::uint32_t TimeSeconds = 0x598;
 }
 namespace ULevel {
 inline constexpr std::uint32_t Actors = 0x98;
@@ -374,6 +385,15 @@ namespace UGuardDB {
 inline constexpr std::uint32_t m_DefaultHitImpact = 0xA70;
 inline constexpr std::uint32_t m_DefaultGuardImpact = 0xAA0;
 inline constexpr std::uint32_t m_DefaultDeflectImpact = 0xA28;
+inline constexpr std::uint32_t m_ParryWindow = 0xAEC;
+}
+namespace FFloatRange {
+inline constexpr std::uint32_t LowerBound = 0x0;
+inline constexpr std::uint32_t UpperBound = 0x8;
+}
+namespace FloatRangeBound {
+inline constexpr std::uint32_t Type = 0x0;
+inline constexpr std::uint32_t Value = 0x4;
 }
 namespace GuardStack {
 inline constexpr std::uint32_t m_Stack = 0x0;
@@ -392,6 +412,7 @@ inline constexpr std::uint32_t m_Instigator = 0x8;
 inline constexpr std::uint32_t m_uiApplyDamageBehavior = 0x14;
 }
 namespace FHitRequest {
+inline constexpr std::uint32_t m_AttackRequest = 0x10;
 inline constexpr std::uint32_t m_Instigator = 0xE4;
 inline constexpr std::uint32_t m_HitBox = 0x110;
 inline constexpr std::uint32_t m_uiApplyDamageBehavior = 0x3B4;
@@ -399,10 +420,56 @@ inline constexpr std::uint32_t m_vDamageDir = 0x3CC;
 inline constexpr std::uint32_t m_AttackProperties = 0x3E8;
 inline constexpr std::uint32_t m_bCanBeDefended = 0x409;
 }
+namespace FAttackRequest {
+inline constexpr std::uint32_t m_AttackDB = 0x40;
+inline constexpr std::uint32_t m_Combo = 0x28;
+inline constexpr std::uint32_t m_AttackName = 0x4;
+}
+namespace UAttackDB {
+inline constexpr std::uint32_t m_Attack = 0x30;
+}
+namespace UCombo {
+inline constexpr std::uint32_t m_Attacks = 0x88;
+}
+namespace FComboAttack {
+inline constexpr std::uint32_t m_Animation = 0x10;
+inline constexpr std::uint32_t m_fAnimFrameRate = 0xAC;
+}
+namespace UAnimSequenceBase {
+inline constexpr std::uint32_t Notifies = 0x80;
+}
+namespace FAnimNotifyEvent {
+inline constexpr std::uint32_t Notify = 0x48;
+inline constexpr std::uint32_t TriggerTimeOffset = 0x34;
+}
+namespace FAnimLinkableElement {
+inline constexpr std::uint32_t LinkMethod = 0x18;
+inline constexpr std::uint32_t LinkValue = 0x24;
+}
+namespace UCurveFloat {
+inline constexpr std::uint32_t FloatCurve = 0x30;
+}
+namespace FRichCurve {
+inline constexpr std::uint32_t Keys = 0x70;
+}
+namespace FRichCurveKey {
+inline constexpr std::uint32_t Time = 0x4;
+}
+namespace FFrameRange {
+inline constexpr std::uint32_t m_Anim = 0x0;
+}
+namespace FGameplayTagContainer {
+inline constexpr std::uint32_t GameplayTags = 0x0;
+inline constexpr std::uint32_t ParentTags = 0x10;
+}
+namespace FGameplayTag {
+inline constexpr std::uint32_t TagName = 0x0;
+}
 namespace FHitBox {
 inline constexpr std::uint32_t m_HitRow = 0x20;
 inline constexpr std::uint32_t m_CachedRow = 0x50;
 inline constexpr std::uint32_t m_bCachedRowSetup = 0x290;
+inline constexpr std::uint32_t m_FrameRange = 0x30;
 }
 namespace FHitboxDataRow {
 inline constexpr std::uint32_t m_bCanBeLethal = 0x84;
@@ -466,6 +533,10 @@ inline constexpr std::uint32_t FHitDescription = 0x5A0;
 inline constexpr std::uint32_t FImpactResult = 0xC0;
 inline constexpr std::uint32_t GuardStackValue = 0x50;
 inline constexpr std::uint32_t DataTableElement = 0x18;
+inline constexpr std::uint32_t FGameplayTag = 0x8;
+inline constexpr std::uint32_t FAnimNotifyEvent = 0xB8;
+inline constexpr std::uint32_t FRichCurveKey = 0x1C;
+inline constexpr std::uint32_t ComboAttackElement = 0x18;
 }  // namespace size
 
 namespace bits {
@@ -550,6 +621,14 @@ inline constexpr Target InternalApplyDamage{"InternalApplyDamage", 0x4897AC0, 0x
 }  // namespace hook
 
 namespace value {
+namespace EAnimLinkMethod::Type {
+inline constexpr std::int32_t Absolute = 0;
+}
+namespace ERangeBoundTypes::Type {
+inline constexpr std::int32_t Exclusive = 0;
+inline constexpr std::int32_t Inclusive = 1;
+inline constexpr std::int32_t Open = 2;
+}
 namespace ESlateVisibility {
 inline constexpr std::int32_t Visible = 0;
 inline constexpr std::int32_t Collapsed = 1;
@@ -578,6 +657,8 @@ inline constexpr std::int32_t Hit = 0;
 }
 namespace EAttackPowers {
 inline constexpr std::int32_t Light = 0;
+inline constexpr std::int32_t Medium = 1;
+inline constexpr std::int32_t Strong = 2;
 }
 namespace EHeight {
 inline constexpr std::int32_t Mid = 1;

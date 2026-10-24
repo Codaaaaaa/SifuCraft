@@ -79,6 +79,21 @@ int main() {
             Check(Near(p[4], 51) && Near(p[5], 102) && Near(p[6], 153), "transparent pixels preserve host scene");
             context->Unmap(staging.get(), 0);
         }
+        // An inverse bounding rectangle can overlap the raised shield/hand. Its alpha
+        // must still cover the host scene instead of being cut out or inverted again.
+        frame.header.invert_right = frame.header.invert_bottom = 4;
+        frame.pixels[4] = 64; frame.pixels[5] = 128; frame.pixels[6] = 192; frame.pixels[7] = 255;
+        context->ClearRenderTargetView(rtv.get(), background);
+        Check(SUCCEEDED(compositor.Draw(device.get(), image.get(), frame, true)), "composite inverse rectangle overlapping shield and translucent HUD");
+        context->CopyResource(staging.get(), image.get());
+        if (SUCCEEDED(context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &pixels))) {
+            const auto* p = static_cast<const unsigned char*>(pixels.pData);
+            Check(Near(p[4], 64) && Near(p[5], 128) && Near(p[6], 192), "opaque shield pixels inside the crosshair bounds retain their exact color and coverage");
+            Check(Near(p[12], 153) && Near(p[13], 51) && Near(p[14], 76), "partial-alpha pixels inside the crosshair bounds retain ordinary compositing");
+            Check(Near(p[0], 204) && Near(p[1], 153) && Near(p[2], 102), "pure crosshair still inverts the host exactly once");
+            Check(Near(p[8], 51) && Near(p[9], 102) && Near(p[10], 153), "empty pixels inside the crosshair bounds leave the host intact");
+            context->Unmap(staging.get(), 0);
+        }
         frame.header.flags |= overlay::kBottomUp;
         frame.header.invert_right = frame.header.invert_bottom = 0;
         context->ClearRenderTargetView(rtv.get(), background);

@@ -55,6 +55,7 @@ CALL_SLOTS = {"UObject": ["ProcessEvent"]}
 # Short C++ namespaces for PDB template types used by native inspection.
 TYPE_ALIASES = {
     "InternationalizationStore": "TLazySingleton<FInternationalization>",
+    "FloatRangeBound": "TRangeBound<float>",
     "ScriptDelegate": "TScriptDelegate<FWeakObjectPtr>",
     "DataTableMap": "TMap<FName,unsigned char *,FDefaultSetAllocator,TDefaultMapHashableKeyFuncs<FName,unsigned char *,0> >",
     "DataTableSet": "TSet<TTuple<FName,unsigned char *>,TDefaultMapHashableKeyFuncs<FName,unsigned char *,0>,FDefaultSetAllocator>",
@@ -63,6 +64,9 @@ TYPE_ALIASES = {
     "DataTableBitAllocator": "TInlineAllocator<4,TSizedDefaultAllocator<32> >::ForElementType<unsigned int>",
     "DataTableElement": "TSetElement<TTuple<FName,unsigned char *> >",
     "DataTablePair": "TTuple<FName,unsigned char *>",
+    "ComboAttackMap": "TMap<FName,UAttackDB *,FDefaultSetAllocator,TDefaultMapHashableKeyFuncs<FName,UAttackDB *,0> >",
+    "ComboAttackElement": "TSetElement<TTuple<FName,UAttackDB *> >",
+    "ComboAttackPair": "TTuple<FName,UAttackDB *>",
     "GuardStack": "TSCNamedValueStack<TWeakObjectPtr<UGuardDB,FWeakObjectPtr>,1>",
     "GuardStackValue": "TSCNamedValueStack<TWeakObjectPtr<UGuardDB,FWeakObjectPtr>,1>::FNameValue",
     "GuardValueGetter": "UE4Function_Private::TFunctionRefBase<UE4Function_Private::TFunctionStorage<0>,TWeakObjectPtr<UGuardDB,FWeakObjectPtr> __cdecl(void)>",
@@ -99,6 +103,9 @@ MEMBERS = {
     "DataTableBitAllocator": ["InlineData", "SecondaryData"],
     "DataTableElement": ["Value"],
     "DataTablePair": ["Key", "Value"],
+    "ComboAttackMap": ["Pairs"],
+    "ComboAttackElement": ["Value"],
+    "ComboAttackPair": ["Key", "Value"],
     "FBoolProperty": ["FieldSize", "ByteOffset", "ByteMask", "FieldMask"],
     "FUObjectArray": ["ObjObjects"],
     "FChunkedFixedUObjectArray": ["Objects", "MaxElements", "NumElements", "MaxChunks", "NumChunks"],
@@ -109,7 +116,7 @@ MEMBERS = {
     "FNameEntryAllocator": ["CurrentBlock", "Blocks"],
     "FNameEntry": ["Header", "AnsiName", "WideName"],
     # Engine
-    "UWorld": ["PersistentLevel", "OwningGameInstance", "Levels"],
+    "UWorld": ["PersistentLevel", "OwningGameInstance", "Levels", "TimeSeconds"],
     "ULevel": ["Actors", "OwningWorld", "WorldSettings"],
     "AWorldSettings": ["PauserPlayerState"],
     "UGameInstance": ["LocalPlayers"],
@@ -159,14 +166,29 @@ MEMBERS = {
     "UCharacterHealthComponent": ["m_fMaxHealthMultiplier", "m_bIsDown", "m_eDownState"],
     "UDefenseComponent": ["m_GuardDB", "m_DefaultGuardDB"],
     "USCGameSettings": ["m_DefaultHitbox"],
-    "UGuardDB": ["m_DefaultHitImpact", "m_DefaultGuardImpact", "m_DefaultDeflectImpact"],
+    "UGuardDB": ["m_DefaultHitImpact", "m_DefaultGuardImpact", "m_DefaultDeflectImpact", "m_ParryWindow"],
+    "FFloatRange": ["LowerBound", "UpperBound"],
+    "FloatRangeBound": ["Type", "Value"],
     "GuardStack": ["m_Stack"],
     "GuardStackValue": ["m_Value", "m_ValueGetter"],
     "GuardValueGetter": ["Callable"],
     "FDamageInfos": ["m_fDamage", "m_fHealthBeforeDamage", "m_Instigator", "m_uiApplyDamageBehavior"],
-    "FHitRequest": ["m_Instigator", "m_HitBox", "m_uiApplyDamageBehavior", "m_vDamageDir",
+    "FHitRequest": ["m_AttackRequest", "m_Instigator", "m_HitBox", "m_uiApplyDamageBehavior", "m_vDamageDir",
                     "m_AttackProperties", "m_bCanBeDefended"],
-    "FHitBox": ["m_HitRow", "m_CachedRow", "m_bCachedRowSetup"],
+    "FAttackRequest": ["m_AttackDB", "m_Combo", "m_AttackName"],
+    "UAttackDB": ["m_Attack"],
+    "UCombo": ["m_Attacks"],
+    "FComboAttack": ["m_Animation", "m_fAnimFrameRate"],
+    "UAnimSequenceBase": ["Notifies"],
+    "FAnimNotifyEvent": ["Notify", "TriggerTimeOffset"],
+    "FAnimLinkableElement": ["LinkMethod", "LinkValue"],
+    "UCurveFloat": ["FloatCurve"],
+    "FRichCurve": ["Keys"],
+    "FRichCurveKey": ["Time"],
+    "FFrameRange": ["m_Anim"],
+    "FGameplayTagContainer": ["GameplayTags", "ParentTags"],
+    "FGameplayTag": ["TagName"],
+    "FHitBox": ["m_HitRow", "m_CachedRow", "m_bCachedRowSetup", "m_FrameRange"],
     "FHitboxDataRow": ["m_bCanBeLethal", "m_bCanBreakStructure", "m_OnHitImpact", "m_OnGuardImpact",
                        "m_OnDeflectImpact", "m_eHitType", "m_eAttackPower", "m_bParriable"],
     "FHitImpact": ["m_eGuardType", "m_bUseDamage", "m_fDamage", "m_fStructureDamage"],
@@ -179,7 +201,7 @@ MEMBERS = {
 
 SIZES = ["InternationalizationStore", "FCulture", "FUObjectItem", "UObjectBase", "FName", "FNameEntryAllocator", "FTransform", "FKConvexElem", "FKBoxElem", "FKSphereElem",
          "FKSphylElem", "FKTaperedCapsuleElem", "FInstancedStaticMeshInstanceData", "FDamageInfos",
-         "FHitRequest", "FHitBox", "FHitboxDataRow", "FHitImpact", "FHitDescription", "FImpactResult", "GuardStackValue", "DataTableElement"]
+         "FHitRequest", "FHitBox", "FHitboxDataRow", "FHitImpact", "FHitDescription", "FImpactResult", "GuardStackValue", "DataTableElement", "FGameplayTag", "FAnimNotifyEvent", "FRichCurveKey", "ComboAttackElement"]
 
 # type -> bitfield members whose bit position/width are emitted.
 BITFIELDS = {
@@ -192,12 +214,14 @@ BITFIELDS = {
 }
 
 ENUMS = {
+    "EAnimLinkMethod::Type": ["Absolute"],
+    "ERangeBoundTypes::Type": ["Exclusive", "Inclusive", "Open"],
     "ESlateVisibility": ["Visible", "Collapsed", "Hidden", "HitTestInvisible", "SelfHitTestInvisible"],
     "EColorSpaceAndEOTF": ["EUnknown", "ERec709_sRGB", "ERec709_Linear", "ERec2020_PQ"],
     "EFactionsEnums": ["TMP_Neutral", "Count"],
     "EGuardType": ["None", "Guard", "Deflect", "Count"],
     "EImpactType": ["Hit"],
-    "EAttackPowers": ["Light"],
+    "EAttackPowers": ["Light", "Medium", "Strong"],
     "EHeight": ["Mid"],
     "EQuadrantTypes": ["FrontLeft"],
     "ESCCardinalPoints": ["North"],

@@ -81,6 +81,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private CollisionLoader collision;
     private final UnrealSpace space = new UnrealSpace();
     private final RespawnHandshake respawn = new RespawnHandshake();
+    private final dev.sifucraft.combat.ShieldBlockAnimation shieldAnimation = new dev.sifucraft.combat.ShieldBlockAnimation();
     private final MapSlots slots = new MapSlots(message -> LOG.info("[space] {}", message));
     private int teleportEpoch;
     private int teleportWorld;
@@ -106,7 +107,13 @@ public final class SifuCraftClient implements ClientModInitializer {
         input = new InputInjector(minecraft);
         bridge = new McBridge(new McBridge.Listener() {
             @Override public void onDamageResult(DamageResult result) { CombatHits.result(result); }
-            @Override public void onPlayerHit(long session, long eventId, PlayerHit hit) { PlayerDamage.receive(session, eventId, hit); }
+            @Override public void onPlayerHit(long session, long eventId, PlayerHit hit) {
+                var player = minecraft.player;
+                boolean shield = player != null && player.isUsingItem() &&
+                        player.getUseItem().has(net.minecraft.core.component.DataComponents.BLOCKS_ATTACKS);
+                PlayerDamage.receive(session, eventId, hit, shield ? player.getUsedItemHand() : null,
+                        shield ? player.getUseItem().copy() : net.minecraft.world.item.ItemStack.EMPTY);
+            }
             @Override
             public void log(String message) {
                 LOG.info("[bridge] {}", message);
@@ -170,10 +177,16 @@ public final class SifuCraftClient implements ClientModInitializer {
             CombatCheck check = new CombatCheck();
             ServerTickEvents.END_SERVER_TICK.register(check::tick);
         }
+        if (Boolean.getBoolean("sifucraft.shieldSelfTest")) {
+            var check = new dev.sifucraft.combat.ShieldCheck();
+            ServerTickEvents.END_SERVER_TICK.register(check::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
+        }
         if (Boolean.getBoolean("sifucraft.playerDamageTest") || Boolean.getBoolean("sifucraft.playerHitSelfTest") ||
                 Boolean.getBoolean("sifucraft.respawnSelfTest")) {
             PlayerHitCheck check = new PlayerHitCheck();
             ServerTickEvents.END_SERVER_TICK.register(check::tick);
+            ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> check.disconnect(server, handler.player));
             ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
         }
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
@@ -266,12 +279,15 @@ public final class SifuCraftClient implements ClientModInitializer {
         enforceNoFlight();
         rescueFromFall(previous);
         bridge.tick(now, currentState(previous));
+        bridge.setUseBinding(input.useBinding());
         SifuFrame frame = bridge.latest();
         if (bridge.peerConnected() && frame != null) hostLanguage.update(minecraft, frame.language());
         publishEnemies(frame);
         CombatHits.pump(bridge);
+        dev.sifucraft.combat.ShieldBlocks.pump(bridge);
         PlayerDamage.pump(bridge, minecraft.getSingleplayerServer(), minecraft.player == null ? null : minecraft.player.getUUID(),
                 minecraft.player, respawn.ready() && minecraft.player != null && minecraft.player.isAlive());
+        shieldAnimation.pump(minecraft, bridge, frame != null && respawn.ready() && space.anchoredTo(frame));
         if (frame == null) space.reset();
         input.setOwner(frame != null && frame.minecraftOwnsInput() && respawn.ready());
         input.applyMotion(frame);

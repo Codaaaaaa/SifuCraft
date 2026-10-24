@@ -66,6 +66,7 @@ final class InputInjector {
         if (action == RELEASE) heldKeys.remove(scancode);
         int keycode = SDLKeyboard.SDL_GetKeyFromScancode(scancode, (short) modifiers, true);
         minecraft.keyboardHandler.keyPress(window(), action, new KeyEvent(scancode, keycode, modifiers));
+        if (action == PRESS && useBinding() == scancode) raiseShieldImmediately();
         stats.keys++;
         syncMouseMode();
         // The hidden window receives no SDL text events. Forward printable characters for
@@ -79,13 +80,34 @@ final class InputInjector {
         if (guiRevision != 0) guiInputAck = guiRevision;
     }
     int guiInputAck() { return guiInputAck; }
+    int useBinding() {
+        var key = ((dev.sifucraft.client.mixin.KeyMappingAccessor) minecraft.options.keyUse).sifucraft$key();
+        if (minecraft.options.keyUse.isUnbound()) return 0;
+        return switch (key.getType()) {
+            case MOUSE -> 0x10000 | key.getValue();
+            case KEYBOARD -> key.getValue();
+        };
+    }
 
     void mouseButton(int button, int action, int modifiers) {
         syncMouseMode();
         if (action == PRESS) heldButtons.add(button);
         if (action == RELEASE) heldButtons.remove(button);
         minecraft.mouseHandler.onButton(window(), new MouseButtonInfo(button, modifiers), action);
+        if (action == PRESS && useBinding() == (0x10000 | button)) raiseShieldImmediately();
         stats.buttons++;
+    }
+
+    private void raiseShieldImmediately() {
+        var player = minecraft.player;
+        if (!owner || guiMode || minecraft.gui.screen() != null || minecraft.gui.overlay() != null ||
+                minecraft.gameMode == null || player == null || !player.isAlive() || player.isUsingItem() ||
+                (!player.getMainHandItem().has(net.minecraft.core.component.DataComponents.BLOCKS_ATTACKS) &&
+                 !player.getOffhandItem().has(net.minecraft.core.component.DataComponents.BLOCKS_ATTACKS))) return;
+        // Invoke the same path as the next client tick, including interaction and main-hand
+        // priority. Consume its click once so the later tick does not perform it a second time.
+        minecraft.options.keyUse.consumeClick();
+        ((dev.sifucraft.client.mixin.MinecraftUseAccessor) minecraft).sifucraft$startUseItem();
     }
 
     /** Ownership edge (event) or the snapshot's owner field disagreeing with ours (self-heal). */

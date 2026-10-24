@@ -1,4 +1,5 @@
 #include "input/input_router.h"
+#include <cmath>
 
 namespace sifucraft::input {
 
@@ -54,7 +55,7 @@ void InputRouter::PushLocked(EventType type, std::int32_t code, std::int32_t act
     pending_.push_back({type, code, action, ModifiersLocked(), revision, mouse_dx_, mouse_dy_, scroll_});
 }
 
-bool InputRouter::OnKey(const MappedKey& key, std::string_view unreal_name, int action) {
+bool InputRouter::OnKey(const MappedKey& key, std::string_view unreal_name, int action, double game_seconds) {
     Lock lock(lock_);
     if (unreal_name == "F8") {
         if (action == 1) toggle_requested_ = true;
@@ -67,6 +68,7 @@ bool InputRouter::OnKey(const MappedKey& key, std::string_view unreal_name, int 
     const std::int32_t id = key.code | (button ? kMouseButtonBit : 0);
     InputOwner side = owner_;
     const auto held = held_.find(id);
+    const bool first_press = held == held_.end();
     const bool escape = unreal_name == "Escape";
     if (escape && action != 1 && held == held_.end()) return false;
     if (escape && action == 1 && !(owner_ == InputOwner::Minecraft && gui_available_ && gui_open_)) side = InputOwner::Sifu;
@@ -77,9 +79,14 @@ bool InputRouter::OnKey(const MappedKey& key, std::string_view unreal_name, int 
         if (action == 0) held_.erase(held);
     }
     if (side != InputOwner::Minecraft) return false;
+    if (static_cast<std::uint32_t>(id) == use_binding_) {
+        if (action == 0 || gui_open_) use_started_ = NAN;
+        else if (action == 1 && first_press) use_started_ = game_seconds;
+    }
     std::uint32_t revision = 0;
     if (action == 1 && gui_available_ && !button && (key.code == 8 || escape)) {
         gui_open_ = escape ? false : !gui_open_;
+        if (gui_open_) use_started_ = NAN;
         if (++gui_revision_ == 0) ++gui_revision_;
         revision = gui_pending_ = gui_revision_;
     }
@@ -125,6 +132,7 @@ void InputRouter::SetOwner(InputOwner owner) {
         }
     }
     owner_ = owner;
+    use_started_ = NAN;
     gui_available_ = gui_open_ = false;
     gui_pending_ = 0;
 }
@@ -137,6 +145,20 @@ void InputRouter::SetGuiState(bool available, bool open, std::uint32_t acknowled
         if (open && !gui_open_) PushLocked(EventType::GuiMouseMotion, 0, 0);
         gui_open_ = open; gui_pending_ = 0;
     }
+    if (gui_open_) use_started_ = NAN;
+}
+void InputRouter::SetUseBinding(std::uint32_t binding) {
+    Lock lock(lock_);
+    if (binding != use_binding_) use_started_ = NAN;
+    use_binding_ = binding;
+}
+void InputRouter::ResetUse() { Lock lock(lock_); use_started_ = NAN; }
+double InputRouter::UseAge(double game_seconds) const {
+    AcquireSRWLockShared(&lock_);
+    const double age = game_seconds - use_started_;
+    const bool usable = owner_ == InputOwner::Minecraft && !gui_open_ && std::isfinite(age) && age >= 0;
+    ReleaseSRWLockShared(&lock_);
+    return usable ? age : NAN;
 }
 void InputRouter::GuiInputDropped(std::uint32_t revision) {
     Lock lock(lock_);

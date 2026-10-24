@@ -7,10 +7,10 @@ namespace sifucraft::ue {
 
 // Read-only linear lookup in UE's sparse row map. Allocation bits distinguish live entries
 // from free slots; all container offsets and the slot stride come from the matching PDB.
-inline std::uintptr_t DataTableRow(std::uintptr_t table, FName name) {
+inline std::uintptr_t NamePointerMapValue(std::uintptr_t map, FName name) {
     namespace off = gen::off;
-    if (!table || (!name.comparison_index && !name.number)) return 0;
-    const auto sparse = table + off::UDataTable::RowMap + off::DataTableMap::Pairs + off::DataTableSet::Elements;
+    if (!map || (!name.comparison_index && !name.number)) return 0;
+    const auto sparse = map + off::DataTableMap::Pairs + off::DataTableSet::Elements;
     mem::RawArray data;
     if (!mem::ReadArray(sparse + off::DataTableSparse::Data, &data) || data.num > 16384) return 0;
     const auto bits = sparse + off::DataTableSparse::AllocationFlags;
@@ -34,6 +34,10 @@ inline std::uintptr_t DataTableRow(std::uintptr_t table, FName name) {
         }
     }
     return 0;
+}
+
+inline std::uintptr_t DataTableRow(std::uintptr_t table, FName name) {
+    return table ? NamePointerMapValue(table + gen::off::UDataTable::RowMap, name) : 0;
 }
 
 }  // namespace sifucraft::ue

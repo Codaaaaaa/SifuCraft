@@ -86,6 +86,7 @@ public final class EnemyProxy extends Mob {
     }
 
     @Override public boolean isPickable() { return !isRemoved() && isAlive(); }
+    @Override public float getSecondsToDisableBlocking() { return ShieldBlocks.secondsToDisable(this); }
     @Override public boolean isPushable() { return false; }
     @Override public boolean canBeCollidedWith(Entity other) { return false; }
 

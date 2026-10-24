@@ -7,7 +7,9 @@
 #include <cmath>
 
 #include "combat/damage.h"
+#include "combat/attack_glow.h"
 #include "combat/hit_sample.h"
+#include "combat/shield_timing.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "hooks/vtable_hook.h"
@@ -27,6 +29,9 @@ hooks::VtableHook g_observer;
 std::atomic<bool> g_ready{false};
 bool g_failed = false; // runtime thread only
 std::uintptr_t g_base = 0, g_guard_class = 0, g_table_class = 0;
+std::uintptr_t g_attack_class = 0, g_combo_class = 0, g_animation_class = 0, g_notify_class = 0, g_curve_class = 0;
+ue::ObjectIdentity g_glow_layout;
+std::int32_t g_glow_curve_offset = -1;
 std::atomic<std::uintptr_t> g_settings_default{0};
 std::uint64_t g_settings_retry_ms = 0; // runtime thread
 std::atomic<std::uint64_t> g_hits{0}, g_resolved{0}, g_unresolved{0}, g_health_calls{0};
@@ -99,6 +104,42 @@ float DefaultDamage(std::uintptr_t pawn, std::uint8_t guard_type, std::uintptr_t
     return mem::ReadOr<float>(*db + at + off::FHitImpact::m_fDamage, NAN);
 }
 
+std::uintptr_t AttackData(std::uintptr_t request) {
+    static_assert(off::ComboAttackMap::Pairs == off::DataTableMap::Pairs &&
+        gen::size::ComboAttackElement == gen::size::DataTableElement &&
+        off::ComboAttackElement::Value == off::DataTableElement::Value &&
+        off::ComboAttackPair::Key == off::DataTablePair::Key && off::ComboAttackPair::Value == off::DataTablePair::Value);
+    const auto info = request + off::FHitRequest::m_AttackRequest;
+    auto db = mem::ReadPtr(info + off::FAttackRequest::m_AttackDB);
+    if (ue::IsRegistered(db) && ue::IsA(db, g_attack_class)) return db;
+    const auto combo = mem::ReadPtr(info + off::FAttackRequest::m_Combo);
+    ue::FName name{};
+    if (!ue::IsRegistered(combo) || !ue::IsA(combo, g_combo_class) || !mem::Read(info + off::FAttackRequest::m_AttackName, &name)) return 0;
+    db = ue::NamePointerMapValue(combo + off::UCombo::m_Attacks, name);
+    return ue::IsRegistered(db) && ue::IsA(db, g_attack_class) ? db : 0;
+}
+
+std::uintptr_t GlowCurve(std::uintptr_t notify) {
+    if (!ue::IsRegistered(notify) || !ue::IsA(notify, g_notify_class)) return 0;
+    const auto cls = ue::ClassOf(notify);
+    if (!ue::IsRegistered(cls) || ue::ObjectName(cls) != "AnimNotify_GlowLimbs_C") return 0;
+    const auto identity = ue::IdentityOf(cls);
+    if (identity != g_glow_layout) {
+        g_glow_layout = identity;
+        g_glow_curve_offset = -1;
+        const auto size = mem::ReadOr<std::int32_t>(cls + off::UStruct::PropertiesSize, 0);
+        for (const auto& p : ue::ListProperties(cls)) {
+            if (p.name == "Effect Curve" && p.type == "ObjectProperty" && p.element_size == 8 && p.array_dim == 1 &&
+                p.offset >= 0 && p.offset <= size - 8 && mem::ReadPtr(p.field + off::FObjectPropertyBase::PropertyClass) == g_curve_class) {
+                g_glow_curve_offset = p.offset;
+            }
+        }
+    }
+    if (g_glow_curve_offset < 0) return 0;
+    const auto curve = mem::ReadPtr(notify + g_glow_curve_offset);
+    return ue::IsRegistered(curve) && ue::IsA(curve, g_curve_class) ? curve : 0;
+}
+
 bool ObserveHit(void* component, const void* result, const void* request_ptr) {
     const auto pawn = CurrentPawn();
     if (ue::IsLive(pawn) && reinterpret_cast<std::uintptr_t>(component) == mem::ReadPtr(pawn + off::AFightingCharacter::m_HitComponent)) {
@@ -106,6 +147,11 @@ bool ObserveHit(void* component, const void* result, const void* request_ptr) {
         HitRequestSample hit;
         std::string row_name;
         const bool parsed = ReadHitRequest(request, HitRow(request, &row_name), &hit);
+        const auto attack_db = parsed ? AttackData(request) : 0;
+        const auto attack = attack_db ? attack_db + off::UAttackDB::m_Attack : 0;
+        const auto animation = attack ? mem::ReadPtr(attack + off::FComboAttack::m_Animation) : 0;
+        const bool guard_breaker = ue::IsRegistered(animation) && ue::IsA(animation, g_animation_class) &&
+            AttackHasGlow(request, attack, animation, GlowCurve);
         std::uintptr_t db = 0;
         const float default_damage = parsed ? DefaultDamage(pawn, hit.guard_type, &db) : NAN;
         float resolved = NAN;
@@ -123,12 +169,12 @@ bool ObserveHit(void* component, const void* result, const void* request_ptr) {
             const auto cached = mem::ReadOr<std::uint8_t>(box + off::FHitBox::m_bCachedRowSetup, 0xFF);
             SC_LOG("[player-hits] H6 request=%llu pawn=%s attacker=%s id=%d/%d cached=%u parsed=%d "
                    "use_damage=%u raw=%.3f default=%.3f guard_db=%s base=%.3f resolved=%d guard=%u power=%u type=%u "
-                   "behavior=0x%X defend=%u parriable=%u lethal=%u dir=(%.3f,%.3f,%.3f) row=%s mode=%s",
+                   "behavior=0x%X defend=%u parriable=%u guard_breaker=%d lethal=%u dir=(%.3f,%.3f,%.3f) row=%s attack=%s anim=%s mode=%s",
                    static_cast<unsigned long long>(g_request_id), ue::ObjectName(pawn).c_str(), ue::ObjectName(attacker).c_str(),
                    identity.index, identity.serial, cached, parsed, hit.use_damage, hit.raw_damage, default_damage,
                    ue::ObjectName(db).c_str(), resolved, valid, hit.guard_type, hit.attack_power, hit.hit_type,
-                   hit.behavior, hit.defend, hit.parriable, hit.lethal, hit.direction.x, hit.direction.y, hit.direction.z,
-                   row_name.c_str(), active ? "MC_CANCEL" : "OBSERVE_ONLY");
+                   hit.behavior, hit.defend, hit.parriable, guard_breaker, hit.lethal, hit.direction.x, hit.direction.y, hit.direction.z,
+                   row_name.c_str(), ue::ObjectName(attack_db).c_str(), ue::ObjectName(animation).c_str(), active ? "MC_CANCEL" : "OBSERVE_ONLY");
         }
         if (active) {
             g_cancelled.fetch_add(1, std::memory_order_relaxed);
@@ -140,7 +186,13 @@ bool ObserveHit(void* component, const void* result, const void* request_ptr) {
                 if (target != context.targets.end()) { payload.attacker_id = target->id; payload.spawn = target->spawn; }
                 payload.sifu_damage = resolved;
                 payload.flags = (hit.defend ? protocol::kHitCanDefend : 0) | (hit.parriable ? protocol::kHitParriable : 0) |
-                    (hit.lethal ? protocol::kHitCanBeLethal : 0) | (static_cast<std::uint32_t>(hit.attack_power) << 8);
+                    (hit.lethal ? protocol::kHitCanBeLethal : 0) | (guard_breaker ? protocol::kHitGuardBreaker : 0) |
+                    (static_cast<std::uint32_t>(hit.attack_power) << 8);
+                const auto use_age = input::Router().UseAge(GameSeconds(g_base));
+                if (hit.defend && InParryWindow(db, use_age))
+                    payload.flags |= protocol::kHitPerfectWindow;
+                if (g_hit_logs <= 200 && std::isfinite(use_age)) SC_LOG("[shield] timing candidate age_ms=%.2f perfect_window=%d attacker=%u/%u",
+                    use_age * 1000, (payload.flags & protocol::kHitPerfectWindow) != 0, payload.attacker_id, payload.spawn);
                 payload.world_generation = context.generation;
                 payload.anchor_epoch = context.epoch;
                 payload.dir_x = hit.direction.x; payload.dir_y = hit.direction.y;
@@ -175,6 +227,9 @@ void InstallObserver(std::uintptr_t base, std::uintptr_t pawn) {
     const auto flags = mem::ReadOr<std::uint32_t>(function + off::UFunction::FunctionFlags, 0);
     g_guard_class = ue::FindClass("GuardDB");
     g_table_class = ue::FindClass("DataTable");
+    g_attack_class = ue::FindClass("AttackDB"); g_combo_class = ue::FindClass("Combo");
+    g_animation_class = ue::FindClass("AnimSequenceBase"); g_notify_class = ue::FindClass("AnimNotify");
+    g_curve_class = ue::FindClass("CurveFloat");
     if (!native || !g_guard_class || !g_table_class || !function || !damage::ObserverReady()) return;
     if (ue::OuterOf(function) != native || !(flags & 0x400)) {
         SC_LOG("[player-hits] REFUSE H6: effective validation has a blueprint override");
@@ -229,8 +284,11 @@ void UpdateContext(std::uintptr_t world, std::uint32_t generation, std::uintptr_
                    std::uint32_t epoch, std::uint64_t session, const std::vector<Enemies::Target>& targets) {
     const auto identity = ue::IdentityOf(pawn);
     AcquireSRWLockExclusive(&g_lock);
+    const bool changed = g_context.world != world || g_context.generation != generation || g_context.pawn != pawn || g_context.identity != identity || g_context.epoch != epoch ||
+        g_context.session != session || g_context.active != active || g_context.can_forward != can_forward;
     g_context = {world, pawn, identity, generation, epoch, session, GetTickCount64(), active && identity.valid(), can_forward, targets};
     ReleaseSRWLockExclusive(&g_lock);
+    if (changed) input::Router().ResetUse();
 }
 
 void DrainHits(std::vector<Hit>* hits) {

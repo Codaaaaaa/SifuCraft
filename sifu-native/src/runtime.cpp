@@ -705,6 +705,7 @@ void Run(std::uintptr_t image_base) {
             }
         }
         g_bridge.Tick(frame, GetTickCount64());
+        input::Router().SetUseBinding(settings.stage >= 8 && g_bridge.peer_connected() && g_bridge.peer_state().valid ? g_bridge.peer_state().use_binding : 0);
         if (settings.stage >= 7 && tick % 2 == 0) {
             enemies.Update(world, generation, player.pawn, GetTickCount64());
             g_bridge.PublishEnemies(world ? generation : 0, enemies.entries());
@@ -741,7 +742,12 @@ void Run(std::uintptr_t image_base) {
                 hooks::PoseActive() && McAnchoredTo(ownership.epoch(), generation), ownership.epoch(),
                 g_bridge.peer_connected() ? g_bridge.peer_session() : 0, enemies.targets());
             g_bridge.DrainEnemyDamage(&damage_events);
-            for (const auto& event : damage_events) combat::damage::Submit(event);
+            for (const auto& event : damage_events) {
+                if (event.type == static_cast<std::uint32_t>(protocol::EventType::PlayerBlocked)) {
+                    if (settings.stage >= 8) combat::damage::SubmitBlocked(event);
+                }
+                else combat::damage::Submit(event);
+            }
             if (pending_damage_replies.size() < 512) {
                 combat::damage::DrainReplies(&damage_replies);
                 for (const auto& reply : damage_replies) pending_damage_replies.push_back(reply);
@@ -767,7 +773,9 @@ void Run(std::uintptr_t image_base) {
                     if (logged_player_hits++ < 200) SC_LOG("[player-hits] discarded queued hit after scope change or timeout");
                     pending_player_hits.pop_front(); continue;
                 }
-                if (!g_bridge.SendPlayerHit(hit.payload)) break;
+                std::uint64_t hit_id = 0;
+                if (!g_bridge.SendPlayerHit(hit.payload, &hit_id)) break;
+                if (settings.stage >= 8) combat::damage::RecordPlayerHit(hit_id, hit.session, hit.payload, hit.created_ms);
                 if (logged_player_hits++ < 200) SC_LOG("[player-hits] sent attacker=%u/%u base=%.3f flags=0x%X world=%u epoch=%u",
                     hit.payload.attacker_id, hit.payload.spawn, hit.payload.sifu_damage, hit.payload.flags,
                     hit.payload.world_generation, hit.payload.anchor_epoch);

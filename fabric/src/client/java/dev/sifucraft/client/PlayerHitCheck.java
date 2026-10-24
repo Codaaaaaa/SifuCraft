@@ -27,6 +27,7 @@ final class PlayerHitCheck {
     private ServerPlayer initialPlayer;
     private long deadAt;
     private final ArrayList<PlayerDamage.Applied> applied = new ArrayList<>();
+    private final PracticeShield practiceShield = new PracticeShield();
 
     void tick(MinecraftServer server) {
         boolean selfTest = Boolean.getBoolean("sifucraft.playerHitSelfTest");
@@ -48,6 +49,7 @@ final class PlayerHitCheck {
             server.setDifficulty(Difficulty.NORMAL, true);
             player.setGameMode(GameType.SURVIVAL);
             player.setHealth(player.getMaxHealth()); player.setAbsorptionAmount(0);
+            if (Boolean.getBoolean("sifucraft.shieldTestSupplies")) practiceShield.grantIfMissing(player);
             if (selfTest) PlayerDamage.diagnostic(applied::add);
             LOG.info("[player-hit-test] development survival/normal setup; inventory retained; original settings restored on shutdown");
         }
@@ -86,9 +88,14 @@ final class PlayerHitCheck {
         rules.set(GameRules.SPAWN_MOBS, oldSpawns, server);
         server.setDifficulty(oldDifficulty, true);
         var player = server.getPlayerList().getPlayer(playerId);
+        practiceShield.restore(server, player);
         if (player != null) { player.setGameMode(oldMode); player.setHealth(oldHealth); player.setAbsorptionAmount(oldAbsorption); }
         PlayerDamage.diagnostic(null);
         LOG.info("[player-hit-test] restored original mode, health, difficulty and game rules");
         playerId = null;
+    }
+
+    void disconnect(MinecraftServer server, ServerPlayer player) {
+        if (playerId != null && playerId.equals(player.getUUID())) practiceShield.restore(server, player);
     }
 }

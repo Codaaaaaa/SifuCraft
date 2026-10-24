@@ -14,7 +14,10 @@
 #include "combat/activation_tracker.h"
 #include "combat/damage_ledger.h"
 #include "combat/hit_sample.h"
+#include "combat/attack_glow.h"
 #include "combat/light_impact.h"
+#include "combat/shield_timing.h"
+#include "combat/shield_ledger.h"
 #include "collision/voxels.h"
 #include "collision/walk_check.h"
 #include "core/build_guard.h"
@@ -746,6 +749,48 @@ void TestLiveHitSamples() {
     Expect(combat::ReadHitRequest(address, box + off::FHitBox::m_CachedRow, &hit) && hit.cached == 0 && hit.raw_damage == 15,
            "live hit parser accepts a separately resolved data-table row for an uncached request");
 
+    std::vector<std::uint8_t> attack(off::FComboAttack::m_fAnimFrameRate + 4), animation(off::UAnimSequenceBase::Notifies + 16);
+    std::vector<std::uint8_t> curve(off::UCurveFloat::FloatCurve + off::FRichCurve::Keys + 16);
+    std::vector<std::uint8_t> events(gen::size::FAnimNotifyEvent), keys(3 * gen::size::FRichCurveKey);
+    const auto aa = reinterpret_cast<std::uintptr_t>(attack.data()), an = reinterpret_cast<std::uintptr_t>(animation.data());
+    const auto ca = reinterpret_cast<std::uintptr_t>(curve.data()), ea = reinterpret_cast<std::uintptr_t>(events.data());
+    const auto ka = reinterpret_cast<std::uintptr_t>(keys.data());
+    put(aa + off::FComboAttack::m_fAnimFrameRate, 60.0f);
+    put(ca + off::UCurveFloat::FloatCurve + off::FRichCurve::Keys, mem::RawArray{ka, 3, 3});
+    put(ka + off::FRichCurveKey::Time, 0.0f);
+    put(ka + gen::size::FRichCurveKey + off::FRichCurveKey::Time, 0.8f);
+    put(ka + 2 * gen::size::FRichCurveKey + off::FRichCurveKey::Time, 1.5f);
+    const auto range = box + off::FHitBox::m_FrameRange + off::FFrameRange::m_Anim;
+    const auto set_range = [&](float start, float end) {
+        put(range + off::FFloatRange::LowerBound + off::FloatRangeBound::Type, std::uint8_t{gen::value::ERangeBoundTypes::Type::Inclusive});
+        put(range + off::FFloatRange::UpperBound + off::FloatRangeBound::Type, std::uint8_t{gen::value::ERangeBoundTypes::Type::Inclusive});
+        put(range + off::FFloatRange::LowerBound + off::FloatRangeBound::Value, start);
+        put(range + off::FFloatRange::UpperBound + off::FloatRangeBound::Value, end);
+    };
+    set_range(30, 33); // Live Grunt_Blunt_DownSmash hit window.
+    const auto resolve = [ca](std::uintptr_t notify) { return notify == 42 ? ca : 0; };
+    Expect(!combat::AttackHasGlow(address, aa, an, resolve), "ordinary weapon Strong has no glow and never disables the shield");
+    put(an + off::UAnimSequenceBase::Notifies, mem::RawArray{ea, 1, 1});
+    put(ea + off::FAnimNotifyEvent::Notify, std::uintptr_t{42});
+    put(ea + off::FAnimLinkableElement::LinkMethod, std::uint8_t{gen::value::EAnimLinkMethod::Type::Absolute});
+    put(ea + off::FAnimLinkableElement::LinkValue, 0.0192489065f);
+    Expect(combat::AttackHasGlow(address, aa, an, resolve), "tagless weapon DownSmash is classified by its real orange glow notify and curve lifetime");
+    put(ea + off::FAnimNotifyEvent::Notify, std::uintptr_t{43});
+    Expect(!combat::AttackHasGlow(address, aa, an, resolve), "unrelated animation effects cannot enable shield disabling");
+    put(ea + off::FAnimNotifyEvent::Notify, std::uintptr_t{42});
+    put(ea + off::FAnimLinkableElement::LinkValue, 0.8f);
+    set_range(10, 12);
+    Expect(!combat::AttackHasGlow(address, aa, an, resolve), "an earlier ordinary strike is not classified by a later glow in the same animation");
+    set_range(54, 58);
+    Expect(combat::AttackHasGlow(address, aa, an, resolve), "the later glowing strike is classified within its own hit window");
+    set_range(180, 184);
+    Expect(!combat::AttackHasGlow(address, aa, an, resolve), "an expired glow does not classify a later ordinary strike");
+    set_range(30, 33);
+    put(ea + off::FAnimLinkableElement::LinkValue, float{NAN});
+    Expect(!combat::AttackHasGlow(address, aa, an, resolve), "invalid glow timing cannot enable shield disabling");
+    put(ka + 2 * gen::size::FRichCurveKey + off::FRichCurveKey::Time, -1.0f);
+    Expect(!std::isfinite(combat::GlowDuration(ca)), "malformed curve timing is refused");
+
     std::vector<std::uint8_t> defense(off::UDefenseComponent::m_GuardDB + sizeof(mem::RawArray), 0);
     std::vector<std::uint8_t> nodes(2 * gen::size::GuardStackValue, 0);
     const auto defense_at = reinterpret_cast<std::uintptr_t>(defense.data());
@@ -821,6 +866,64 @@ void TestLanguage() {
     Expect(ue::ReadLanguage(base).empty(), "language validates the singleton's inline-storage pointer");
 }
 
+void TestShieldTimingAndLedger() {
+    using namespace sifucraft;
+    namespace off = gen::off;
+    std::vector<std::uint8_t> db(off::UGuardDB::m_ParryWindow + 16, 0);
+    const auto at = reinterpret_cast<std::uintptr_t>(db.data());
+    struct Bound { std::uint8_t type, padding[3]; float value; };
+    Bound range[2]{{1, {}, 0}, {1, {}, 10}};
+    std::memcpy(db.data() + off::UGuardDB::m_ParryWindow, range, sizeof(range));
+    Expect(combat::InParryWindow(at, 0) && combat::InParryWindow(at, 0.1) && !combat::InParryWindow(at, 0.18),
+           "shield timing uses Sifu's 0..10 logic-frame range, independently of render rate");
+    Expect(!combat::InParryWindow(at, NAN) && !combat::InParryWindow(at, -0.01) && !combat::InParryWindow(at, 1),
+           "shield timing refuses missing clocks and prolonged holding");
+    range[0].type = 0;
+    std::memcpy(db.data() + off::UGuardDB::m_ParryWindow, range, sizeof(range));
+    Expect(!combat::InParryWindow(at, 0) && combat::InParryWindow(at, 0.001), "shield timing respects exclusive range bounds");
+    range[1].type = 2;
+    std::memcpy(db.data() + off::UGuardDB::m_ParryWindow, range, sizeof(range));
+    Expect(!combat::InParryWindow(at, 0.1), "shield timing refuses unbounded or unknown window metadata");
+
+    input::InputRouter router;
+    router.SetOwner(protocol::InputOwner::Minecraft);
+    router.SetUseBinding(0x10003);
+    const input::MappedKey right{input::KeyKind::MouseButton, 3};
+    router.OnKey(right, "RightMouseButton", 1, 10);
+    Expect(std::abs(router.UseAge(10.1) - 0.1) < 0.0001, "shield press is timestamped on Sifu's input/game clock");
+    router.OnKey(right, "RightMouseButton", 1, 10.2);
+    Expect(std::abs(router.UseAge(10.3) - 0.3) < 0.0001, "repeated press notifications cannot renew perfect timing");
+    router.OnKey(right, "RightMouseButton", 0, 10.3);
+    Expect(!std::isfinite(router.UseAge(10.4)), "releasing use closes the timing window");
+    router.OnKey(right, "RightMouseButton", 1, 11);
+    router.SetGuiState(true, true, 0);
+    Expect(!std::isfinite(router.UseAge(11.05)), "inventory input cannot count as a shield raise");
+    router.SetOwner(protocol::InputOwner::Sifu);
+    Expect(!std::isfinite(router.UseAge(11.1)), "ownership loss invalidates shield timing");
+
+    combat::ShieldLedger ledger;
+    protocol::PlayerHitPayload hit{42, 3, 54, protocol::kHitCanDefend | protocol::kHitParriable | protocol::kHitPerfectWindow, 7, 9, 1, 0};
+    protocol::PlayerBlockedPayload reply{100, 42, 3, 7, 9, 6, protocol::kBlockedPerfect};
+    Expect(!ledger.Consume(55, reply, 1100), "shield feedback must reference an actually published native hit");
+    ledger.Record(100, 55, hit, 1000);
+    auto bad = reply; ++bad.spawn;
+    Expect(!ledger.Consume(55, bad, 1100) && !ledger.Consume(56, reply, 1100), "shield receipt rejects another activation or peer");
+    bad = reply; ++bad.world_generation;
+    Expect(!ledger.Consume(55, bad, 1100), "shield receipt rejects stale world scope");
+    bad = reply; bad.blocked_damage = NAN;
+    Expect(!ledger.Consume(55, bad, 1100), "shield receipt rejects nonfinite blocked damage");
+    Expect(ledger.Consume(55, reply, 1100) && !ledger.Consume(55, reply, 1101), "one native hit can produce at most one shield feedback even under a new reply ID");
+    ledger.Record(101, 55, hit, 1000); reply.origin_hit_id = 101;
+    Expect(!ledger.Consume(55, reply, 3001), "shield receipt cannot revive an expired original hit");
+    ledger.Reset();
+    Expect(!ledger.Consume(55, reply, 1100), "scope invalidation clears previous shield credentials");
+    hit.flags &= ~protocol::kHitPerfectWindow;
+    ledger.Record(102, 55, hit, 1000); reply.origin_hit_id = 102;
+    Expect(!ledger.Consume(55, reply, 1100), "ordinary timing cannot be upgraded to perfect by a client receipt");
+    reply.flags = 0;
+    Expect(ledger.Consume(55, reply, 1100), "ordinary blocks can be acknowledged without scheduling a native impact");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -867,6 +970,7 @@ int main(int argc, char** argv) {
     }
     TestGuardedReads();
     TestLanguage();
+    TestShieldTimingAndLedger();
     TestLightImpactCall();
     TestBuildGuard();
     TestVtableHook();

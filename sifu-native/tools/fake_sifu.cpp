@@ -34,6 +34,7 @@
 #include "bridge/sifu_bridge.h"
 #include "bridge/overlay_reader.h"
 #include "combat/damage_ledger.h"
+#include "combat/shield_ledger.h"
 #include "input/anchor_request.h"
 #include "core/log.h"
 
@@ -161,6 +162,7 @@ int main(int argc, char** argv) {
     bool player_hit_scenario = false;
     bool respawn_scenario = false;
     bool gui_test = false;
+    bool shield_scenario = false;
     bool gui_motion_sent = false;
     struct MouseMove {
         double dx = 0, dy = 0;
@@ -216,6 +218,8 @@ int main(int argc, char** argv) {
             with_enemies = enemy_scenario = true;
         } else if (std::strcmp(argv[i], "--combat-scenario") == 0) {
             with_enemies = combat_scenario = true;
+        } else if (std::strcmp(argv[i], "--shield-scenario") == 0) {
+            with_enemies = combat_scenario = shield_scenario = true;
         } else if (std::strcmp(argv[i], "--player-hit-scenario") == 0) {
             with_enemies = combat_scenario = player_hit_scenario = true;
         } else if (std::strcmp(argv[i], "--respawn-scenario") == 0) {
@@ -260,6 +264,9 @@ int main(int argc, char** argv) {
     int enemy_phase_seen = -1;
     float enemy_health[2] = {1000, 1000};
     combat::DamageLedger damage_ledger;
+    combat::ShieldLedger shield_ledger;
+    unsigned shield_sent = 0, shield_replies = 0;
+    bool shield_released = false, shield_fast_pressed = false;
     std::vector<protocol::Event> damage_events;
     unsigned applied_damage = 0;
     overlay::Reader overlay_reader;
@@ -339,6 +346,15 @@ int main(int argc, char** argv) {
         bridge.DrainEnemyDamage(&damage_events);
         damage_ledger.SetSession(bridge.peer_connected() ? bridge.peer_session() : 0);
         for (const auto& event : damage_events) {
+            if (event.type == static_cast<std::uint32_t>(protocol::EventType::PlayerBlocked)) {
+                protocol::PlayerBlockedPayload reply{};
+                std::memcpy(&reply, event.payload, sizeof(reply));
+                const bool accepted = shield_ledger.Consume(event.source_session, reply, now);
+                if (accepted) ++shield_replies;
+                SC_LOG("[fake-shield] original=%llu perfect=%d accepted=%d replies=%u", static_cast<unsigned long long>(reply.origin_hit_id),
+                    (reply.flags & protocol::kBlockedPerfect) != 0, accepted, shield_replies);
+                continue;
+            }
             protocol::EnemyDamagePayload damage;
             std::memcpy(&damage, event.payload, sizeof(damage));
             protocol::DamageResultPayload result{event.id, damage.enemy_id, damage.spawn,
@@ -413,6 +429,23 @@ int main(int argc, char** argv) {
             pawn.mouse_dy += move.dy;
             SC_LOG("[fake] mouse moved by (%.0f, %.0f)", move.dx, move.dy);
         }
+        if (shield_scenario && handed_over_at && shield_sent == 2 && !shield_released && now - handed_over_at >= 54000u)
+            shield_released = bridge.SendInput(protocol::EventType::MouseButton, 3, 0, 0);
+        if (shield_scenario && handed_over_at && now - handed_over_at >= (shield_sent == 2 ? 55000u : 45000u + shield_sent * 1500u) && shield_sent < 3) {
+            protocol::PlayerHitPayload hit{101, 1, 54, protocol::kHitCanDefend | protocol::kHitParriable |
+                (shield_sent ? protocol::kHitPerfectWindow | (shield_sent == 1 ? (2u << 8) : 0) : 0), frame.world_generation, pawn.epoch, -1, 0};
+            if (shield_sent == 1) hit.flags &= ~protocol::kHitParriable; // ordinary armed hit: perfect timing is independent
+            if (shield_sent == 2 && !shield_fast_pressed) {
+                shield_fast_pressed = bridge.SendInput(protocol::EventType::MouseButton, 3, 1, 0);
+                if (!shield_fast_pressed) continue;
+            }
+            std::uint64_t id = 0;
+            if (bridge.SendPlayerHit(hit, &id)) {
+                shield_ledger.Record(id, bridge.peer_session(), hit, now);
+                ++shield_sent;
+                SC_LOG("[fake-shield] sent hit=%llu phase=%u", static_cast<unsigned long long>(id), shield_sent);
+            }
+        }
         if (player_hit_scenario && handed_over_at && now - handed_over_at >= (hit_phase ? 2500u : 1000u) && hit_phase < 2) {
             protocol::PlayerHitPayload hit{101, 1, hit_phase ? 36.0f : 18.0f,
                 protocol::kHitCanDefend | protocol::kHitParriable | (1u << 8), frame.world_generation, pawn.epoch, -1, 0};
@@ -477,6 +510,10 @@ int main(int argc, char** argv) {
     }
     bridge.MarkClosing();
     SC_LOG("[bridge] final: %s", bridge.Describe().c_str());
+    if (shield_scenario) {
+        SC_LOG("[fake-shield] %s sent=%u replies=%u", shield_sent == 3 && shield_replies == 3 ? "PASS" : "FAIL", shield_sent, shield_replies);
+        if (shield_sent != 3 || shield_replies != 3) return 1;
+    }
     if (!overlay_output.empty()) {
         SC_LOG("[overlay-test] %s frames=%u schema=%u layout=%016llX", overlay_saved ? "PASS" : "FAIL", overlay_frames,
             overlay::kVersion, static_cast<unsigned long long>(overlay::kLayoutHash));

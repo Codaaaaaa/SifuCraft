@@ -27,7 +27,7 @@ namespace sifucraft::protocol {
 
 inline constexpr std::uint32_t kMagic = 0x52434653;  // "SFCR"
 // The name carries no version so that mismatched builds see each other and report INCOMPATIBLE.
-inline constexpr std::uint32_t kVersion = 14;
+inline constexpr std::uint32_t kVersion = 17;
 inline constexpr wchar_t kMappingName[] = L"Local\\SifuCraft.Bridge";
 inline constexpr std::uint32_t kMappingSize = 0x10000;
 
@@ -55,6 +55,7 @@ enum class EventType : std::uint32_t {
     DamageResult = 7,  // Sifu -> Minecraft, DamageResultPayload
     PlayerHit = 8,     // Sifu -> Minecraft, PlayerHitPayload
     GuiMouseMotion = 9, // Sifu -> Minecraft, GuiMousePayload (ordered with clicks)
+    PlayerBlocked = 10, // Minecraft -> Sifu, references an actually published PlayerHit
 };
 
 // Who receives the player's keyboard and mouse.
@@ -153,7 +154,8 @@ struct McSnapshot {
     std::uint64_t sifu_session;          // target Sifu lifetime, captured with this pose/request
     std::uint32_t world_generation;
     std::uint32_t gui_input_ack; // latest E/Escape prediction token applied by the client
-    std::uint8_t reserved[128];
+    std::uint32_t use_binding; // SDL scancode, or 0x10000 | SDL mouse button; 0 unbound
+    std::uint8_t reserved[124];
 };
 
 // Sifu's collision as a voxel grid, published as a file Minecraft loads whole (format: the
@@ -281,6 +283,16 @@ struct PlayerHitPayload {
     std::uint32_t world_generation, anchor_epoch;
     float dir_x, dir_y;
 };
+inline constexpr std::uint32_t kHitPerfectWindow = 1u << 3; // timing candidate, MC still checks actual blocking
+inline constexpr std::uint32_t kHitGuardBreaker = 1u << 4; // actual limb/weapon glow overlaps this hit; independent of Strong
+inline constexpr std::uint32_t kBlockedPerfect = 1u;
+struct PlayerBlockedPayload {
+    std::uint64_t origin_hit_id;
+    std::uint32_t attacker_id, spawn, world_generation, anchor_epoch;
+    float blocked_damage;
+    std::uint32_t flags;
+};
+static_assert(sizeof(PlayerBlockedPayload) == 32);
 
 struct Event {
     std::uint64_t id;              // strictly increasing per source session, starting at 1
@@ -353,6 +365,7 @@ inline constexpr std::uint32_t kLayoutTable[] = {
     kVersion,
     kSnapshotGuiAvailable, kMcGuiAvailable, kMcGuiOpen,
     static_cast<std::uint32_t>(EventType::GuiMouseMotion), sizeof(GuiMousePayload),
+    static_cast<std::uint32_t>(EventType::PlayerBlocked), sizeof(PlayerBlockedPayload), kHitPerfectWindow, kBlockedPerfect, kHitGuardBreaker,
     std::bit_cast<std::uint32_t>(kPlayerSifuHpPerMcHp),
     std::bit_cast<std::uint32_t>(kEnemySifuHpPerMcHp),
     kMappingSize,
@@ -390,6 +403,7 @@ inline constexpr std::uint32_t kLayoutTable[] = {
     offsetof(McSnapshot, sifu_session),
     offsetof(McSnapshot, world_generation),
     offsetof(McSnapshot, gui_input_ack),
+    offsetof(McSnapshot, use_binding),
     kSifuToMcRingOffset,
     kMcToSifuRingOffset,
     sizeof(EventRing),

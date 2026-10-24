@@ -20,7 +20,7 @@ Sifu 与 Minecraft 作为两个独立进程运行：
 | P3 | Sifu 地形碰撞导入 Minecraft 物理 | 已通过 |
 | P4 | 方块放置/破坏的渲染与碰撞闭环 | 已通过 |
 | P5 | 敌人代理与双向伤害 | 已通过（武馆、第一关、跨图及 F8 实机验收） |
-| P6 | 核心物品系统与 GUI | S0–S2 已通过（60 FPS、平滑指针）；后续物品功能开发中 |
+| P6 | 核心物品系统与 GUI | S0–S3 已通过；下一步 S4 图腾 |
 
 ## 目录
 
@@ -34,7 +34,7 @@ tools/         部署、卸载、启动与 bridge 测试脚本；tools/collision
 
 ## 共享内存 Bridge（P1）
 
-两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v14）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
+两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v17）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
 
 - 每个字段只有一个写入方；双方各自写自己的 `EndpointStatus`（pid、session、心跳），心跳 2 秒不前进即判定断连；
 - 高频位姿走 seqlock 快照（Sifu → MC 的 `SifuSnapshot`，MC → Sifu 的 `McSnapshot`）；
@@ -150,6 +150,31 @@ MC 界面语言随 Sifu 当前界面语言同步（包括简体/繁体中文）�
 调试控制文件位于游戏的 `SifuCraft` 目录：`overlay-off` 关闭并恢复 Present 槽，删除后重新安装；
 `overlay-pattern` 绘制一次诊断图并保存 `overlay-pattern.bmp`；`overlay-capture` 保存下一次合成到 `overlay.bmp`。
 日志前缀为 `[overlay]`。诊断文件用后自动移除；HDR/PQ 色彩空间暂不参与合成。
+
+## 盾牌（P6 S3，已实机验收通过）
+
+主手/副手盾沿用原版方向、耐久、声音与破损处理；Sifu 的不可格挡命中使用单独的绕盾伤害类型。
+持续举盾是普通格挡；可防御攻击在 Sifu 当前 GuardDB 的时机范围内举盾时，实际挡住才算完美格挡。
+时机按原生输入与 Sifu 游戏时间计算，不受 MC 20 Hz 更新或桥接耗时扩展；当前配置为 0–10 个逻辑帧，约 167 ms。
+完美格挡免本次盾耐久，并对对应攻击者施加零伤害、0.15 s 轻反馈；普通格挡保留耐久消耗与敌人连招。
+实际格挡后，客户端使用 MC 原版手部动画让对应盾牌短暂下沉并恢复，保持持续举盾；背后和穿盾命中不播放格挡动画。
+仅 Sifu 的橙色发光攻击按原版斧头规则禁用盾 5 s，包括完美格挡；到期恢复。
+原生端读取本次招式动画的 `AnimNotify_GlowLimbs` 与发光曲线，核对发光区间和本次命中窗口；支持徒手、棍和刀。
+命中行的 `Parriable` 保留为元数据，不限制完美格挡资格；持械攻击同样按 GuardDB 时机判定。
+普通 `Strong` 攻击不禁盾。破防招式若同时不可防御，仍穿盾扣血，并禁用正面举起的盾；背后受击和未举盾不触发禁盾。
+
+桥接反馈引用原始命中 ID，校验双方会话、地图、锚定纪元及敌人激活身份，一次命中最多消费一次；
+过期、F8、切图和断线后拒绝旧反馈。原生反馈复用 H1/H7 和已有轻击入口，仅 stage 8 启用。
+`[shield]` 日志区分时机候选、MC 实际格挡与原生反馈，并核对反馈前后敌人生命不变。
+准星反色仅作用于透明背景上的准星像素，盾牌进入准星区域时保留正常覆盖。
+原生检查、真实 MC 回归及用户实机验收通过，覆盖持械完美格挡、橙色武器破盾、盾牌下沉回正和准星覆盖。
+
+独立原版对照可用 `runClient -Psifucraft.shieldSelfTest=true -Psifucraft.playerDamageTest=true -Psifucraft.devWorldName=sifucraft-shield-check-<名称>`，
+配合 fake 的 `--shield-scenario --hand-over --collision <网格> --pawn <X> <Y> <Z> --button 3:0:65000`，运行至少 95 s。
+检查包含主/副手普通及完美格挡、正面/背后、不可格挡、盾牌破损、普通 Strong 不禁盾、破防招式禁盾及自然到期、同轮按下与命中。
+拒绝在常用开发存档中执行，并在结束时恢复测试装备和玩家设置。
+旧存档手动验收缺盾时，可另加 `-Psifucraft.shieldTestSupplies=true`（配合 `playerDamageTest=true`），
+临时提供一面带标记的练习盾，正常断开保存前回收；已有盾时不另发。
 
 ## Fabric Mod（Minecraft 26.3）
 
