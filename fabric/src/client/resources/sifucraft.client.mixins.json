@@ -3,12 +3,15 @@
 	"package": "dev.sifucraft.client.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
+		"ContainerScreenAccessor",
 		"GameRendererMixin",
 		"HudMixin",
 		"LevelRendererMixin",
 		"MinecraftMixin",
 		"MouseHandlerAccessor",
 		"MouseHandlerMixin",
+		"PlayerDataMixin",
+		"ScreenMixin",
 		"SDLEventHandlerMixin"
 	],
 	"injectors": {

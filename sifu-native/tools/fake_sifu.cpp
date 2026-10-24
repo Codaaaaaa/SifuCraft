@@ -158,6 +158,8 @@ int main(int argc, char** argv) {
     bool with_enemies = false, enemy_scenario = false, combat_scenario = false;
     bool player_hit_scenario = false;
     bool respawn_scenario = false;
+    bool gui_test = false;
+    bool gui_motion_sent = false;
     struct MouseMove {
         double dx = 0, dy = 0;
         std::uint64_t at_ms = 0;
@@ -169,6 +171,8 @@ int main(int argc, char** argv) {
             grid_file = argv[++i];
         } else if (std::strcmp(argv[i], "--overlay-output") == 0 && i + 1 < argc) {
             overlay_output = argv[++i];
+        } else if (std::strcmp(argv[i], "--gui") == 0) {
+            gui_test = true;
         } else if (std::strcmp(argv[i], "--pawn") == 0 && i + 3 < argc) {
             pawn.enabled = true;
             pawn.x = static_cast<float>(std::atof(argv[++i]));
@@ -265,6 +269,7 @@ int main(int argc, char** argv) {
         const double elapsed = (now - begin) / 1000.0;
         if (seconds > 0 && elapsed >= seconds) break;
         bridge::PlayerFrame frame = pawn.enabled ? StandingFrame(pawn) : SyntheticFrame(elapsed);
+        if (gui_test) frame.flags |= protocol::kSnapshotGuiAvailable;
         if (combat_scenario) frame.world_path = "/SifuCraft/Test/" + pawn.map + "." + pawn.map;
         if (with_enemies && !enemies_ready_at && bridge.peer_connected() &&
             (bridge.peer_state().flags & protocol::kMcReady)) enemies_ready_at = now;
@@ -281,16 +286,20 @@ int main(int argc, char** argv) {
             }
         }
         bridge.Tick(frame, now);
+        if (gui_test && !gui_motion_sent && (bridge.peer_state().flags & protocol::kMcGuiOpen))
+            gui_motion_sent = bridge.SendGuiMotion(0, 0, 0);
         if (!overlay_output.empty() && bridge.peer_connected() &&
             frame.input_owner == protocol::InputOwner::Minecraft &&
             overlay_reader.Read(bridge.peer_session(), bridge.session(), frame.world_generation, frame.anchor_epoch, &overlay_frame)) {
             ++overlay_frames;
-            std::size_t transparent = 0, visible = 0;
+            std::size_t transparent = 0, visible = 0, translucent = 0;
             for (std::size_t at = 3; at < overlay_frame.pixels.size(); at += 4) {
                 if (overlay_frame.pixels[at] == 0) ++transparent; else ++visible;
+                if (overlay_frame.pixels[at] > 0 && overlay_frame.pixels[at] < 255) ++translucent;
             }
-            const bool transparent_hud = transparent > visible && visible > 0;
-            if (overlay_frames == 30 || (overlay_frames > 30 && !overlay_saved && transparent_hud)) {
+            const bool transparent_hud = visible > 0 && (gui_test ?
+                translucent > 0 && (bridge.peer_state().flags & protocol::kMcGuiOpen) : transparent > visible);
+            if ((!gui_test && overlay_frames == 30) || (overlay_frames > 30 && !overlay_saved && transparent_hud)) {
                 std::ofstream output(overlay_output, std::ios::binary);
                 output.write(reinterpret_cast<const char*>(&overlay_frame.header), sizeof(overlay_frame.header));
                 output.write(reinterpret_cast<const char*>(overlay_frame.pixels.data()), static_cast<std::streamsize>(overlay_frame.pixels.size()));

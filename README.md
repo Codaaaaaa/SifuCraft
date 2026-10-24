@@ -20,7 +20,7 @@ Sifu 与 Minecraft 作为两个独立进程运行：
 | P3 | Sifu 地形碰撞导入 Minecraft 物理 | 已通过 |
 | P4 | 方块放置/破坏的渲染与碰撞闭环 | 已通过 |
 | P5 | 敌人代理与双向伤害 | 已通过（武馆、第一关、跨图及 F8 实机验收） |
-| P6 | 核心物品系统与 GUI | S0 G2 显示与 S1 HUD 已通过（手部 60 FPS）；背包及后续物品待开发 |
+| P6 | 核心物品系统与 GUI | S0–S2 已通过（60 FPS、平滑指针）；后续物品功能开发中 |
 
 ## 目录
 
@@ -34,12 +34,12 @@ tools/         部署、卸载、启动与 bridge 测试脚本；tools/collision
 
 ## 共享内存 Bridge（P1）
 
-两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v12）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
+两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v13）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
 
 - 每个字段只有一个写入方；双方各自写自己的 `EndpointStatus`（pid、session、心跳），心跳 2 秒不前进即判定断连；
 - 高频位姿走 seqlock 快照（Sifu → MC 的 `SifuSnapshot`，MC → Sifu 的 `McSnapshot`）；
 - 一次性命令（ping、按键、鼠标按钮、输入所有权变化）走单生产者/单消费者事件环，事件带 id 与收发双方 session，消费方去重并丢弃发给旧会话的事件；
-- 鼠标移动与滚轮以累计值放在快照里，读取方取差值，不丢不重；
+- 游戏视角的鼠标移动与滚轮使用快照累计值；背包操作使用与点击同序的鼠标累计值事件；
 - 两端对同一张布局表计算 FNV 哈希，版本或布局不一致时拒绝连接。
 - Sifu 的碰撞体素网格（P3）以文件交给 Minecraft：`CollisionManifest` 写明当前网格文件的路径、代数与方块/体素数，Minecraft 整体载入并校验后回报已载入的代数。
 - Minecraft 放置的方块（P4）以状态表 `BlockTable` 发给 Sifu（seqlock，当前地图的全部方块及其种类，最多 1536 个）：Sifu 按表增删，重连、切关都不需要补发；种类对应的贴图由文件 `SifuCraft\textures\palette.txt` 给出，表里带它的代数。
@@ -61,7 +61,7 @@ Sifu 的玩家由 Minecraft 驱动：键鼠输入转给 Minecraft，Minecraft �
 - 游戏未暂停、没有显示鼠标指针（菜单）；
 - Sifu 没有在用脚本驱动玩家：过场标志（`bCinematicMode`、输入被禁用 / 忽略）、角色被挂到其他物体上（过场动画的锚点）、角色刚生成（关卡开场）均交还 Sifu；兜底规则是 Sifu 连续几帧改写我们写入的位置即让出，角色静止后再接回（反复被抢时等待时间翻倍）。
 
-Esc 永远交给 Sifu，F8 切换。每次交给 Minecraft 都是一个新的锚定纪元（anchor epoch），Minecraft 从角色当前所在位置和朝向继续，不会把角色拉回之前的位置。
+Esc 在背包打开时先关闭背包，其余时间交给 Sifu；F8 切换控制权。每次交给 Minecraft 都是一个新的锚定纪元（anchor epoch），Minecraft 从角色当前所在位置和朝向继续，不会把角色拉回之前的位置。
 
 逐步上线由 `SifuCraft\stage`（0–8，6 = P4 方块，7 = P5 敌人代理与 MC 攻击转发，8 = P6 GUI 合成）控制，`SifuCraft\no-hooks` 只保留只读探针，`SifuCraft\disabled` 完全停用。
 
@@ -105,7 +105,7 @@ stage 7 的 S3 使用 H6 读取命中请求：有缓存时读取内联行，否�
 
 S3 实机已验证普通命中转发和 F8 交还后的原生扣血。H7 拦截扣血；Sifu 自身的回血仍可能改变其生命。S5 已修正默认伤害资源解析，用户确认伤害、杂兵/Boss 的轻击与死亡、武馆及第一关来回切换均正常。抓取等未逐项覆盖的特殊行为保留后续回归。
 
-开发验收可用 `runClient '-Psifucraft.playerDamageTest=true'` 临时使用生存模式、普通难度并保留物品；退出时恢复原模式、生命、难度及规则。`-Psifucraft.playerHitSelfTest=true` 另对假 Sifu 的测试地图自动核对重复事件、无敌帧和过期事件。正式初始游戏模式留待 P6 决定。
+开发验收可用 `runClient '-Psifucraft.playerDamageTest=true'` 临时使用生存模式、普通难度并保留物品；退出时恢复原模式、生命、难度及规则。`-Psifucraft.playerHitSelfTest=true` 另对假 Sifu 的测试地图自动核对重复事件、无敌帧和过期事件。正式新角色采用生存和一次性基础物资，已有角色保持存档设置。
 
 MC 死亡后等待约 1 秒自动重生，通过快照请求 Sifu 更新锚定纪元；确认新纪元并重新落地后恢复输入、位姿和伤害。等待期间保留 MC 所有权下的原生扣血保护，暂停旧位姿和命中转发；旧生命的异步伤害通过对象身份和纪元过滤。`--respawn-scenario` 配合 `-Psifucraft.respawnSelfTest=true` 可用假 Sifu 验证完整链路。
 
@@ -113,7 +113,7 @@ MC 位姿和重锚请求还绑定目标 Sifu 会话与世界代数；Sifu 重启
 
 离线场景可用 `sifucraft_fake_sifu.exe --enemies`，或 `--enemy-scenario` 自动测试增删、尺寸变化、激活复用和世界切换。Java 协议解析测试随 `tools/gradle.ps1 build` 运行；单独运行用 `tools/gradle.ps1 protocolTest`。日志前缀为 `[combat]`；需要查看 Minecraft 的 F3+B 碰撞箱时，可用 `tools/gradle.ps1 runClient -Psifucraft.hideWindow=false` 显示开发窗口。
 
-## GUI 帧导出与玩家血条（P6 S0–S1）
+## GUI、玩家血条与背包（P6 S0–S2）
 
 `runClient -Psifucraft.overlay=true` 启用透明 HUD 与第一人称手部的异步 GPU 回读，默认关闭。
 图像通过独立的共享内存三缓冲传给原生读取端，使用 RGBA8、预乘 alpha，最高 1920×1080；
@@ -121,7 +121,7 @@ MC 位姿和重锚请求还绑定目标 Sifu 会话与世界代数；Sifu 重启
 
 stage 8 在 Sifu 的 D3D11 Present 中合成 MC 图像；使用独立的 D3D11.1 状态对象隔离和恢复宿主渲染状态，
 支持 8 位及 10 位 SDR 后缓冲。MC 分辨率随 Sifu 视口调整（源图像上限 1080p），准星按最终背景反色。
-F8 交还、菜单、失去所有权或断线时停止绘制，旧帧最多复用 250 ms。背包输入留待后续步骤。
+F8 交还、菜单、失去所有权或断线时停止绘制，旧帧最多复用 250 ms。
 stage 8 仅在 MC 接管且当前会话的图像确实合成并成功 Present 时隐藏 Sifu 玩家血条，
 叠加过期、禁用或交还控制后恢复该控件原有可见性；保留架势、敌人血条与其他界面。
 隐藏/恢复通过游戏线程的反射 `SetVisibility` 调用完成，按对象 serial 和 HUD 引用关系校验。
@@ -129,7 +129,17 @@ stage 8 仅在 MC 接管且当前会话的图像确实合成并成功 Present �
 加载期间保持原版渲染；导出时跳过 MC 世界和暗角，保留原版 HUD/手部，且不修改暗角设置。
 离线验证可给 `sifucraft_fake_sifu.exe` 增加 `--overlay-output <输出.rgba>`：运行至少 30 帧后，
 保存一个 64 字节帧头及其 RGBA 像素，并检查透明背景与可见内容。格式定义在
-[protocol/sifucraft_overlay.h](protocol/sifucraft_overlay.h)，不改变现有 v12 游戏协议。
+[protocol/sifucraft_overlay.h](protocol/sifucraft_overlay.h)；独立图像协议仍为 v2，与游戏协议分别版本化。
+
+S2 在叠加有效时保留原版背包界面并绘制虚拟鼠标：E 打开/关闭，Esc 先关闭背包，背包关闭后再次 Esc 打开 Sifu 菜单。
+支持左右键拾取/拆分、拖动分配、Shift 快移、数字键交换与容器文本输入；1–9 和滚轮继续选择快捷栏。
+F8、Sifu 菜单、失去前台或切图时关闭容器，手持的物品按 Minecraft 原版规则返还。
+新建世界默认为生存/普通；首次无玩家存档的角色获铁剑、盾、铁镐各 1，熟牛肉 16、石头和木板各 64。
+已有角色的模式与物品保留，切图/F8/重生不补物品。S2 容器操作、交接和指针清晰度已通过实机验收。
+虚拟指针按屏幕像素绘制并对边缘抗锯齿，位置使用精确鼠标坐标，不随 GUI 像素网格放大或取整。
+
+独立存档的背包自测可用 `runClient -Psifucraft.overlay=true -Psifucraft.inventorySelfTest=true -Psifucraft.playerDamageTest=true -Psifucraft.devWorldName=sifucraft-ui-check-<名称>`，
+配合 fake 的 `--gui --hand-over --collision <网格> --pawn <X> <Y> <Z>`；自测拒绝在普通开发存档中执行。
 
 调试控制文件位于游戏的 `SifuCraft` 目录：`overlay-off` 关闭并恢复 Present 槽，删除后重新安装；
 `overlay-pattern` 绘制一次诊断图并保存 `overlay-pattern.bmp`；`overlay-capture` 保存下一次合成到 `overlay.bmp`。

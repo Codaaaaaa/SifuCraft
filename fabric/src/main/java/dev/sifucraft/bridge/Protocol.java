@@ -9,7 +9,7 @@ public final class Protocol {
     private Protocol() {}
 
     public static final int MAGIC = 0x52434653; // "SFCR"
-    public static final int VERSION = 12;
+    public static final int VERSION = 13;
     public static final String MAPPING_NAME = "Local\\SifuCraft.Bridge";
     public static final int MAPPING_SIZE = 0x10000;
 
@@ -32,6 +32,8 @@ public final class Protocol {
     public static final int EVENT_ENEMY_DAMAGE = 6;
     public static final int EVENT_DAMAGE_RESULT = 7;
     public static final int EVENT_PLAYER_HIT = 8;
+    public static final int EVENT_GUI_MOUSE_MOTION = 9;
+    public static final int GUI_MOUSE_SIZE = 24;
     public static final int HIT_CAN_DEFEND = 1;
     public static final int HIT_PARRIABLE = 1 << 1;
     public static final int HIT_CAN_BE_LETHAL = 1 << 2;
@@ -53,6 +55,7 @@ public final class Protocol {
 
     public static final int SNAPSHOT_HAS_PAWN = 1;
     public static final int SNAPSHOT_HAS_CAMERA = 1 << 1;
+    public static final int SNAPSHOT_GUI_AVAILABLE = 1 << 2;
 
     public static final int MC_READY = 1;
     public static final int MC_HAS_POSE = 1 << 1;
@@ -62,6 +65,8 @@ public final class Protocol {
     public static final int MC_FLYING = 1 << 5;
     public static final int MC_REQUEST_ANCHOR = 1 << 6;
     public static final int MC_DEAD = 1 << 7;
+    public static final int MC_GUI_AVAILABLE = 1 << 8;
+    public static final int MC_GUI_OPEN = 1 << 9;
 
     public static final int HEADER_OFFSET = 0x0000;
     public static final int SIFU_STATUS_OFFSET = 0x0040;
@@ -146,6 +151,7 @@ public final class Protocol {
         public static final int COLLISION_GENERATION = 108;
         public static final int SIFU_SESSION = 112;
         public static final int WORLD_GENERATION = 120;
+        public static final int GUI_INPUT_ACK = 124;
     }
 
     /** CollisionManifest (seqlock, written by Sifu): the current voxel grid file. */
@@ -215,6 +221,7 @@ public final class Protocol {
         public static final int CODE = 0;
         public static final int ACTION = 4;
         public static final int MODIFIERS = 8;
+        public static final int GUI_REVISION = 12;
     }
 
     public static final class EnemyDamage {
@@ -256,6 +263,8 @@ public final class Protocol {
     /** Same entries, same order as {@code kLayoutTable} in sifucraft_protocol.h. */
     static final int[] LAYOUT_TABLE = {
         VERSION,
+        SNAPSHOT_GUI_AVAILABLE, MC_GUI_AVAILABLE, MC_GUI_OPEN,
+        EVENT_GUI_MOUSE_MOTION, GUI_MOUSE_SIZE,
         Float.floatToRawIntBits(PLAYER_SIFU_HP_PER_MC_HP),
         Float.floatToRawIntBits(ENEMY_SIFU_HP_PER_MC_HP),
         MAPPING_SIZE,
@@ -291,6 +300,7 @@ public final class Protocol {
         McSnap.COLLISION_GENERATION,
         McSnap.SIFU_SESSION,
         McSnap.WORLD_GENERATION,
+        McSnap.GUI_INPUT_ACK,
         SIFU_TO_MC_RING_OFFSET,
         MC_TO_SIFU_RING_OFFSET,
         Ring.SIZE,
@@ -301,6 +311,7 @@ public final class Protocol {
         Event.TYPE,
         Event.PAYLOAD,
         InputPayload.SIZE,
+        InputPayload.GUI_REVISION,
         COLLISION_MANIFEST_OFFSET,
         Manifest.SIZE,
         Manifest.GENERATION,

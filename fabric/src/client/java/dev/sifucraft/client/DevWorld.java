@@ -11,11 +11,11 @@ import net.minecraft.world.level.levelgen.WorldOptions;
 import net.minecraft.world.level.levelgen.presets.WorldPresets;
 
 /**
- * Development only ({@code -Dsifucraft.devWorld=true}): enters a creative superflat world straight
+ * Development only ({@code -Dsifucraft.devWorld=true}): enters a survival superflat world straight
  * from the title screen, creating it on first use, so bridge tests need no clicking in Minecraft.
  */
 final class DevWorld {
-    static final String LEVEL_ID = "sifucraft-dev";
+    static final String LEVEL_ID = System.getProperty("sifucraft.devWorldName", "sifucraft-dev");
 
     private DevWorld() {}
 
@@ -28,8 +28,8 @@ final class DevWorld {
             minecraft.createWorldOpenFlows().openWorld(LEVEL_ID, () -> minecraft.gui.setScreen(new TitleScreen()));
             return;
         }
-        LevelSettings settings = new LevelSettings("SifuCraft Dev", GameType.CREATIVE,
-                new LevelSettings.DifficultySettings(Difficulty.PEACEFUL, false, false), true,
+        LevelSettings settings = new LevelSettings("SifuCraft Dev", GameType.SURVIVAL,
+                new LevelSettings.DifficultySettings(Difficulty.NORMAL, false, false), true,
                 WorldDataConfiguration.DEFAULT);
         // The standard superflat preset: anything else counts as "customized" and every later open
         // would stop at a backup confirmation screen.

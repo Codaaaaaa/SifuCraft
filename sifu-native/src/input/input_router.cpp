@@ -50,8 +50,8 @@ std::int32_t InputRouter::ModifiersLocked() const {
     return modifiers;
 }
 
-void InputRouter::PushLocked(EventType type, std::int32_t code, std::int32_t action) {
-    pending_.push_back({type, code, action, ModifiersLocked()});
+void InputRouter::PushLocked(EventType type, std::int32_t code, std::int32_t action, std::uint32_t revision) {
+    pending_.push_back({type, code, action, ModifiersLocked(), revision, mouse_dx_, mouse_dy_, scroll_});
 }
 
 bool InputRouter::OnKey(const MappedKey& key, std::string_view unreal_name, int action) {
@@ -60,7 +60,6 @@ bool InputRouter::OnKey(const MappedKey& key, std::string_view unreal_name, int 
         if (action == 1) toggle_requested_ = true;
         return true;
     }
-    if (unreal_name == "Escape") return false;
     if (key.kind == KeyKind::MouseWheel) return owner_ == InputOwner::Minecraft;  // wheel travels as an axis
     if (key.kind != KeyKind::Keyboard && key.kind != KeyKind::MouseButton) return false;
 
@@ -68,6 +67,9 @@ bool InputRouter::OnKey(const MappedKey& key, std::string_view unreal_name, int 
     const std::int32_t id = key.code | (button ? kMouseButtonBit : 0);
     InputOwner side = owner_;
     const auto held = held_.find(id);
+    const bool escape = unreal_name == "Escape";
+    if (escape && action != 1 && held == held_.end()) return false;
+    if (escape && action == 1 && !(owner_ == InputOwner::Minecraft && gui_available_ && gui_open_)) side = InputOwner::Sifu;
     if (action == 1) {
         held_[id] = side;
     } else if (held != held_.end()) {
@@ -75,7 +77,14 @@ bool InputRouter::OnKey(const MappedKey& key, std::string_view unreal_name, int 
         if (action == 0) held_.erase(held);
     }
     if (side != InputOwner::Minecraft) return false;
-    PushLocked(button ? EventType::MouseButton : EventType::Key, key.code, action);
+    std::uint32_t revision = 0;
+    if (action == 1 && gui_available_ && !button && (key.code == 8 || escape)) {
+        gui_open_ = escape ? false : !gui_open_;
+        if (++gui_revision_ == 0) ++gui_revision_;
+        revision = gui_pending_ = gui_revision_;
+    }
+    PushLocked(button ? EventType::MouseButton : EventType::Key, key.code, action, revision);
+    if (revision && gui_open_) PushLocked(EventType::GuiMouseMotion, 0, 0); // establish an ordered cursor baseline
     return true;
 }
 
@@ -83,11 +92,13 @@ bool InputRouter::OnAxis(KeyKind kind, float delta) {
     Lock lock(lock_);
     if (owner_ != InputOwner::Minecraft) return false;
     switch (kind) {
-        case KeyKind::MouseX: mouse_dx_ += delta; return true;
-        case KeyKind::MouseY: mouse_dy_ -= delta; return true;  // Unreal: +up; protocol: +down
-        case KeyKind::MouseWheel: scroll_ += delta; return true;
+        case KeyKind::MouseX: mouse_dx_ += delta; break;
+        case KeyKind::MouseY: mouse_dy_ -= delta; break;  // Unreal: +up; protocol: +down
+        case KeyKind::MouseWheel: scroll_ += delta; break;
         default: return false;
     }
+    if (gui_available_ && gui_open_) PushLocked(EventType::GuiMouseMotion, 0, 0);
+    return true;
 }
 
 InputOwner InputRouter::owner() const {
@@ -114,6 +125,22 @@ void InputRouter::SetOwner(InputOwner owner) {
         }
     }
     owner_ = owner;
+    gui_available_ = gui_open_ = false;
+    gui_pending_ = 0;
+}
+
+void InputRouter::SetGuiState(bool available, bool open, std::uint32_t acknowledged) {
+    Lock lock(lock_);
+    gui_available_ = available && owner_ == InputOwner::Minecraft;
+    if (!gui_available_) { gui_open_ = false; gui_pending_ = 0; return; }
+    if (!gui_pending_ || acknowledged == gui_pending_) {
+        if (open && !gui_open_) PushLocked(EventType::GuiMouseMotion, 0, 0);
+        gui_open_ = open; gui_pending_ = 0;
+    }
+}
+void InputRouter::GuiInputDropped(std::uint32_t revision) {
+    Lock lock(lock_);
+    if (revision && gui_pending_ == revision) { gui_pending_ = 0; gui_open_ = false; }
 }
 
 bool InputRouter::TakeToggleRequest() {

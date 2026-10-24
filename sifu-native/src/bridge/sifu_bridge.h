@@ -47,6 +47,7 @@ struct McState {
     std::uint32_t collision_generation = 0;  // the CollisionManifest.generation Minecraft has loaded
     std::uint64_t sifu_session = 0;
     std::uint32_t world_generation = 0;
+    std::uint32_t gui_input_ack = 0;
 };
 
 // The voxel grid Sifu currently publishes (protocol::CollisionManifest).
@@ -91,7 +92,8 @@ public:
     void MarkClosing();
 
     // Input routed to Minecraft (type Key or MouseButton). Dropped while no peer is connected.
-    bool SendInput(protocol::EventType type, std::int32_t code, std::int32_t action, std::int32_t modifiers);
+    bool SendInput(protocol::EventType type, std::int32_t code, std::int32_t action, std::int32_t modifiers, std::uint32_t gui_revision = 0);
+    bool SendGuiMotion(double x, double y, double scroll);
     bool SendOwnerChanged(protocol::InputOwner owner);
     // Publishes the manifest of the current collision grid; call when it changes.
     void PublishCollision(const CollisionInfo& info);

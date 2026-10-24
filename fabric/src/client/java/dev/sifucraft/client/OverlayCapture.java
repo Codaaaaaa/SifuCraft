@@ -29,6 +29,9 @@ final class OverlayCapture implements AutoCloseable {
     private boolean enabled = Boolean.getBoolean("sifucraft.overlay");
     private long nextCaptureNs, nextLogNs, frameId, captured, published, skipped, discarded;
     private int requestedWidth, requestedHeight;
+    private int viewportWidth, viewportHeight;
+    int viewportWidth() { return viewportWidth; }
+    int viewportHeight() { return viewportHeight; }
     private long rendered, statsStartNs, statsRendered, statsCaptured, statsPublished;
 
     boolean enabled() { return enabled; }
@@ -135,6 +138,7 @@ final class OverlayCapture implements AutoCloseable {
         long viewport = writer.viewport();
         int width = (int) (viewport >>> 32), height = (int) viewport;
         if (width < 320 || height < 240 || width > 16384 || height > 16384) return;
+        viewportWidth = width; viewportHeight = height;
         double fit = Math.min(1.0, Math.min((double) OverlayProtocol.MAX_WIDTH / width, (double) OverlayProtocol.MAX_HEIGHT / height));
         width = Math.max(320, (int) Math.floor(width * fit));
         height = Math.max(240, (int) Math.floor(height * fit));

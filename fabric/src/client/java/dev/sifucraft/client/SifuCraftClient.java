@@ -26,6 +26,7 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.client.Camera;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
@@ -37,9 +38,6 @@ import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.Item;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.Vec3;
 import org.lwjgl.sdl.SDLVideo;
@@ -50,7 +48,7 @@ import org.slf4j.LoggerFactory;
  * Client entrypoint: attaches the bridge as the Minecraft endpoint and, every frame right after
  * Minecraft polls its own input, applies the input Sifu routes here.
  *
- * <p>Development system properties: {@code sifucraft.devWorld} enters a creative superflat world as
+ * <p>Development system properties: {@code sifucraft.devWorld} enters a superflat development world as
  * soon as the client has finished loading; {@code sifucraft.hideWindow} hides the Minecraft window
  * so Sifu keeps the foreground; {@code sifucraft.exitWithSifu} stops the client (saving the world)
  * when Sifu closes.
@@ -70,14 +68,13 @@ public final class SifuCraftClient implements ClientModInitializer {
     private static final double FALL_RESCUE_BLOCKS = 20.0;
     private static final long RESCUE_COOLDOWN_MS = 1000;
 
-    private static final Item[] DEV_HOTBAR = {Items.STONE, Items.GRASS_BLOCK, Items.DIRT,
-            Items.OAK_LOG, Items.OAK_PLANKS, Items.COBBLESTONE, Items.BRICKS, Items.GLOWSTONE, Items.IRON_SWORD};
-
     private static volatile SifuCraftClient instance;
 
     private Minecraft minecraft;
     private McBridge bridge;
     private InputInjector input;
+    private InventoryCheck inventoryCheck;
+    private int guiWireEvents;
     private final OverlayCapture overlay = new OverlayCapture();
     private boolean crosshair;
     private CollisionLoader collision;
@@ -119,6 +116,11 @@ public final class SifuCraftClient implements ClientModInitializer {
                 logInput("key", scancode, action, modifiers);
                 input.key(scancode, action, modifiers);
             }
+            @Override public void onKey(int scancode, int action, int modifiers, int guiRevision) {
+                logInput("key", scancode, action, modifiers);
+                input.key(scancode, action, modifiers, guiRevision);
+            }
+            @Override public void onGuiMotion(double x, double y, double scroll) { guiWireEvents++; input.guiMotion(x, y, scroll); }
 
             @Override
             public void onMouseButton(int button, int action, int modifiers) {
@@ -157,6 +159,12 @@ public final class SifuCraftClient implements ClientModInitializer {
                 message -> LOG.info("[blocks] {}", message)));
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> PlacedBlocks.close());
         ServerTickEvents.END_SERVER_TICK.register(server -> PlacedBlocks.saveIfDirty());
+        ServerLifecycleEvents.SERVER_STARTING.register(server -> NewPlayerSetup.reset());
+        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> NewPlayerSetup.joined(handler.player));
+        if (Boolean.getBoolean("sifucraft.inventorySelfTest")) {
+            inventoryCheck = new InventoryCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(inventoryCheck::restore);
+        }
         if (Boolean.getBoolean("sifucraft.combatSelfTest")) {
             CombatCheck check = new CombatCheck();
             ServerTickEvents.END_SERVER_TICK.register(check::tick);
@@ -200,12 +208,32 @@ public final class SifuCraftClient implements ClientModInitializer {
     public static void beginGuiFrame() { if (instance != null) instance.crosshair = false; }
     public static void markCrosshair() { if (instance != null) instance.crosshair = true; }
     static boolean hasCrosshair() { return instance != null && instance.crosshair; }
+    static int guiWireEvents() { return instance == null ? 0 : instance.guiWireEvents; }
+    public static void drawPointer(net.minecraft.client.gui.GuiGraphicsExtractor gui) {
+        if (mirroredScreenActive()) SmoothPointer.draw(instance.minecraft, gui);
+    }
+    public static boolean mirroredScreenActive() {
+        var client = instance;
+        return client != null && client.input.minecraftOwnsInput() && client.guiAvailable(client.bridge.latest()) &&
+                client.minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>;
+    }
+    static int cursorReferenceWidth() {
+        return instance.overlay.viewportWidth() > 0 ? instance.overlay.viewportWidth() : instance.minecraft.getWindow().getWidth();
+    }
+    static int cursorReferenceHeight() {
+        return instance.overlay.viewportHeight() > 0 ? instance.overlay.viewportHeight() : instance.minecraft.getWindow().getHeight();
+    }
+    private boolean guiAvailable(SifuFrame frame) {
+        return overlay.enabled() && bridge.peerConnected() && frame != null && frame.minecraftOwnsInput() &&
+                (frame.flags() & Protocol.SNAPSHOT_GUI_AVAILABLE) != 0 && respawn.ready() && space.anchoredTo(frame) &&
+                minecraft.player != null && minecraft.player.isAlive() && minecraft.gui.overlay() == null;
+    }
 
     private OverlayCapture.Scope overlayScope() {
         SifuFrame frame = bridge.latest();
         if (!bridge.peerConnected() || frame == null || !frame.minecraftOwnsInput() ||
                 minecraft.level == null || minecraft.player == null || !minecraft.player.isAlive() ||
-                minecraft.gui.screen() != null || minecraft.gui.overlay() != null ||
+                (minecraft.gui.screen() != null && !mirroredScreenActive()) || minecraft.gui.overlay() != null ||
                 !respawn.ready() || !space.anchoredTo(frame)) return null;
         return new OverlayCapture.Scope(bridge.session(), bridge.peerSession(), frame.worldGeneration(), frame.anchorEpoch());
     }
@@ -230,6 +258,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         bridge.setLoadedCollision(collision.loadedGeneration());
         respawnIfDead(now, previous);
         closeInvisibleScreens();
+        input.syncMouseMode();
         placeIfNeeded(previous);
         publishCollision();
         publishBlocks(previous);
@@ -245,6 +274,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         input.setOwner(frame != null && frame.minecraftOwnsInput() && respawn.ready());
         input.applyMotion(frame);
         overlay.updateViewport(minecraft);
+        if (inventoryCheck != null) inventoryCheck.tick(minecraft, input, guiAvailable(frame));
         if (now >= nextStatusMs) {
             nextStatusMs = now + STATUS_EVERY_MS;
             logStatus(frame);
@@ -281,7 +311,6 @@ public final class SifuCraftClient implements ClientModInitializer {
             }
             Vec3 target = new Vec3(placement.mcX(pawn.x()), placement.mcY(standZ), placement.mcZ(pawn.y()));
             teleport(server, player, target, UnrealSpace.yawFromUnreal(frame.playerRotation().y()), player.getXRot());
-            if (DevWorld.enabled()) stockDevHotbar(server, player);
             if (!sameHandOver) {
                 LOG.info("[space] epoch {}: teleporting to {} slot x {}: Minecraft ({}, {}, {}) for pawn feet "
                         + "({}, {}, {}) cm, standing at {} cm", frame.anchorEpoch(), placement.map(),
@@ -315,24 +344,6 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerPlayer onServer = server.getPlayerList().getPlayer(id);
             if (onServer != null) {
                 onServer.teleportTo(server.overworld(), target.x, target.y, target.z, Set.of(), yaw, pitch, true);
-            }
-        });
-    }
-
-    /**
-     * Development: blocks to build with in the empty hotbar slots (the Minecraft window is hidden, so
-     * no inventory screen): plain ones, ones whose faces differ, a light one.
-     */
-    private static void stockDevHotbar(IntegratedServer server, Player player) {
-        UUID id = player.getUUID();
-        server.execute(() -> {
-            ServerPlayer onServer = server.getPlayerList().getPlayer(id);
-            if (onServer == null) return;
-            for (int slot = 0; slot < DEV_HOTBAR.length; slot++) {
-                ItemStack current = onServer.getInventory().getItem(slot);
-                if (current.isEmpty() || (slot == 8 && current.is(Items.CRAFTING_TABLE))) {
-                    onServer.getInventory().setItem(slot, new ItemStack(DEV_HOTBAR[slot], slot == 8 ? 1 : 64));
-                }
             }
         });
     }
@@ -426,7 +437,9 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (screen == null || minecraft.player == null || !bridge.peerConnected() || screen instanceof DeathScreen) return;
         String name = screen.getClass().getSimpleName();
         if (name.contains("Loading") || name.contains("Receiving") || name.contains("Message")) return;
-        minecraft.gui.setScreen(null);
+        if (guiAvailable(bridge.latest()) && screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>) return;
+        if (screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>) minecraft.player.closeContainer();
+        else minecraft.gui.setScreen(null);
         if (closedScreens.add(name)) LOG.info("[input] closed {}: Minecraft's window is hidden while attached to Sifu", name);
     }
 
@@ -528,7 +541,9 @@ public final class SifuCraftClient implements ClientModInitializer {
                 space.toUnreal(eye.x, eye.y, eye.z),
                 UnrealSpace.rotationToUnreal(cameraPitch, cameraYaw),
                 minecraft.options.fov().get(),
-                space.anchorEpoch(), bridge.peerSession(), frame.worldGeneration());
+                space.anchorEpoch(), bridge.peerSession(), frame.worldGeneration()).withGui(
+                    overlay.enabled() && frame.minecraftOwnsInput() && minecraft.gui.overlay() == null,
+                    mirroredScreenActive(), input.guiInputAck());
     }
 
     private static int perspective(CameraType type) {

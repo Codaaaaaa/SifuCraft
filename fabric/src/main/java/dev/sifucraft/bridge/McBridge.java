@@ -37,6 +37,8 @@ public final class McBridge implements AutoCloseable {
 
         /** SDL scancode, action 1 press / 0 release / -1 repeat, SDL keymod bits. */
         default void onKey(int scancode, int action, int modifiers) {}
+        default void onKey(int scancode, int action, int modifiers, int guiRevision) { onKey(scancode, action, modifiers); }
+        default void onGuiMotion(double x, double y, double scroll) {}
 
         /** SDL mouse button, action 1 press / 0 release. */
         default void onMouseButton(int button, int action, int modifiers) {}
@@ -427,15 +429,23 @@ public final class McBridge implements AutoCloseable {
                     }
                 }
                 case Protocol.EVENT_KEY, Protocol.EVENT_MOUSE_BUTTON -> {
+                    if (incoming.get(JAVA_INT, slot + Event.PAYLOAD_SIZE) != InputPayload.SIZE) { stats.eventsUnknown++; break; }
                     int code = incoming.get(JAVA_INT, payload + InputPayload.CODE);
                     int action = incoming.get(JAVA_INT, payload + InputPayload.ACTION);
                     int modifiers = incoming.get(JAVA_INT, payload + InputPayload.MODIFIERS);
                     stats.inputEvents++;
                     if (type == Protocol.EVENT_KEY) {
-                        listener.onKey(code, action, modifiers);
+                        listener.onKey(code, action, modifiers, incoming.get(JAVA_INT, payload + InputPayload.GUI_REVISION));
                     } else {
                         listener.onMouseButton(code, action, modifiers);
                     }
+                }
+                case Protocol.EVENT_GUI_MOUSE_MOTION -> {
+                    if (incoming.get(JAVA_INT, slot + Event.PAYLOAD_SIZE) != Protocol.GUI_MOUSE_SIZE) { stats.eventsUnknown++; break; }
+                    double x = incoming.get(JAVA_DOUBLE, payload), y = incoming.get(JAVA_DOUBLE, payload + 8),
+                            scroll = incoming.get(JAVA_DOUBLE, payload + 16);
+                    if (Double.isFinite(x) && Double.isFinite(y) && Double.isFinite(scroll)) { stats.inputEvents++; listener.onGuiMotion(x, y, scroll); }
+                    else stats.eventsUnknown++;
                 }
                 case Protocol.EVENT_OWNER_CHANGED -> listener.onOwnerChanged(incoming.get(JAVA_INT, payload));
                 case Protocol.EVENT_PLAYER_HIT -> {
@@ -608,6 +618,7 @@ public final class McBridge implements AutoCloseable {
         s.set(JAVA_INT, McSnap.COLLISION_GENERATION, loadedCollision);
         s.set(JAVA_LONG, McSnap.SIFU_SESSION, state.sifuSession());
         s.set(JAVA_INT, McSnap.WORLD_GENERATION, state.worldGeneration());
+        s.set(JAVA_INT, McSnap.GUI_INPUT_ACK, state.guiInputAck());
         LONG.setRelease(s, (long) McSnap.SEQ, start + 2);
     }
 

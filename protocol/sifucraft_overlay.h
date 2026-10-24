@@ -1,4 +1,4 @@
-// Optional image transport, independent of the v12 gameplay bridge. Single producer (Minecraft),
+// Optional image transport, independent of the gameplay bridge. Single producer (Minecraft),
 // single consumer (renderer or offline probe). A mapping belongs to one pair of bridge sessions.
 #pragma once
 

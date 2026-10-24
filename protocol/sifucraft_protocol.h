@@ -27,7 +27,7 @@ namespace sifucraft::protocol {
 
 inline constexpr std::uint32_t kMagic = 0x52434653;  // "SFCR"
 // The name carries no version so that mismatched builds see each other and report INCOMPATIBLE.
-inline constexpr std::uint32_t kVersion = 12;
+inline constexpr std::uint32_t kVersion = 13;
 inline constexpr wchar_t kMappingName[] = L"Local\\SifuCraft.Bridge";
 inline constexpr std::uint32_t kMappingSize = 0x10000;
 
@@ -54,6 +54,7 @@ enum class EventType : std::uint32_t {
     EnemyDamage = 6,   // Minecraft -> Sifu, EnemyDamagePayload
     DamageResult = 7,  // Sifu -> Minecraft, DamageResultPayload
     PlayerHit = 8,     // Sifu -> Minecraft, PlayerHitPayload
+    GuiMouseMotion = 9, // Sifu -> Minecraft, GuiMousePayload (ordered with clicks)
 };
 
 // Who receives the player's keyboard and mouse.
@@ -64,6 +65,7 @@ enum class InputOwner : std::uint32_t {
 
 inline constexpr std::uint32_t kSnapshotHasPawn = 1u << 0;
 inline constexpr std::uint32_t kSnapshotHasCamera = 1u << 1;
+inline constexpr std::uint32_t kSnapshotGuiAvailable = 1u << 2;
 
 inline constexpr std::uint32_t kMcReady = 1u << 0;      // in a world: may receive input
 inline constexpr std::uint32_t kMcHasPose = 1u << 1;    // pose / camera fields are valid
@@ -73,6 +75,8 @@ inline constexpr std::uint32_t kMcSprinting = 1u << 4;
 inline constexpr std::uint32_t kMcFlying = 1u << 5;
 inline constexpr std::uint32_t kMcRequestAnchor = 1u << 6; // respawned; anchor_epoch is the epoch to invalidate
 inline constexpr std::uint32_t kMcDead = 1u << 7;          // keep ownership/protection, publish no pose
+inline constexpr std::uint32_t kMcGuiAvailable = 1u << 8;
+inline constexpr std::uint32_t kMcGuiOpen = 1u << 9;
 
 struct Vec3 {
     float x, y, z;
@@ -148,7 +152,8 @@ struct McSnapshot {
     std::uint32_t collision_generation;  // CollisionManifest.generation Minecraft has loaded (0 = none)
     std::uint64_t sifu_session;          // target Sifu lifetime, captured with this pose/request
     std::uint32_t world_generation;
-    std::uint8_t reserved[132];
+    std::uint32_t gui_input_ack; // latest E/Escape prediction token applied by the client
+    std::uint8_t reserved[128];
 };
 
 // Sifu's collision as a voxel grid, published as a file Minecraft loads whole (format: the
@@ -228,13 +233,14 @@ struct InputPayload {
     std::int32_t code;       // SDL scancode or SDL mouse button
     std::int32_t action;     // 1 press, 0 release, -1 repeat (Minecraft's InputConstants)
     std::int32_t modifiers;  // SDL keymod bits
-    std::int32_t reserved;
+    std::uint32_t gui_revision; // nonzero for inventory/close presses; echoed with GUI state
 };
 
 struct OwnerPayload {
     std::uint32_t owner;  // InputOwner
     std::uint32_t reserved;
 };
+struct GuiMousePayload { double x, y, scroll; }; // cumulative routed motion at this event
 
 inline constexpr std::uint32_t kDamageCritical = 1u << 0;
 inline constexpr std::uint32_t kDamageSweep = 1u << 1;
@@ -345,6 +351,8 @@ static_assert(kEnemyTableOffset + sizeof(EnemyTable) <= kMappingSize);
 // Hashed in this order by both sides; keep it identical to Protocol.LAYOUT_TABLE in Java.
 inline constexpr std::uint32_t kLayoutTable[] = {
     kVersion,
+    kSnapshotGuiAvailable, kMcGuiAvailable, kMcGuiOpen,
+    static_cast<std::uint32_t>(EventType::GuiMouseMotion), sizeof(GuiMousePayload),
     std::bit_cast<std::uint32_t>(kPlayerSifuHpPerMcHp),
     std::bit_cast<std::uint32_t>(kEnemySifuHpPerMcHp),
     kMappingSize,
@@ -380,6 +388,7 @@ inline constexpr std::uint32_t kLayoutTable[] = {
     offsetof(McSnapshot, collision_generation),
     offsetof(McSnapshot, sifu_session),
     offsetof(McSnapshot, world_generation),
+    offsetof(McSnapshot, gui_input_ack),
     kSifuToMcRingOffset,
     kMcToSifuRingOffset,
     sizeof(EventRing),
@@ -390,6 +399,7 @@ inline constexpr std::uint32_t kLayoutTable[] = {
     offsetof(Event, type),
     offsetof(Event, payload),
     sizeof(InputPayload),
+    offsetof(InputPayload, gui_revision),
     kCollisionManifestOffset,
     sizeof(CollisionManifest),
     offsetof(CollisionManifest, generation),

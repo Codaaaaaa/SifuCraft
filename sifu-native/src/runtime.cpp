@@ -670,10 +670,23 @@ void Run(std::uintptr_t image_base) {
                 ownership.Update(world, player, frame.player_location, GetTickCount64(),
                                  collision_schedule.MinecraftHasGrid(generation), generation, settings.stage >= 7);
                 frame.anchor_epoch = ownership.epoch();
+                const auto& gui_peer = g_bridge.peer_state();
+                render::Scope gui_scope{g_bridge.peer_connected() ? g_bridge.peer_session() : 0, g_bridge.session(),
+                    generation, ownership.epoch(), GetTickCount64(),
+                    frame.input_owner == InputOwner::Minecraft};
+                gui_scope.enabled = input::Router().owner() == InputOwner::Minecraft && hooks::PoseActive() &&
+                    McAnchoredTo(ownership.epoch(), generation);
+                const bool gui_surface = settings.stage >= 8 &&
+                    render::FreshPresentation(gui_scope, render::LastPresentation(), GetTickCount64());
+                if (gui_surface) frame.flags |= protocol::kSnapshotGuiAvailable;
+                input::Router().SetGuiState(gui_surface && gui_peer.valid && (gui_peer.flags & protocol::kMcGuiAvailable),
+                    (gui_peer.flags & protocol::kMcGuiOpen) != 0, gui_peer.gui_input_ack);
                 drained.events.clear();
                 input::Router().Drain(&drained);
                 for (const input::ForwardedEvent& e : drained.events) {
-                    g_bridge.SendInput(e.type, e.code, e.action, e.modifiers);
+                    if (e.type == protocol::EventType::GuiMouseMotion) g_bridge.SendGuiMotion(e.mouse_x, e.mouse_y, e.scroll);
+                    else if (!g_bridge.SendInput(e.type, e.code, e.action, e.modifiers, e.gui_revision))
+                        input::Router().GuiInputDropped(e.gui_revision);
                 }
                 frame.input_owner = input::Router().owner();
                 frame.mouse_dx = drained.mouse_dx;

@@ -10,6 +10,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /** The vignette uses destination-colour blending, which needs the final game's scene. */
 @Mixin(Hud.class)
 public abstract class HudMixin {
+    @Inject(method = "extractCrosshair", at = @At("HEAD"), cancellable = true)
+    private void sifucraft$noCrosshairOverInventory(CallbackInfo ci) {
+        if (SifuCraftClient.mirroredScreenActive()) ci.cancel();
+    }
     @Inject(method = "extractCrosshair", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/gui/GuiGraphicsExtractor;blitSprite(Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;Lnet/minecraft/resources/Identifier;IIII)V", ordinal = 0))
     private void sifucraft$crosshairDrawn(CallbackInfo ci) {

@@ -107,10 +107,16 @@ void SifuBridge::Tick(const PlayerFrame& frame, std::uint64_t now_ms) {
     }
 }
 
-bool SifuBridge::SendInput(EventType type, std::int32_t code, std::int32_t action, std::int32_t modifiers) {
+bool SifuBridge::SendInput(EventType type, std::int32_t code, std::int32_t action, std::int32_t modifiers, std::uint32_t gui_revision) {
     if (!self_ || !peer_connected_) return false;
-    const InputPayload payload{code, action, modifiers, 0};
+    const InputPayload payload{code, action, modifiers, gui_revision};
     if (!Send(type, &payload, sizeof(payload))) return false;
+    ++stats_.input_events;
+    return true;
+}
+bool SifuBridge::SendGuiMotion(double x, double y, double scroll) {
+    const GuiMousePayload payload{x, y, scroll};
+    if (!self_ || !peer_connected_ || !Send(EventType::GuiMouseMotion, &payload, sizeof(payload))) return false;
     ++stats_.input_events;
     return true;
 }
@@ -364,6 +370,7 @@ void SifuBridge::ReadPeerSnapshot() {
         peer_state_.collision_generation = copy.collision_generation;
         peer_state_.sifu_session = copy.sifu_session;
         peer_state_.world_generation = copy.world_generation;
+        peer_state_.gui_input_ack = copy.gui_input_ack;
         return;
     }
 }

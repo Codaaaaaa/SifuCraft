@@ -1,6 +1,7 @@
 package dev.sifucraft.client;
 
 import dev.sifucraft.bridge.SifuFrame;
+import dev.sifucraft.bridge.GuiCursor;
 import dev.sifucraft.client.mixin.MouseHandlerAccessor;
 import java.util.HashSet;
 import java.util.Set;
@@ -8,6 +9,7 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.MouseHandler;
 import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.MouseButtonInfo;
 import org.lwjgl.sdl.SDLKeyboard;
 
@@ -39,6 +41,11 @@ final class InputInjector {
     private double lastDx;
     private double lastDy;
     private double lastScroll;
+    private final GuiCursor cursor = new GuiCursor();
+    private boolean guiMode;
+    private int guiInputAck;
+    private boolean haveGuiBaseline;
+    private double guiBaselineX, guiBaselineY, guiBaselineScroll;
 
     InputInjector(Minecraft minecraft) {
         this.minecraft = minecraft;
@@ -53,14 +60,28 @@ final class InputInjector {
     }
 
     void key(int scancode, int action, int modifiers) {
+        syncMouseMode();
+        boolean typing = guiMode;
         if (action == PRESS) heldKeys.add(scancode);
         if (action == RELEASE) heldKeys.remove(scancode);
         int keycode = SDLKeyboard.SDL_GetKeyFromScancode(scancode, (short) modifiers, true);
         minecraft.keyboardHandler.keyPress(window(), action, new KeyEvent(scancode, keycode, modifiers));
         stats.keys++;
+        syncMouseMode();
+        // The hidden window receives no SDL text events. Forward printable characters for
+        // container search fields; control/alt shortcuts remain ordinary key events.
+        if (typing && guiMode && action != RELEASE && (modifiers & 0x0FC0) == 0 &&
+                keycode >= 32 && keycode <= 0x10FFFF && !Character.isISOControl(keycode))
+            minecraft.keyboardHandler.charTyped(window(), new CharacterEvent(keycode));
     }
+    void key(int scancode, int action, int modifiers, int guiRevision) {
+        key(scancode, action, modifiers);
+        if (guiRevision != 0) guiInputAck = guiRevision;
+    }
+    int guiInputAck() { return guiInputAck; }
 
     void mouseButton(int button, int action, int modifiers) {
+        syncMouseMode();
         if (action == PRESS) heldButtons.add(button);
         if (action == RELEASE) heldButtons.remove(button);
         minecraft.mouseHandler.onButton(window(), new MouseButtonInfo(button, modifiers), action);
@@ -71,15 +92,59 @@ final class InputInjector {
     void setOwner(boolean minecraftOwns) {
         if (minecraftOwns == owner) return;
         owner = minecraftOwns;
+        haveGuiBaseline = false;
         if (owner) {
-            ((MouseHandlerAccessor) minecraft.mouseHandler).sifucraft$setMouseGrabbed(true);
+            syncMouseMode();
         } else {
+            if (minecraft.player != null && minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>)
+                minecraft.player.closeContainer();
             releaseAll();
+            syncMouseMode();
         }
+        haveTotals = false;
+    }
+
+    void syncMouseMode() {
+        boolean next = owner && SifuCraftClient.mirroredScreenActive();
+        var mouse = (MouseHandlerAccessor) minecraft.mouseHandler;
+        if (next != guiMode) {
+            guiMode = next; haveTotals = false; cursor.reset();
+            if (next && haveGuiBaseline)
+                cursor.move(guiBaselineX, guiBaselineY, guiBaselineScroll, SifuCraftClient.cursorReferenceWidth(), SifuCraftClient.cursorReferenceHeight());
+            if (!next) haveGuiBaseline = false;
+            releaseAll();
+            mouse.sifucraft$setAccumulatedDX(0); mouse.sifucraft$setAccumulatedDY(0);
+            mouse.sifucraft$setIgnoreFirstMove(false);
+        }
+        mouse.sifucraft$setMouseGrabbed(owner && !guiMode);
+        if (guiMode) {
+            var window = minecraft.getWindow();
+            double x = cursor.x(window.getScreenWidth()), y = cursor.y(window.getScreenHeight());
+            if (minecraft.mouseHandler.xpos() != x || minecraft.mouseHandler.ypos() != y) {
+                minecraft.mouseHandler.onMove(window(), x, y, 0, 0);
+                minecraft.mouseHandler.handleAccumulatedMovement();
+            }
+        }
+    }
+
+    void guiMotion(double x, double y, double scroll) {
+        syncMouseMode();
+        if (!owner) return;
+        // E is consumed on a game tick. Its following cursor baseline can arrive before the
+        // screen exists; retain it until the next mouse-mode transition instead of dropping it.
+        guiBaselineX = x; guiBaselineY = y; guiBaselineScroll = scroll; haveGuiBaseline = true;
+        if (!guiMode) return;
+        var window = minecraft.getWindow();
+        double wheel = cursor.move(x, y, scroll, SifuCraftClient.cursorReferenceWidth(), SifuCraftClient.cursorReferenceHeight());
+        minecraft.mouseHandler.onMove(window(), cursor.x(window.getScreenWidth()), cursor.y(window.getScreenHeight()), 0, 0);
+        minecraft.mouseHandler.handleAccumulatedMovement();
+        if (wheel != 0) minecraft.mouseHandler.onScroll(window(), 0, wheel);
     }
 
     /** Applies the mouse motion and wheel accumulated in Sifu since the previous frame. */
     void applyMotion(SifuFrame frame) {
+        syncMouseMode();
+        if (guiMode) return; // ordered GUI events, rather than a newer snapshot, locate each click
         if (frame == null) {
             haveTotals = false;
             return;

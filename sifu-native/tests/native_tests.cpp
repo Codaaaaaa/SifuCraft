@@ -223,7 +223,7 @@ void TestInputRouter() {
            "forwarded W carries the held shift modifier");
     Expect(drained.events[2].type == sifucraft::protocol::EventType::MouseButton && drained.events[2].code == 1,
            "mouse button forwarded as a button event");
-    Expect(!router.OnKey(MapKey("Escape"), "Escape", 1), "escape always stays with sifu");
+    Expect(!router.OnKey(MapKey("Escape"), "Escape", 1), "escape without a mirrored container stays with sifu");
     Expect(router.OnKey(MapKey("F8"), "F8", 1) && router.TakeToggleRequest() && !router.TakeToggleRequest(),
            "F8 is consumed and requests one toggle");
     Expect(router.OnAxis(KeyKind::MouseX, 3.0f) && router.OnAxis(KeyKind::MouseY, 2.0f), "mouse axes go to minecraft");
@@ -238,6 +238,46 @@ void TestInputRouter() {
     for (const auto& e : drained.events) releases += e.action == 0;
     Expect(drained.events.size() == 3 && releases == 3, "handing back to sifu releases everything minecraft held");
     Expect(!router.OnKey(w, "W", 0) && !router.OnAxis(KeyKind::MouseX, 1.0f), "afterwards input goes to sifu");
+}
+
+void TestInventoryRouting() {
+    using namespace sifucraft;
+    using protocol::InputOwner;
+    using protocol::EventType;
+    input::InputRouter router;
+    input::InputRouter::Drained events;
+    router.SetOwner(InputOwner::Minecraft);
+    router.SetGuiState(true, false, 0);
+    Expect(router.OnKey(input::MapKey("E"), "E", 1), "E opens the mirrored inventory");
+    router.Drain(&events);
+    const auto opening = events.events.front().gui_revision;
+    Expect(opening && events.events.size() == 2 && events.events.back().type == EventType::GuiMouseMotion,
+           "inventory press precedes an ordered cursor baseline");
+    router.SetGuiState(true, false, 0); // a snapshot from before the opening press
+    router.OnAxis(input::KeyKind::MouseX, 31);
+    router.OnKey(input::MapKey("LeftMouseButton"), "LeftMouseButton", 1);
+    events = {}; router.Drain(&events);
+    Expect(events.events.size() == 2 && events.events[0].type == EventType::GuiMouseMotion &&
+           events.events[0].mouse_x == 31 && events.events[1].type == EventType::MouseButton,
+           "GUI motion is ordered before the click at that position");
+    Expect(router.OnKey(input::MapKey("Escape"), "Escape", 1), "fast E then Escape closes MC before its snapshot acknowledges opening");
+    events = {}; router.Drain(&events);
+    const auto closing = events.events.front().gui_revision;
+    Expect(closing && closing != opening, "close carries its own acknowledgement token");
+    router.SetGuiState(true, true, opening); // an older open echo must not reopen the prediction
+    Expect(router.OnKey(input::MapKey("Escape"), "Escape", 0), "Escape release returns to the same handler as its press");
+    Expect(!router.OnKey(input::MapKey("Escape"), "Escape", 1), "a second Escape reaches Sifu despite an old open echo");
+    router.OnKey(input::MapKey("Escape"), "Escape", 0);
+    router.SetGuiState(true, false, closing);
+    router.OnKey(input::MapKey("E"), "E", 0);
+    router.OnKey(input::MapKey("E"), "E", 1);
+    router.SetOwner(InputOwner::Sifu);
+    router.SetOwner(InputOwner::Minecraft);
+    Expect(!router.OnKey(input::MapKey("Escape"), "Escape", 1), "F8 handoff clears stale GUI predictions");
+    router.OnKey(input::MapKey("Escape"), "Escape", 0);
+    router.SetGuiState(true, true, 0);
+    router.SetGuiState(false, true, 0);
+    Expect(!router.OnKey(input::MapKey("Escape"), "Escape", 1), "expired overlay cannot intercept Escape for invisible UI");
 }
 
 BOOL CALLBACK CountDevice(GUID*, const wchar_t*, const wchar_t*, void* context) {
@@ -752,6 +792,7 @@ void TestDataTableRows() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    TestInventoryRouting();
     {
         using namespace sifucraft;
         const auto request = protocol::kMcReady | protocol::kMcRequestAnchor;
