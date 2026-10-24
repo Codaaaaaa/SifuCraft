@@ -21,7 +21,7 @@ loom {
 			vmArg nativeAccess
 			// Development: enter the superflat test world directly and keep Sifu in the foreground.
 			property "sifucraft.devWorld", "true"
-			property "sifucraft.hideWindow", "true"
+			property "sifucraft.hideWindow", providers.gradleProperty("sifucraft.hideWindow").getOrElse("true")
 			property "sifucraft.exitWithSifu", "true"
 		}
 	}
@@ -30,6 +30,10 @@ loom {
 sourceSets {
 	// Standalone stand-in for the mod, used to validate the protocol against Sifu.
 	stub {
+		compileClasspath += sourceSets.main.output
+		runtimeClasspath += sourceSets.main.output
+	}
+	protocolTest {
 		compileClasspath += sourceSets.main.output
 		runtimeClasspath += sourceSets.main.output
 	}
@@ -68,3 +72,11 @@ tasks.register('runStub', JavaExec) {
 	mainClass = 'dev.sifucraft.stub.BridgeStub'
 	jvmArgs nativeAccess
 }
+
+tasks.register('protocolTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks enemy table decoding against golden wire bytes and malformed input.'
+	classpath = sourceSets.protocolTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.bridge.EnemyFrameTest'
+}
+tasks.named('check') { dependsOn tasks.named('protocolTest') }

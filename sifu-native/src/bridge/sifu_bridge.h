@@ -93,6 +93,8 @@ public:
     bool SendOwnerChanged(protocol::InputOwner owner);
     // Publishes the manifest of the current collision grid; call when it changes.
     void PublishCollision(const CollisionInfo& info);
+    // Replaces the whole nearby-enemy table (Sifu owns enemy state). Runtime thread only.
+    void PublishEnemies(std::uint32_t world_generation, const std::vector<protocol::EnemyEntry>& entries);
     const McState& peer_state() const { return peer_state_; }
     // The latest consistent block table; kept while Minecraft is away (its world keeps the blocks).
     const BlockList& blocks() const { return blocks_; }
@@ -124,6 +126,7 @@ private:
     protocol::McSnapshot* peer_snapshot_ = nullptr;
     protocol::CollisionManifest* manifest_ = nullptr;
     protocol::BlockTable* block_table_ = nullptr;
+    protocol::EnemyTable* enemy_table_ = nullptr;
     protocol::EventRing* outgoing_ = nullptr;
     protocol::EventRing* incoming_ = nullptr;
 

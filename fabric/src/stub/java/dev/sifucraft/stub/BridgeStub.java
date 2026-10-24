@@ -28,6 +28,9 @@ public final class BridgeStub {
     private long framesObserved;
     private long lastFrameSeen;
     private long frameGaps;
+    private long lastEnemyFrame;
+    private long enemyFrames;
+    private int maxEnemies;
     private double firstLiveHeapMb = -1;
     private double maxLiveHeapMb;
 
@@ -98,10 +101,11 @@ public final class BridgeStub {
         collision.close();
         bridge.close();
         log("[final] " + describe(bridge));
+        log(String.format("[enemies] frames=%d max_count=%d invalid=%d", enemyFrames, maxEnemies, bridge.stats().enemyTablesInvalid));
 
         McBridge.Stats s = bridge.stats();
         boolean pass = s.connects >= 1 && s.snapshotsTorn == 0 && s.pingsLost == 0 && s.pongsUnexpected == 0
-                && s.eventsDroppedFull == 0 && s.eventsDuplicate == 0 && rttCount > 0 && gridOk;
+                && s.eventsDroppedFull == 0 && s.eventsDuplicate == 0 && s.enemyTablesInvalid == 0 && rttCount > 0 && gridOk;
         log("[result] " + (pass ? "PASS" : "FAIL") + String.format(
                 " (connects=%d torn=%d lost=%d unexpected=%d dropped=%d dup=%d pongs=%d grid=%s)", s.connects,
                 s.snapshotsTorn, s.pingsLost, s.pongsUnexpected, s.eventsDroppedFull, s.eventsDuplicate, rttCount,
@@ -110,6 +114,12 @@ public final class BridgeStub {
     }
 
     private void observe(McBridge bridge) {
+        var enemies = bridge.enemies();
+        if (enemies != null && enemies.frame() != lastEnemyFrame) {
+            lastEnemyFrame = enemies.frame();
+            enemyFrames++;
+            maxEnemies = Math.max(maxEnemies, enemies.entries().size());
+        }
         SifuFrame frame = bridge.latest();
         if (frame == null || frame.frame() == lastFrameSeen) return;
         if (lastFrameSeen != 0 && frame.frame() > lastFrameSeen + 2) frameGaps++;

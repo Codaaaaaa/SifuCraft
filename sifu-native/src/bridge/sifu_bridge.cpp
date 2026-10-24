@@ -55,6 +55,7 @@ bool SifuBridge::Start() {
     peer_snapshot_ = At<McSnapshot>(base, kMcSnapshotOffset);
     manifest_ = At<CollisionManifest>(base, kCollisionManifestOffset);
     block_table_ = At<BlockTable>(base, kBlockTableOffset);
+    enemy_table_ = At<EnemyTable>(base, kEnemyTableOffset);
     outgoing_ = At<EventRing>(base, kSifuToMcRingOffset);
     incoming_ = At<EventRing>(base, kMcToSifuRingOffset);
 
@@ -78,6 +79,7 @@ bool SifuBridge::Start() {
     Atomic(self_->state).store(static_cast<std::uint32_t>(EndpointState::Running), std::memory_order_relaxed);
     Atomic(self_->magic).store(kMagic, std::memory_order_release);
     PublishCollision({});  // nothing yet: a previous Sifu session's grid is gone
+    PublishEnemies(0, {});
 
     SC_LOG("[bridge] shared memory %s: %ls (%u bytes) protocol v%u layout=%016llX session=%016llX",
            mapping_.created() ? "created" : "opened", kMappingName, kMappingSize, kVersion,
@@ -300,6 +302,21 @@ void SifuBridge::PublishCollision(const CollisionInfo& info) {
     };
     copy(m.map, sizeof(m.map), info.map);
     copy(m.path, sizeof(m.path), info.path);
+    CompilerBarrier();
+    seq.store(start + 2, std::memory_order_release);
+}
+
+void SifuBridge::PublishEnemies(std::uint32_t world_generation, const std::vector<EnemyEntry>& entries) {
+    if (!enemy_table_) return;
+    EnemyTable& table = *enemy_table_;
+    auto seq = Atomic(table.seq);
+    const std::uint64_t start = seq.load(std::memory_order_relaxed) & ~1ull;
+    seq.store(start + 1, std::memory_order_relaxed);
+    CompilerBarrier();
+    table.frame = frame_;
+    table.world_generation = world_generation;
+    table.count = static_cast<std::uint32_t>(std::min<std::size_t>(entries.size(), kMaxEnemies));
+    std::copy_n(entries.begin(), table.count, table.entries);
     CompilerBarrier();
     seq.store(start + 2, std::memory_order_release);
 }

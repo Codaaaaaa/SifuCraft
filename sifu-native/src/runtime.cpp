@@ -12,6 +12,7 @@
 
 #include "blocks/block_mirror.h"
 #include "bridge/sifu_bridge.h"
+#include "combat/enemies.h"
 #include "core/config.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
@@ -580,6 +581,7 @@ void Run(std::uintptr_t image_base) {
     Ownership ownership;
     CollisionSchedule collision_schedule;
     probe::CombatCensus combat_census;
+    combat::Enemies enemies;
     input::InputRouter::Drained drained;
 
     std::uintptr_t world_ptr = 0;
@@ -650,6 +652,10 @@ void Run(std::uintptr_t image_base) {
             }
         }
         g_bridge.Tick(frame, GetTickCount64());
+        if (settings.stage >= 7 && tick % 2 == 0) {
+            enemies.Update(world, generation, player.pawn, GetTickCount64());
+            g_bridge.PublishEnemies(world ? generation : 0, enemies.entries());
+        }
         // Blocks wait until the level has settled (its collision grid is built): by then the
         // materials they are made of have streamed in.
         if (settings.stage >= 6 && world && (frame.flags & protocol::kSnapshotHasPawn) &&
@@ -688,6 +694,7 @@ void Run(std::uintptr_t image_base) {
             if (settings.stage >= 1) SC_LOG("[hooks] %s", hooks::TakeStats().c_str());
             if (settings.stage >= 6) SC_LOG("[blocks] %s", blocks::TakeStats().c_str());
             SC_LOG("[combat-census] %s", combat_census.TakeStats().c_str());
+            if (settings.stage >= 7) SC_LOG("[combat] enemies %s", enemies.TakeStats().c_str());
             collision_schedule.FlushCheck();
         }
     }

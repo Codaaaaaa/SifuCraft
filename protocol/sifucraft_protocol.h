@@ -11,6 +11,7 @@
 //   SifuSnapshot           Sifu (seqlock)          McSnapshot   Minecraft (seqlock)
 //   CollisionManifest      Sifu (seqlock)
 //   BlockTable             Minecraft (seqlock)
+//   EnemyTable             Sifu (seqlock)
 //   EventRing              producer owns write_index and the slots, consumer owns read_index/acked_id
 //
 // Every position, rotation and velocity is in Unreal space (cm, Z up, degrees); the Minecraft side
@@ -25,7 +26,7 @@ namespace sifucraft::protocol {
 
 inline constexpr std::uint32_t kMagic = 0x52434653;  // "SFCR"
 // The name carries no version so that mismatched builds see each other and report INCOMPATIBLE.
-inline constexpr std::uint32_t kVersion = 6;
+inline constexpr std::uint32_t kVersion = 7;
 inline constexpr wchar_t kMappingName[] = L"Local\\SifuCraft.Bridge";
 inline constexpr std::uint32_t kMappingSize = 0x10000;
 
@@ -33,6 +34,8 @@ inline constexpr std::uint32_t kMappingSize = 0x10000;
 inline constexpr std::uint32_t kHeartbeatTimeoutMs = 2000;
 inline constexpr std::uint32_t kRingCapacity = 256;
 inline constexpr std::uint32_t kMaxBlocks = 1536;
+inline constexpr std::uint32_t kMaxEnemies = 32;
+inline constexpr float kSifuHpPerMcHp = 9.0f;
 
 enum class EndpointState : std::uint32_t {
     Absent = 0,
@@ -178,6 +181,35 @@ struct BlockTable {
     BlockEntry entries[kMaxBlocks];
 };
 
+inline constexpr std::uint32_t kEnemyAlive = 1u << 0;
+inline constexpr std::uint32_t kEnemyDown = 1u << 1;
+inline constexpr std::uint32_t kEnemyInvincible = 1u << 2;
+inline constexpr std::uint32_t kEnemyCanDie = 1u << 3;
+
+struct EnemyEntry {
+    std::uint32_t id;           // UObject internal index
+    std::uint32_t spawn;        // activation generation, changes on pool reuse or index reuse
+    Vec3 location;              // hit capsule centre, Unreal cm
+    float yaw;
+    float capsule_radius;      // world-space cm
+    float capsule_half_height;
+    float health;
+    float max_health;           // includes difficulty multiplier
+    std::uint32_t flags;
+    std::uint32_t faction;
+    Vec3 velocity;              // cm/s
+    std::uint32_t reserved;
+};
+
+struct EnemyTable {
+    std::uint64_t seq;
+    std::uint64_t frame;        // SifuSnapshot.frame at publication
+    std::uint32_t world_generation;
+    std::uint32_t count;
+    std::uint8_t reserved[40];
+    EnemyEntry entries[kMaxEnemies];
+};
+
 struct PingPayload {
     std::uint64_t nonce;
     std::uint64_t sent_unix_us;
@@ -223,6 +255,7 @@ inline constexpr std::uint32_t kSifuToMcRingOffset = 0x0400;
 inline constexpr std::uint32_t kMcToSifuRingOffset = 0x4800;
 inline constexpr std::uint32_t kCollisionManifestOffset = 0x9000;
 inline constexpr std::uint32_t kBlockTableOffset = 0x9200;
+inline constexpr std::uint32_t kEnemyTableOffset = 0xF300;
 
 static_assert(sizeof(ProtocolHeader) == 0x40);
 static_assert(sizeof(EndpointStatus) == 0x40);
@@ -249,7 +282,12 @@ static_assert(kSifuToMcRingOffset >= kMcSnapshotOffset + sizeof(McSnapshot));
 static_assert(kMcToSifuRingOffset >= kSifuToMcRingOffset + sizeof(EventRing));
 static_assert(kCollisionManifestOffset >= kMcToSifuRingOffset + sizeof(EventRing));
 static_assert(kBlockTableOffset >= kCollisionManifestOffset + sizeof(CollisionManifest));
-static_assert(kBlockTableOffset + sizeof(BlockTable) <= kMappingSize);
+static_assert(sizeof(EnemyEntry) == 64 && offsetof(EnemyEntry, location) == 8);
+static_assert(offsetof(EnemyEntry, yaw) == 20 && offsetof(EnemyEntry, health) == 32);
+static_assert(offsetof(EnemyEntry, flags) == 40 && offsetof(EnemyEntry, velocity) == 48);
+static_assert(sizeof(EnemyTable) == 0x840 && offsetof(EnemyTable, entries) == 64);
+static_assert(kEnemyTableOffset >= kBlockTableOffset + sizeof(BlockTable));
+static_assert(kEnemyTableOffset + sizeof(EnemyTable) <= kMappingSize);
 
 // Hashed in this order by both sides; keep it identical to Protocol.LAYOUT_TABLE in Java.
 inline constexpr std::uint32_t kLayoutTable[] = {
@@ -312,6 +350,25 @@ inline constexpr std::uint32_t kLayoutTable[] = {
     offsetof(BlockTable, entries),
     sizeof(BlockEntry),
     offsetof(BlockTable, palette_generation),
+    kMaxEnemies,
+    kEnemyTableOffset,
+    sizeof(EnemyTable),
+    offsetof(EnemyTable, frame),
+    offsetof(EnemyTable, world_generation),
+    offsetof(EnemyTable, count),
+    offsetof(EnemyTable, entries),
+    sizeof(EnemyEntry),
+    offsetof(EnemyEntry, id),
+    offsetof(EnemyEntry, spawn),
+    offsetof(EnemyEntry, location),
+    offsetof(EnemyEntry, yaw),
+    offsetof(EnemyEntry, capsule_radius),
+    offsetof(EnemyEntry, capsule_half_height),
+    offsetof(EnemyEntry, health),
+    offsetof(EnemyEntry, max_health),
+    offsetof(EnemyEntry, flags),
+    offsetof(EnemyEntry, faction),
+    offsetof(EnemyEntry, velocity),
 };
 
 // FNV-1a 64 over each table entry as 4 little-endian bytes.

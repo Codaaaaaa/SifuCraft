@@ -70,6 +70,14 @@ std::uintptr_t ClassOf(std::uintptr_t object) {
     return object ? mem::ReadPtr(object + off::UObjectBase::ClassPrivate) : 0;
 }
 
+ObjectIdentity IdentityOf(std::uintptr_t object) {
+    if (!IsLive(object)) return {};
+    const auto index = mem::ReadOr<std::int32_t>(object + off::UObjectBase::InternalIndex, -1);
+    const auto item = ItemAddress(index);
+    if (!item || mem::ReadPtr(item + off::FUObjectItem::Object) != object) return {};
+    return {index, mem::ReadOr<std::int32_t>(item + off::FUObjectItem::SerialNumber, 0)};
+}
+
 std::uintptr_t OuterOf(std::uintptr_t object) {
     return object ? mem::ReadPtr(object + off::UObjectBase::OuterPrivate) : 0;
 }

@@ -12,7 +12,7 @@ namespace sifucraft::config {
 
 namespace {
 
-constexpr int kMaxStage = 6;
+constexpr int kMaxStage = 7;
 
 bool Exists(const std::wstring& path) { return GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES; }
 

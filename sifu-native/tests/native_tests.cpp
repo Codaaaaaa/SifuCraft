@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "collision/shape_file.h"
+#include "combat/activation_tracker.h"
 #include "collision/voxels.h"
 #include "collision/walk_check.h"
 #include "core/build_guard.h"
@@ -609,6 +610,25 @@ void TestCombatSamples() {
            "combat sample refuses absent and unreadable hit descriptions");
 }
 
+void TestEnemyIdentity() {
+    sifucraft::combat::ActivationTracker tracker;
+    Expect(tracker.Observe(10, 0, true) == 0 && tracker.Observe(10, 1, false) == 0,
+           "enemy identity refuses uninitialized serials and inactive pooled actors");
+    const auto first = tracker.Observe(10, 1, true);
+    Expect(first != 0 && tracker.Observe(10, 1, true) == first,
+           "an active enemy keeps its identity across samples and range changes");
+    tracker.Observe(10, 1, false);
+    const auto second = tracker.Observe(10, 1, true);
+    Expect(second != 0 && second != first, "reactivating a pooled actor changes its spawn identity");
+    const auto replaced = tracker.Observe(10, 2, true);
+    Expect(replaced != 0 && replaced != second, "a reused UObject internal index changes its spawn identity");
+    tracker.Forget(10);
+    const auto returned = tracker.Observe(10, 2, true);
+    Expect(returned != replaced, "a removed and rediscovered object cannot reuse an expired activation");
+    tracker.Reset();
+    Expect(tracker.Observe(10, 2, true) != returned, "world reset does not reuse an old activation identity");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -622,6 +642,7 @@ int main(int argc, char** argv) {
     TestVoxels();
     TestCollisionFiles();
     TestCombatSamples();
+    TestEnemyIdentity();
     if (argc > 1) TestProxy(argv[1]);
     std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED", g_failures, g_failures == 1 ? "" : "s");
     return g_failures ? 1 : 0;

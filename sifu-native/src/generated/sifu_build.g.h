@@ -448,4 +448,11 @@ inline constexpr Target ValidateHit{"ValidateHit", 0x4897F48, 0x418, 0x85E600};
 inline constexpr Target InternalApplyDamage{"InternalApplyDamage", 0x4897AC0, 0x430, 0x1A62AE0};
 }  // namespace hook
 
+namespace value {
+namespace EFactionsEnums {
+inline constexpr std::int32_t TMP_Neutral = 5;
+inline constexpr std::int32_t Count = 6;
+}
+}  // namespace value
+
 }  // namespace sifucraft::gen

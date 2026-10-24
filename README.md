@@ -19,7 +19,7 @@ Sifu 与 Minecraft 作为两个独立进程运行：
 | P2 | Minecraft 输入与位姿接管 Sifu 玩家 | 已通过 |
 | P3 | Sifu 地形碰撞导入 Minecraft 物理 | 已通过 |
 | P4 | 方块放置/破坏的渲染与碰撞闭环 | 已通过 |
-| P5 | 敌人代理与双向伤害 | S0 基础普查已验证，敌人代理开发中 |
+| P5 | 敌人代理与双向伤害 | S1 敌人代理实机验证通过，S2 开发中 |
 
 ## 目录
 
@@ -33,7 +33,7 @@ tools/         部署、卸载、启动与 bridge 测试脚本；tools/collision
 
 ## 共享内存 Bridge（P1）
 
-两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v6）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
+两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v7）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
 
 - 每个字段只有一个写入方；双方各自写自己的 `EndpointStatus`（pid、session、心跳），心跳 2 秒不前进即判定断连；
 - 高频位姿走 seqlock 快照（Sifu → MC 的 `SifuSnapshot`，MC → Sifu 的 `McSnapshot`）；
@@ -62,7 +62,7 @@ Sifu 的玩家由 Minecraft 驱动：键鼠输入转给 Minecraft，Minecraft �
 
 Esc 永远交给 Sifu，F8 切换。每次交给 Minecraft 都是一个新的锚定纪元（anchor epoch），Minecraft 从角色当前所在位置和朝向继续，不会把角色拉回之前的位置。
 
-逐步上线由 `SifuCraft\stage`（0–6，6 = P4 方块）控制，`SifuCraft\no-hooks` 只保留只读探针，`SifuCraft\disabled` 完全停用。
+逐步上线由 `SifuCraft\stage`（0–7，6 = P4 方块，7 = P5 敌人代理）控制，`SifuCraft\no-hooks` 只保留只读探针，`SifuCraft\disabled` 完全停用。
 
 P5 的只读普查在 stage 0 也可运行：日志中的 `[combat-census]` 检查命中/生命组件与候选 Hook 槽位、反射参数、胶囊尺寸及难度生命倍率，并采样生命与池化状态变化。它不安装战斗 Hook、不调用伤害函数；`last-hit` 是最近一次命中的采样，不能用于统计每次伤害的执行次数。
 
@@ -91,6 +91,14 @@ Minecraft 是方块的权威：在 Sifu 关卡所在的那片 Minecraft 世界�
 - Sifu 侧在游戏线程上用反射调用（`ProcessEvent`）生成 `AStaticMeshActor`，每块带一个 `NavArea_Null` 导航修改器（关卡导航网格允许运行时修改）；每帧最多生成 8 个、销毁 16 个、导入 2 张贴图；只在 stage 6 启用；
 - 第一人称：Minecraft 掌控视角时，关闭 Sifu 为第三人称镜头做的近处淡出（`MPC_GameplayGeneric` 的 CamFade），交还时恢复；
 - Minecraft 窗口隐藏，所以连接 Sifu 时打开的 Minecraft 界面（背包、聊天等）会立即关闭；方块用数字键 1–9 或滚轮选择。
+
+## 敌人代理（P5 S1 已验证，伤害桥开发中）
+
+stage 7 每 20 ms 发布 30 m 内最近的存活敌人，最多 32 个。角色身份使用 UObject 索引、对象序列号与激活代数；离开同步范围不改变激活代数，回池再激活或索引复用则改变。位置和尺寸取 Sifu 命中胶囊，生命包含难度倍率。
+
+Minecraft 在集成服务器线程维护 `sifucraft:enemy_proxy`，同步位置、朝向、生命和客户端碰撞箱；代理无 AI、无重力、不可推、不存档，使用空渲染器。切图、断线或表格停止更新时清理代理。伤害转发在 S2/S3 接入；当前 S1 只验证代理同步。
+
+离线场景可用 `sifucraft_fake_sifu.exe --enemies`，或 `--enemy-scenario` 自动测试增删、尺寸变化、激活复用和世界切换。Java 协议解析测试随 `tools/gradle.ps1 build` 运行；单独运行用 `tools/gradle.ps1 protocolTest`。日志前缀为 `[combat]`；需要查看 Minecraft 的 F3+B 碰撞箱时，可用 `tools/gradle.ps1 runClient -Psifucraft.hideWindow=false` 显示开发窗口。
 
 ## Fabric Mod（Minecraft 26.3）
 

@@ -9,13 +9,15 @@ public final class Protocol {
     private Protocol() {}
 
     public static final int MAGIC = 0x52434653; // "SFCR"
-    public static final int VERSION = 6;
+    public static final int VERSION = 7;
     public static final String MAPPING_NAME = "Local\\SifuCraft.Bridge";
     public static final int MAPPING_SIZE = 0x10000;
 
     public static final int HEARTBEAT_TIMEOUT_MS = 2000;
     public static final int RING_CAPACITY = 256;
     public static final int MAX_BLOCKS = 1536;
+    public static final int MAX_ENEMIES = 32;
+    public static final float SIFU_HP_PER_MC_HP = 9.0f;
 
     public static final int STATE_ABSENT = 0;
     public static final int STATE_RUNNING = 1;
@@ -49,6 +51,12 @@ public final class Protocol {
     public static final int MC_TO_SIFU_RING_OFFSET = 0x4800;
     public static final int COLLISION_MANIFEST_OFFSET = 0x9000;
     public static final int BLOCK_TABLE_OFFSET = 0x9200;
+    public static final int ENEMY_TABLE_OFFSET = 0xF300;
+
+    public static final int ENEMY_ALIVE = 1;
+    public static final int ENEMY_DOWN = 1 << 1;
+    public static final int ENEMY_INVINCIBLE = 1 << 2;
+    public static final int ENEMY_CAN_DIE = 1 << 3;
 
     /** ProtocolHeader. */
     public static final class Header {
@@ -144,6 +152,28 @@ public final class Protocol {
         public static final int SIZE = ENTRIES + MAX_BLOCKS * ENTRY_SIZE;
     }
 
+    /** EnemyTable (seqlock, written by Sifu). */
+    public static final class Enemies {
+        public static final int SIZE = 0x840;
+        public static final int SEQ = 0;
+        public static final int FRAME = 8;
+        public static final int WORLD_GENERATION = 16;
+        public static final int COUNT = 20;
+        public static final int ENTRIES = 64;
+        public static final int ENTRY_SIZE = 64;
+        public static final int ID = 0;
+        public static final int SPAWN = 4;
+        public static final int LOCATION = 8;
+        public static final int YAW = 20;
+        public static final int RADIUS = 24;
+        public static final int HALF_HEIGHT = 28;
+        public static final int HEALTH = 32;
+        public static final int MAX_HEALTH = 36;
+        public static final int FLAGS = 40;
+        public static final int FACTION = 44;
+        public static final int VELOCITY = 48;
+    }
+
     /** One event slot. */
     public static final class Event {
         public static final int SIZE = 0x40;
@@ -234,6 +264,25 @@ public final class Protocol {
         Blocks.ENTRIES,
         Blocks.ENTRY_SIZE,
         Blocks.PALETTE_GENERATION,
+        MAX_ENEMIES,
+        ENEMY_TABLE_OFFSET,
+        Enemies.SIZE,
+        Enemies.FRAME,
+        Enemies.WORLD_GENERATION,
+        Enemies.COUNT,
+        Enemies.ENTRIES,
+        Enemies.ENTRY_SIZE,
+        Enemies.ID,
+        Enemies.SPAWN,
+        Enemies.LOCATION,
+        Enemies.YAW,
+        Enemies.RADIUS,
+        Enemies.HALF_HEIGHT,
+        Enemies.HEALTH,
+        Enemies.MAX_HEALTH,
+        Enemies.FLAGS,
+        Enemies.FACTION,
+        Enemies.VELOCITY,
     };
 
     public static final long LAYOUT_HASH = layoutHash();

@@ -4,6 +4,7 @@
 //   sifucraft_fake_sifu [seconds] [--collision <grid.scvx>] [--pawn X Y Z [--yaw DEG] [--hand-over]]
 //                       [--key CODE:FROM:TO]... [--button CODE:FROM:TO]... [--mouse DX:DY:AT]...
 //                       [--then AT X Y Z DEG]...
+//                       [--enemies | --enemy-scenario]
 //     seconds: 0 or omitted = run until Ctrl+C
 //     --collision: also publish that grid file in the CollisionManifest, as the game does
 //     --pawn: a pawn standing still at (X, Y, Z) (Unreal cm, capsule centre) in the grid's map
@@ -18,6 +19,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdlib>
@@ -148,6 +150,7 @@ int main(int argc, char** argv) {
     StandingPawn pawn;
     std::vector<HeldKey> keys;
     std::vector<PawnMove> moves;
+    bool with_enemies = false, enemy_scenario = false;
     struct MouseMove {
         double dx = 0, dy = 0;
         std::uint64_t at_ms = 0;
@@ -190,6 +193,10 @@ int main(int argc, char** argv) {
                 key.to_ms = to;
                 keys.push_back(key);
             }
+        } else if (std::strcmp(argv[i], "--enemies") == 0) {
+            with_enemies = true;
+        } else if (std::strcmp(argv[i], "--enemy-scenario") == 0) {
+            with_enemies = enemy_scenario = true;
         } else {
             seconds = std::atof(argv[i]);
         }
@@ -222,13 +229,56 @@ int main(int argc, char** argv) {
 
     std::uint32_t loaded = 0;
     std::uint32_t blocks_seen = 0;
+    ULONGLONG enemies_ready_at = 0;
+    int enemy_phase_seen = -1;
     const ULONGLONG begin = GetTickCount64();
     for (std::uint64_t tick = 1; !g_stop; ++tick) {
         Sleep(kTickMs);
         const ULONGLONG now = GetTickCount64();
         const double elapsed = (now - begin) / 1000.0;
         if (seconds > 0 && elapsed >= seconds) break;
-        bridge.Tick(pawn.enabled ? StandingFrame(pawn) : SyntheticFrame(elapsed), now);
+        bridge::PlayerFrame frame = pawn.enabled ? StandingFrame(pawn) : SyntheticFrame(elapsed);
+        if (with_enemies && !enemies_ready_at && bridge.peer_connected() &&
+            (bridge.peer_state().flags & protocol::kMcReady)) enemies_ready_at = now;
+        // Start the phase clock in Minecraft's world, so client startup cannot skip the test.
+        const int phase = enemy_scenario && enemies_ready_at ?
+            std::min(4, static_cast<int>((now - enemies_ready_at) / 4000)) : 0;
+        if (phase == 4) {
+            frame.world_generation = 2;
+            if (frame.anchor_epoch) ++frame.anchor_epoch;
+            if (grid.world_generation != 2 && !grid_file.empty()) {
+                grid.world_generation = 2;
+                ++grid.generation;
+                bridge.PublishCollision(grid);
+            }
+        }
+        bridge.Tick(frame, now);
+        if (with_enemies) {
+            std::vector<protocol::EnemyEntry> enemies;
+            if (phase != 3) {
+                for (std::uint32_t id = 101; id <= (phase == 1 || phase == 2 ? 101u : 102u); ++id) {
+                    const float angle = static_cast<float>(elapsed * 0.5 + id);
+                    // Resize an existing activation too: this exercises dimension synchronization,
+                    // separately from replacing an entity when its spawn generation changes.
+                    const bool resized = enemy_scenario && id == 101 && phase == 0 && enemies_ready_at &&
+                        now - enemies_ready_at >= 2000;
+                    const float radius = resized ? 55.0f : id == 101 ? 35.0f : 45.0f;
+                    const float half = resized ? 110.0f : 92.0f;
+                    enemies.push_back({id, phase >= 2 ? 2u : 1u,
+                        {frame.player_location.x + 200 + 70 * std::cos(angle),
+                         frame.player_location.y + (id == 101 ? -100.0f : 100.0f) + 70 * std::sin(angle),
+                         frame.player_location.z + 2},
+                        180, radius, half, 60, 100, protocol::kEnemyAlive | protocol::kEnemyCanDie, 1,
+                        {-35 * std::sin(angle), 35 * std::cos(angle), 0}, 0});
+                }
+            }
+            bridge.PublishEnemies(frame.world_generation, enemies);
+            if (phase != enemy_phase_seen) {
+                enemy_phase_seen = phase;
+                SC_LOG("[fake] enemy phase=%d world=%u count=%zu first_spawn=%u", phase, frame.world_generation,
+                       enemies.size(), enemies.empty() ? 0 : enemies[0].spawn);
+            }
+        }
         if (pawn.hand_over && !handed_over_at && bridge.peer_connected() && bridge.peer_state().anchor_epoch == 1) {
             handed_over_at = now;
             SC_LOG("[fake] minecraft has taken the player (anchor epoch 1)");

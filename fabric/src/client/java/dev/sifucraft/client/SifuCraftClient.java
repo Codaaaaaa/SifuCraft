@@ -9,6 +9,9 @@ import dev.sifucraft.collision.CollisionGrid;
 import dev.sifucraft.collision.CollisionLoader;
 import dev.sifucraft.collision.MapPlacement;
 import dev.sifucraft.collision.SifuCollision;
+import dev.sifucraft.combat.EnemyEntities;
+import dev.sifucraft.combat.EnemyMirrors;
+import dev.sifucraft.combat.EnemyProxy;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
@@ -21,6 +24,8 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.client.Camera;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.entity.NoopRenderer;
+import net.minecraft.client.renderer.entity.EntityRenderers;
 import net.minecraft.client.gui.screens.DeathScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.server.IntegratedServer;
@@ -90,6 +95,7 @@ public final class SifuCraftClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        EntityRenderers.register(EnemyEntities.ENEMY_PROXY, NoopRenderer::new);
         minecraft = Minecraft.getInstance();
         input = new InputInjector(minecraft);
         bridge = new McBridge(new McBridge.Listener() {
@@ -185,6 +191,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         rescueFromFall(previous);
         bridge.tick(now, currentState(previous));
         SifuFrame frame = bridge.latest();
+        publishEnemies(frame);
         if (frame == null) space.reset();
         input.setOwner(frame != null && frame.minecraftOwnsInput());
         input.applyMotion(frame);
@@ -413,6 +420,16 @@ public final class SifuCraftClient implements ClientModInitializer {
         return String.format("%.1f", value);
     }
 
+    private void publishEnemies(SifuFrame frame) {
+        IntegratedServer server = minecraft.getSingleplayerServer();
+        if (server == null || frame == null || !frame.hasPawn()) {
+            EnemyMirrors.offer(null, null, null);
+            return;
+        }
+        slots.open(server.getWorldPath(LevelResource.ROOT));
+        EnemyMirrors.offer(frame, bridge.enemies(), slots.placement(UnrealSpace.mapName(frame.worldPath())));
+    }
+
     private McState currentState(SifuFrame frame) {
         Player player = minecraft.player;
         if (minecraft.level == null || player == null) return McState.NOT_READY;
@@ -481,5 +498,27 @@ public final class SifuCraftClient implements ClientModInitializer {
                 bridge.peerConnected() ? "connected" : "absent", input.minecraftOwnsInput() ? "MINECRAFT" : "sifu",
                 where, s.keys, s.buttons, s.moves, Math.round(s.dxSum), Math.round(s.dySum), s.scrollSum,
                 s.releaseAlls);
+        if (minecraft.level != null && bridge.enemies() != null && frame != null && frame.hasPawn() && slots.isOpen()) {
+            int count = 0;
+            int sizeMismatches = 0;
+            double maxError = 0;
+            MapPlacement placement = slots.placement(UnrealSpace.mapName(frame.worldPath()));
+            for (var entity : minecraft.level.entitiesForRendering()) {
+                if (!(entity instanceof EnemyProxy proxy)) continue;
+                count++;
+                for (var enemy : bridge.enemies().entries()) {
+                    if (!enemy.key().equals(proxy.sifuKey())) continue;
+                    if (Math.abs(proxy.getBbWidth() - enemy.radius() * 2 / 100.0f) > 0.001f ||
+                            Math.abs(proxy.getBbHeight() - enemy.halfHeight() * 2 / 100.0f) > 0.001f) sizeMismatches++;
+                    double x = placement.mcX(enemy.location().x());
+                    double y = placement.mcY(enemy.location().z() - enemy.halfHeight());
+                    double z = placement.mcZ(enemy.location().y());
+                    double dx = x - proxy.getX(), dy = y - proxy.getY(), dz = z - proxy.getZ();
+                    maxError = Math.max(maxError, Math.sqrt(dx * dx + dy * dy + dz * dz) * 100);
+                }
+            }
+            LOG.info("[combat] client proxies={} table={} world={} max_position_error_cm={} size_mismatches={}", count,
+                    bridge.enemies().entries().size(), bridge.enemies().worldGeneration(), fmt(maxError), sizeMismatches);
+        }
     }
 }

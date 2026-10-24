@@ -1,0 +1,71 @@
+package dev.sifucraft.bridge;
+
+import java.lang.foreign.MemorySegment;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
+/** Golden v7 wire bytes and malformed producer data; no running game is needed. */
+public final class EnemyFrameTest {
+    private static void check(boolean value, String label) {
+        if (!value) throw new AssertionError(label);
+    }
+    private static byte[] table() {
+        var b = ByteBuffer.allocate(0x840).order(ByteOrder.LITTLE_ENDIAN);
+        b.putLong(8, 17).putInt(16, 3).putInt(20, 1);
+        b.putInt(64, 42).putInt(68, 9);
+        b.putFloat(72, 123).putFloat(76, -456).putFloat(80, 789).putFloat(84, 90);
+        b.putFloat(88, 35).putFloat(92, 92).putFloat(96, 60).putFloat(100, 100);
+        b.putInt(104, 9).putInt(108, 1);
+        b.putFloat(112, 10).putFloat(116, 20).putFloat(120, 30);
+        return b.array();
+    }
+    private static void rejects(byte[] data, String label) {
+        try {
+            EnemyFrame.decode(1, MemorySegment.ofArray(data), 2);
+            throw new AssertionError("accepted " + label);
+        } catch (IllegalArgumentException expected) {
+            // An unrelated exception still fails the test.
+        }
+    }
+    public static void main(String[] args) {
+        byte[] bytes = table();
+        EnemyFrame frame = EnemyFrame.decode(1234, MemorySegment.ofArray(bytes), 5678);
+        EnemyFrame.Entry e = frame.entries().getFirst();
+        check(frame.session() == 1234 && frame.frame() == 17 && frame.worldGeneration() == 3 && frame.receivedMs() == 5678,
+                "table/session metadata");
+        check(e.id() == 42 && e.spawn() == 9 && e.location().x() == 123 && e.location().y() == -456 &&
+                e.location().z() == 789 && e.yaw() == 90 && e.radius() == 35 && e.halfHeight() == 92 &&
+                e.health() == 60 && e.maxHealth() == 100 && e.faction() == 1 && e.alive() && e.velocity().z() == 30,
+                "golden C++ enemy entry layout");
+        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putInt(64, 7);
+        check(e.id() == 42, "decoded snapshot survives later producer writes");
+        bytes = table();
+        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putInt(20, 33);
+        rejects(bytes, "oversized table");
+        bytes = table();
+        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putInt(20, -1);
+        rejects(bytes, "negative count");
+        bytes = table();
+        System.arraycopy(bytes, 64, bytes, 128, 64);
+        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putInt(20, 2).putInt(132, 10);
+        rejects(bytes, "two activations of one UObject");
+        for (int offset : new int[] {72, 76, 80, 84, 88, 92, 96, 100, 112, 116, 120}) {
+            bytes = table();
+            ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putFloat(offset, Float.NaN);
+            rejects(bytes, "non-finite field at " + offset);
+        }
+        bytes = table();
+        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putInt(68, 0);
+        rejects(bytes, "uninitialized activation");
+        bytes = table();
+        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putFloat(92, 10);
+        rejects(bytes, "capsule shorter than its radius");
+        bytes = table();
+        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putFloat(96, 0);
+        check(!EnemyFrame.decode(1, MemorySegment.ofArray(bytes), 2).entries().getFirst().alive(), "zero HP is dead");
+        bytes = table();
+        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putInt(20, 0);
+        check(EnemyFrame.decode(1, MemorySegment.ofArray(bytes), 2).entries().isEmpty(), "empty table clears enemies");
+        System.out.printf("EnemyFrame tests PASS; protocol v%d layout=%016X%n", Protocol.VERSION, Protocol.LAYOUT_HASH);
+    }
+}
