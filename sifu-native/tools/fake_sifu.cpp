@@ -10,6 +10,7 @@
 //     --pawn: a pawn standing still at (X, Y, Z) (Unreal cm, capsule centre) in the grid's map
 //     --yaw: the way it faces (Unreal degrees: 0 = +X, 90 = +Y)
 //     --hand-over: route the player to Minecraft (input owner, anchor epoch 1)
+//     --language: publish a UI culture such as zh-Hans (empty by default)
 //     --key: hold SDL scancode CODE from FROM to TO ms after Minecraft has taken the player
 //     --button: the same for SDL mouse button CODE (1 left, 3 right)
 //     --mouse: move the mouse by (DX, DY) pixels AT ms after that (+DY looks down)
@@ -151,6 +152,7 @@ int main(int argc, char** argv) {
     using namespace sifucraft;
     double seconds = 0.0;
     std::string grid_file;
+    std::string language;
     std::string overlay_output;
     StandingPawn pawn;
     std::vector<HeldKey> keys;
@@ -180,6 +182,8 @@ int main(int argc, char** argv) {
             pawn.z = static_cast<float>(std::atof(argv[++i]));
         } else if (std::strcmp(argv[i], "--yaw") == 0 && i + 1 < argc) {
             pawn.yaw = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--language") == 0 && i + 1 < argc) {
+            language = argv[++i];
         } else if (std::strcmp(argv[i], "--hand-over") == 0) {
             pawn.hand_over = true;
         } else if (std::strcmp(argv[i], "--mouse") == 0 && i + 1 < argc) {
@@ -269,6 +273,7 @@ int main(int argc, char** argv) {
         const double elapsed = (now - begin) / 1000.0;
         if (seconds > 0 && elapsed >= seconds) break;
         bridge::PlayerFrame frame = pawn.enabled ? StandingFrame(pawn) : SyntheticFrame(elapsed);
+        frame.language = language;
         if (gui_test) frame.flags |= protocol::kSnapshotGuiAvailable;
         if (combat_scenario) frame.world_path = "/SifuCraft/Test/" + pawn.map + "." + pawn.map;
         if (with_enemies && !enemies_ready_at && bridge.peer_connected() &&

@@ -34,7 +34,7 @@ tools/         部署、卸载、启动与 bridge 测试脚本；tools/collision
 
 ## 共享内存 Bridge（P1）
 
-两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v13）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
+两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v14）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
 
 - 每个字段只有一个写入方；双方各自写自己的 `EndpointStatus`（pid、session、心跳），心跳 2 秒不前进即判定断连；
 - 高频位姿走 seqlock 快照（Sifu → MC 的 `SifuSnapshot`，MC → Sifu 的 `McSnapshot`）；
@@ -137,6 +137,12 @@ F8、Sifu 菜单、失去前台或切图时关闭容器，手持的物品按 Min
 新建世界默认为生存/普通；首次无玩家存档的角色获铁剑、盾、铁镐各 1，熟牛肉 16、石头和木板各 64。
 已有角色的模式与物品保留，切图/F8/重生不补物品。S2 容器操作、交接和指针清晰度已通过实机验收。
 虚拟指针按屏幕像素绘制并对边缘抗锯齿，位置使用精确鼠标坐标，不随 GUI 像素网格放大或取整。
+
+MC 界面语言随 Sifu 当前界面语言同步（包括简体/繁体中文）；原生端只读当前 UI culture，经桥接传给 MC，
+由原版语言管理器加载已安装的翻译。未知语言保留当前选择，加载失败不循环重试。
+连接 Sifu 时停播 MC 背景音乐，保留物品、方块等音效及用户的音量设置；断开后恢复原版音乐调度。
+语言同步和音乐/音效已通过实机验收。
+目前叠加范围是 GUI 与手部；世界掉落物和粒子仍待后续渲染层实现。
 
 独立存档的背包自测可用 `runClient -Psifucraft.overlay=true -Psifucraft.inventorySelfTest=true -Psifucraft.playerDamageTest=true -Psifucraft.devWorldName=sifucraft-ui-check-<名称>`，
 配合 fake 的 `--gui --hand-over --collision <网格> --pawn <X> <Y> <Z>`；自测拒绝在普通开发存档中执行。

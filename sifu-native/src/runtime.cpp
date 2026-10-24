@@ -37,6 +37,7 @@
 #include "ue/objects.h"
 #include "ue/reflection.h"
 #include "ue/transform.h"
+#include "ue/language.h"
 #include "ui/player_hud.h"
 
 namespace sifucraft::runtime {
@@ -616,6 +617,7 @@ void Run(std::uintptr_t image_base) {
 
     std::uintptr_t world_ptr = 0;
     std::string world_path;
+    std::string language;
     std::uint32_t generation = 0;
     std::uint32_t dry_run_generation = 0;
     bool prepared = false;
@@ -628,6 +630,14 @@ void Run(std::uintptr_t image_base) {
         const std::uintptr_t world = mem::ReadPtr(image_base + gen::rva::GWorld);
 
         bridge::PlayerFrame frame;
+        if (tick % 100 == 1) {
+            const auto current_language = ue::ReadLanguage(image_base);
+            if (!current_language.empty() && current_language != language) {
+                language = current_language;
+                SC_LOG("[language] UI culture=%s (read-only)", language.c_str());
+            }
+        }
+        frame.language = language;
         if (!world) {
             if (world_ptr) SC_LOG("[world] none");
             world_ptr = 0;

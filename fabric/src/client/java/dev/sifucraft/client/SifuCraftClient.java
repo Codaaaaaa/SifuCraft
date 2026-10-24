@@ -76,6 +76,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private InventoryCheck inventoryCheck;
     private int guiWireEvents;
     private final OverlayCapture overlay = new OverlayCapture();
+    private final HostLanguage hostLanguage = new HostLanguage();
     private boolean crosshair;
     private CollisionLoader collision;
     private final UnrealSpace space = new UnrealSpace();
@@ -266,6 +267,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         rescueFromFall(previous);
         bridge.tick(now, currentState(previous));
         SifuFrame frame = bridge.latest();
+        if (bridge.peerConnected() && frame != null) hostLanguage.update(minecraft, frame.language());
         publishEnemies(frame);
         CombatHits.pump(bridge);
         PlayerDamage.pump(bridge, minecraft.getSingleplayerServer(), minecraft.player == null ? null : minecraft.player.getUUID(),

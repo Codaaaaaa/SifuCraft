@@ -41,6 +41,7 @@ add_library(sifucraft_native SHARED
     src/input/input_router.cpp
     src/input/key_map.cpp
     src/ue/function_call.cpp
+    src/ue/language.cpp
     src/ue/names.cpp
     src/ue/objects.cpp
     src/ue/reflection.cpp
@@ -87,6 +88,7 @@ add_executable(sifucraft_collision_replay tools/collision_replay.cpp ${SIFUCRAFT
 # Offline tests: run without the game.
 add_executable(sifucraft_native_tests
     tests/native_tests.cpp
+    src/ue/language.cpp
     src/core/safe_memory.cpp
     src/core/build_guard.cpp
     src/core/log.cpp

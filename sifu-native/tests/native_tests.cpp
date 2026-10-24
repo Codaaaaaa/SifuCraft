@@ -27,6 +27,7 @@
 #include "probe/combat_sample.h"
 #include "ue/transform.h"
 #include "ue/data_table.h"
+#include "ue/language.h"
 
 namespace {
 
@@ -789,6 +790,37 @@ void TestDataTableRows() {
     Expect(ue::DataTableRow(at, {99, 0}) == 0, "row-map lookup refuses inconsistent sparse array and bit counts");
 }
 
+void TestLanguage() {
+    using namespace sifucraft;
+    namespace off = gen::off;
+    std::vector<std::uint8_t> store(gen::size::InternationalizationStore, 0);
+    std::vector<std::uint8_t> culture(gen::size::FCulture, 0);
+    wchar_t name[] = L"zh-Hans";
+    const auto at = reinterpret_cast<std::uintptr_t>(store.data());
+    const auto base = at - gen::rva::InternationalizationStore;
+    const auto instance = at + off::InternationalizationStore::Data;
+    const auto culture_at = reinterpret_cast<std::uintptr_t>(culture.data());
+    const auto put = [](std::uintptr_t address, const auto& value) { std::memcpy(reinterpret_cast<void*>(address), &value, sizeof(value)); };
+    put(at + off::InternationalizationStore::Ptr, instance);
+    put(instance + off::FInternationalization::CurrentLanguage, culture_at);
+    const auto cached = culture_at + off::FCulture::CachedName;
+    put(cached, mem::RawArray{reinterpret_cast<std::uintptr_t>(name), 8, 8});
+    Expect(ue::ReadLanguage(base).empty(), "language refuses an uninitialized internationalization singleton");
+    put(instance + off::FInternationalization::bIsInitialized, std::uint8_t{1});
+    Expect(ue::ReadLanguage(base) == "zh-Hans", "language reads the current UI culture through generated offsets");
+    name[2] = L' ';
+    Expect(ue::ReadLanguage(base).empty(), "language refuses malformed culture text");
+    name[2] = L'-'; name[7] = L'x';
+    Expect(ue::ReadLanguage(base).empty(), "language requires a terminated culture name");
+    name[7] = 0;
+    put(cached, mem::RawArray{0x20, 8, 8});
+    Expect(ue::ReadLanguage(base).empty(), "language refuses an unreadable culture string");
+    put(cached, mem::RawArray{reinterpret_cast<std::uintptr_t>(name), 21, 21});
+    Expect(ue::ReadLanguage(base).empty(), "language bounds the culture string before copying it");
+    put(at + off::InternationalizationStore::Ptr, instance + 8);
+    Expect(ue::ReadLanguage(base).empty(), "language validates the singleton's inline-storage pointer");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -834,6 +866,7 @@ int main(int argc, char** argv) {
         Expect(!combat::ValidDamage(bad), "combat refuses unknown damage flags");
     }
     TestGuardedReads();
+    TestLanguage();
     TestLightImpactCall();
     TestBuildGuard();
     TestVtableHook();

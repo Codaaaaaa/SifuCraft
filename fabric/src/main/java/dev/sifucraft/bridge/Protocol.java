@@ -9,7 +9,7 @@ public final class Protocol {
     private Protocol() {}
 
     public static final int MAGIC = 0x52434653; // "SFCR"
-    public static final int VERSION = 13;
+    public static final int VERSION = 14;
     public static final String MAPPING_NAME = "Local\\SifuCraft.Bridge";
     public static final int MAPPING_SIZE = 0x10000;
 
@@ -130,6 +130,7 @@ public final class Protocol {
         public static final int INPUT_OWNER = 224;
         public static final int CAPSULE_HALF_HEIGHT = 228;
         public static final int ANCHOR_EPOCH = 232;
+        public static final int LANGUAGE = 236, LANGUAGE_SIZE = 20;
     }
 
     /** McSnapshot (seqlock, written by Minecraft). */
@@ -288,6 +289,7 @@ public final class Protocol {
         SifuSnap.INPUT_OWNER,
         SifuSnap.CAPSULE_HALF_HEIGHT,
         SifuSnap.ANCHOR_EPOCH,
+        SifuSnap.LANGUAGE, SifuSnap.LANGUAGE_SIZE,
         MC_SNAPSHOT_OFFSET,
         McSnap.SIZE,
         McSnap.LAST_SIFU_FRAME,

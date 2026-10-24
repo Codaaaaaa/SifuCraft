@@ -28,6 +28,7 @@ public final class EnemyFrameTest {
         }
     }
     public static void main(String[] args) {
+        LanguageMatchTest.run();
         OverlayWriterTest.run();
         GuiCursorTest.run();
         RespawnHandshakeTest.run();

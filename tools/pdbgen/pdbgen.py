@@ -20,7 +20,8 @@ from pathlib import Path
 EXE_NAME = "Sifu-Win64-Shipping.exe"
 
 # Global variables whose RVA the native module reads.
-SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData", "GD3D11RHI", "GDynamicRHI"]
+SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData", "GD3D11RHI", "GDynamicRHI", "InternationalizationStore"]
+SYMBOL_MATCHES = {"InternationalizationStore": ("*FInternationalization*Singleton", "::Singleton")}
 
 # Vtable hook plan: name -> (class whose vftable is patched, class that introduces the virtual,
 # method, implementation the slot must hold). Checked against the exe file here and against live
@@ -53,6 +54,7 @@ CALL_SLOTS = {"UObject": ["ProcessEvent"]}
 
 # Short C++ namespaces for PDB template types used by native inspection.
 TYPE_ALIASES = {
+    "InternationalizationStore": "TLazySingleton<FInternationalization>",
     "ScriptDelegate": "TScriptDelegate<FWeakObjectPtr>",
     "DataTableMap": "TMap<FName,unsigned char *,FDefaultSetAllocator,TDefaultMapHashableKeyFuncs<FName,unsigned char *,0> >",
     "DataTableSet": "TSet<TTuple<FName,unsigned char *>,TDefaultMapHashableKeyFuncs<FName,unsigned char *,0>,FDefaultSetAllocator>",
@@ -68,6 +70,9 @@ TYPE_ALIASES = {
 
 # type -> members. A member may live in a base class; its offset is then made absolute.
 MEMBERS = {
+    "InternationalizationStore": ["Data", "Ptr"],
+    "FInternationalization": ["bIsInitialized", "CurrentLanguage"],
+    "FCulture": ["CachedName"],
     "UWidget": ["Visibility", "VisibilityDelegate", "NativeBindings", "Slot"],
     "UUserWidget": ["WidgetTree"],
     "UPanelSlot": ["Parent", "Content"],
@@ -172,7 +177,7 @@ MEMBERS = {
     "FGameplayAttributeData": ["BaseValue", "CurrentValue"],
 }
 
-SIZES = ["FUObjectItem", "UObjectBase", "FName", "FNameEntryAllocator", "FTransform", "FKConvexElem", "FKBoxElem", "FKSphereElem",
+SIZES = ["InternationalizationStore", "FCulture", "FUObjectItem", "UObjectBase", "FName", "FNameEntryAllocator", "FTransform", "FKConvexElem", "FKBoxElem", "FKSphereElem",
          "FKSphylElem", "FKTaperedCapsuleElem", "FInstancedStaticMeshInstanceData", "FDamageInfos",
          "FHitRequest", "FHitBox", "FHitboxDataRow", "FHitImpact", "FHitDescription", "FImpactResult", "GuardStackValue", "DataTableElement"]
 
@@ -274,6 +279,19 @@ class Pdb:
         if not self.dbg.SymFromNameW(self.process, name, C.byref(info)):
             raise LookupError(f"symbol '{name}' not found")
         return info.Address - self.base
+
+    def unique_rva(self, mask: str, suffix: str) -> int:
+        # MSVC local-static public symbols are enumerable but not always resolvable by their
+        # undecorated name through SymFromName. Require one distinct matching address.
+        matches = set()
+        def collect(info, size, context):
+            symbol = info.contents
+            if symbol.Name.endswith(suffix): matches.add(symbol.Address - self.base)
+            return True
+        self.dbg.SymEnumSymbolsW.argtypes = [C.c_void_p, C.c_uint64, W.LPCWSTR, ENUM_CALLBACK, C.c_void_p]
+        self.dbg.SymEnumSymbolsW(self.process, self.base, mask, ENUM_CALLBACK(collect), None)
+        if len(matches) != 1: raise LookupError(f"expected one '{mask}' ending '{suffix}', found {len(matches)}")
+        return matches.pop()
 
     def type_id(self, name: str) -> int:
         if name in self._type_cache:
@@ -535,7 +553,7 @@ def main() -> int:
                 errors.append(f"hook {name}: {e}")
         for name in SYMBOLS:
             try:
-                rvas[name] = pdb.rva(name)
+                rvas[name] = pdb.unique_rva(*SYMBOL_MATCHES[name]) if name in SYMBOL_MATCHES else pdb.rva(name)
             except LookupError as e:
                 errors.append(str(e))
         for type_name, fields in MEMBERS.items():

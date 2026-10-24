@@ -538,7 +538,7 @@ public final class McBridge implements AutoCloseable {
                     s.get(JAVA_DOUBLE, SifuSnap.SCROLL),
                     s.get(JAVA_INT, SifuSnap.INPUT_OWNER),
                     s.get(JAVA_FLOAT, SifuSnap.CAPSULE_HALF_HEIGHT),
-                    s.get(JAVA_INT, SifuSnap.ANCHOR_EPOCH));
+                    s.get(JAVA_INT, SifuSnap.ANCHOR_EPOCH), utf8z(s, SifuSnap.LANGUAGE, SifuSnap.LANGUAGE_SIZE));
             VarHandle.loadLoadFence();
             if ((long) LONG.getAcquire(s, (long) SifuSnap.SEQ) != before) {
                 stats.snapshotRetries++;

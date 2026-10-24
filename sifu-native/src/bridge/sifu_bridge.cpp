@@ -303,6 +303,8 @@ void SifuBridge::Publish(const PlayerFrame& frame) {
     s.input_owner = static_cast<std::uint32_t>(frame.input_owner);
     s.capsule_half_height = frame.capsule_half_height;
     s.anchor_epoch = frame.anchor_epoch;
+    std::memset(s.language, 0, sizeof(s.language));
+    std::memcpy(s.language, frame.language.data(), std::min(frame.language.size(), sizeof(s.language) - 1));
     CompilerBarrier();
     seq.store(start + 2, std::memory_order_release);
 }

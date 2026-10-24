@@ -27,7 +27,7 @@ namespace sifucraft::protocol {
 
 inline constexpr std::uint32_t kMagic = 0x52434653;  // "SFCR"
 // The name carries no version so that mismatched builds see each other and report INCOMPATIBLE.
-inline constexpr std::uint32_t kVersion = 13;
+inline constexpr std::uint32_t kVersion = 14;
 inline constexpr wchar_t kMappingName[] = L"Local\\SifuCraft.Bridge";
 inline constexpr std::uint32_t kMappingSize = 0x10000;
 
@@ -132,7 +132,7 @@ struct SifuSnapshot {
     // Bumped each time Sifu hands the player to Minecraft: Minecraft re-anchors to where the pawn
     // is now, and Sifu applies Minecraft's pose / camera only once they carry this epoch back.
     std::uint32_t anchor_epoch;
-    std::uint8_t reserved[20];
+    char language[20];         // current UI culture, ASCII BCP-47 tag; empty if unavailable
 };
 
 struct McSnapshot {
@@ -376,6 +376,7 @@ inline constexpr std::uint32_t kLayoutTable[] = {
     offsetof(SifuSnapshot, input_owner),
     offsetof(SifuSnapshot, capsule_half_height),
     offsetof(SifuSnapshot, anchor_epoch),
+    offsetof(SifuSnapshot, language), sizeof(SifuSnapshot::language),
     kMcSnapshotOffset,
     sizeof(McSnapshot),
     offsetof(McSnapshot, last_sifu_frame),

@@ -17,9 +17,21 @@ inline constexpr std::uintptr_t GUObjectArray = 0x5D8A1A0;
 inline constexpr std::uintptr_t NamePoolData = 0x5D71C00;
 inline constexpr std::uintptr_t GD3D11RHI = 0x5D98E78;
 inline constexpr std::uintptr_t GDynamicRHI = 0x5E602C0;
+inline constexpr std::uintptr_t InternationalizationStore = 0x5D26918;
 }  // namespace rva
 
 namespace off {
+namespace InternationalizationStore {
+inline constexpr std::uint32_t Data = 0x0;
+inline constexpr std::uint32_t Ptr = 0x98;
+}
+namespace FInternationalization {
+inline constexpr std::uint32_t bIsInitialized = 0x0;
+inline constexpr std::uint32_t CurrentLanguage = 0x28;
+}
+namespace FCulture {
+inline constexpr std::uint32_t CachedName = 0x28;
+}
 namespace UWidget {
 inline constexpr std::uint32_t Visibility = 0xC3;
 inline constexpr std::uint32_t VisibilityDelegate = 0x80;
@@ -432,6 +444,8 @@ inline constexpr std::uint32_t CurrentValue = 0xC;
 }  // namespace off
 
 namespace size {
+inline constexpr std::uint32_t InternationalizationStore = 0xA0;
+inline constexpr std::uint32_t FCulture = 0xD0;
 inline constexpr std::uint32_t FUObjectItem = 0x18;
 inline constexpr std::uint32_t UObjectBase = 0x28;
 inline constexpr std::uint32_t FName = 0x8;

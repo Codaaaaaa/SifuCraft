@@ -28,6 +28,7 @@ struct PlayerFrame {
     double scroll = 0.0;
     float capsule_half_height = 0.0f;
     std::uint32_t anchor_epoch = 0;
+    std::string language;
 };
 
 // Newest consistent copy of the Minecraft snapshot.
