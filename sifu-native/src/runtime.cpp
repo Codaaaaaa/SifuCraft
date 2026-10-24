@@ -26,6 +26,7 @@
 #include "collision/walk_check.h"
 #include "probe/block_census.h"
 #include "probe/collision_census.h"
+#include "probe/combat_census.h"
 #include "probe/probe.h"
 #include "ue/objects.h"
 #include "ue/reflection.h"
@@ -578,6 +579,7 @@ void Run(std::uintptr_t image_base) {
     bool engine_hooked = false;
     Ownership ownership;
     CollisionSchedule collision_schedule;
+    probe::CombatCensus combat_census;
     input::InputRouter::Drained drained;
 
     std::uintptr_t world_ptr = 0;
@@ -659,6 +661,11 @@ void Run(std::uintptr_t image_base) {
             if (world) hooks::camera_fade::Resolve();
         }
         if (settings.stage >= 5) UpdatePoseOverride(player.pawn, frame.capsule_half_height, ownership.epoch());
+        // P5 S0 remains read-only even at stage 0 / no-hooks: inspect candidate targets and
+        // sample Sifu's own combat before the stage-7 damage path is implemented.
+        combat_census.Update(image_base, world, generation,
+                             world ? (player.pawn ? player.pawn : probe::FindPlayerObjects(world).pawn) : 0,
+                             GetTickCount64());
         tick_timing.Add(MicrosSince(start));
 
         if (world && tick % kCollisionCheckEveryTicks == 0) {
@@ -680,6 +687,7 @@ void Run(std::uintptr_t image_base) {
                    log_timing.Take().c_str(), PrivateMegabytes());
             if (settings.stage >= 1) SC_LOG("[hooks] %s", hooks::TakeStats().c_str());
             if (settings.stage >= 6) SC_LOG("[blocks] %s", blocks::TakeStats().c_str());
+            SC_LOG("[combat-census] %s", combat_census.TakeStats().c_str());
             collision_schedule.FlushCheck();
         }
     }

@@ -19,6 +19,7 @@
 #include "hooks/vtable_hook.h"
 #include "input/input_router.h"
 #include "input/key_map.h"
+#include "probe/combat_sample.h"
 #include "ue/transform.h"
 
 namespace {
@@ -548,6 +549,66 @@ void TestCollisionFiles() {
     DeleteFileW(csv.c_str());
 }
 
+void TestCombatSamples() {
+    using namespace sifucraft;
+    namespace off = gen::off;
+    std::vector<std::uint8_t> component(off::UCharacterHealthComponent::m_eDownState + 1);
+    const auto put = [](auto& buffer, std::uint32_t offset, auto value) {
+        std::memcpy(buffer.data() + offset, &value, sizeof(value));
+    };
+    put(component, off::UHealthComponent::m_fHealth, 180.0f);
+    put(component, off::UHealthComponent::m_fMaxHealth, 120.0f);
+    for (int d = 0; d < 3; ++d) {
+        put(component, off::UCharacterHealthComponent::m_fMaxHealthMultiplier + d * sizeof(float), 1.0f + d * 0.5f);
+    }
+    component[off::UHealthComponent::m_bCanBeDamaged] = 1;
+    component[off::UHealthComponent::m_bCanDieByDamage] = 1;
+    const auto address = reinterpret_cast<std::uintptr_t>(component.data());
+    const auto before = component;
+    probe::HealthSample health;
+    Expect(probe::ReadHealthSample(address, &health) && health.health == 180.0f && health.can_die &&
+               probe::EffectiveMaxHealth(health, 1) == 180.0f && probe::EffectiveMaxHealth(health, 2) == 240.0f,
+           "combat sample reads PDB health layout and applies the selected difficulty multiplier");
+    Expect(std::isnan(probe::EffectiveMaxHealth(health, -1)) && probe::EffectiveMaxHealth(health, 3) == 120.0f,
+           "combat sample keeps unknown difficulty unknown and matches the game's out-of-range fallback");
+    Expect(component == before, "combat sampling never changes source memory");
+    put(component, off::UHealthComponent::m_fHealth, NAN);
+    Expect(!probe::ReadHealthSample(address, &health), "combat sample rejects non-finite health");
+    put(component, off::UHealthComponent::m_fHealth, 180.0f);
+    put(component, off::UCharacterHealthComponent::m_fMaxHealthMultiplier, 0.0f);
+    Expect(!probe::ReadHealthSample(address, &health), "combat sample rejects uninitialized health multipliers");
+    Expect(!probe::ReadHealthSample(0, &health) && !probe::ReadHealthSample(0x20, &health),
+           "combat sample refuses absent and unreadable health components");
+
+    std::vector<std::uint8_t> description(gen::size::FHitDescription);
+    const auto hit_address = reinterpret_cast<std::uintptr_t>(description.data());
+    const auto box = off::FHitDescription::m_Request + off::FHitRequest::m_HitBox;
+    const auto row = box + off::FHitBox::m_CachedRow;
+    const auto impact = row + off::FHitboxDataRow::m_OnHitImpact;
+    const auto result = off::FHitDescription::m_ImpactResult;
+    probe::HitSample hit;
+    Expect(!probe::ReadHitSample(hit_address, &hit), "combat sample ignores an empty last-hit description");
+    description[result + off::FImpactResult::m_bIsValid] = 1;
+    put(description, result + off::FImpactResult::m_fDamage, 18.0f);
+    put(description, impact + off::FHitImpact::m_fDamage, 12.0f);
+    description[impact + off::FHitImpact::m_bUseDamage] = 1;
+    Expect(!probe::ReadHitSample(hit_address, &hit), "combat sample refuses hitbox damage before its row is cached");
+    description[box + off::FHitBox::m_bCachedRowSetup] = 1;
+    Expect(probe::ReadHitSample(hit_address, &hit) && hit.use_damage && hit.base_damage == 12 && hit.final_damage == 18,
+           "combat sample distinguishes cached base damage from Sifu's resolved damage");
+    description[impact + off::FHitImpact::m_bUseDamage] = 0;
+    put(description, impact + off::FHitImpact::m_fDamage, NAN);
+    Expect(probe::ReadHitSample(hit_address, &hit) && !hit.use_damage && std::isnan(hit.base_damage),
+           "combat sample flags default damage instead of trusting an unused cached value");
+    description[impact + off::FHitImpact::m_bUseDamage] = 1;
+    Expect(!probe::ReadHitSample(hit_address, &hit), "combat sample refuses a non-finite explicit damage value");
+    put(description, impact + off::FHitImpact::m_fDamage, 12.0f);
+    put(description, result + off::FImpactResult::m_fDamage, -1.0f);
+    Expect(!probe::ReadHitSample(hit_address, &hit), "combat sample refuses negative resolved damage");
+    Expect(!probe::ReadHitSample(0, &hit) && !probe::ReadHitSample(0x20, &hit),
+           "combat sample refuses absent and unreadable hit descriptions");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -560,6 +621,7 @@ int main(int argc, char** argv) {
     TestAffine();
     TestVoxels();
     TestCollisionFiles();
+    TestCombatSamples();
     if (argc > 1) TestProxy(argv[1]);
     std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED", g_failures, g_failures == 1 ? "" : "s");
     return g_failures ? 1 : 0;

@@ -30,6 +30,11 @@ inline constexpr std::uint32_t SuperStruct = 0x40;
 inline constexpr std::uint32_t Children = 0x48;
 inline constexpr std::uint32_t ChildProperties = 0x50;
 inline constexpr std::uint32_t PropertiesSize = 0x58;
+inline constexpr std::uint32_t Script = 0x60;
+}
+namespace UFunction {
+inline constexpr std::uint32_t FunctionFlags = 0xB0;
+inline constexpr std::uint32_t ParmsSize = 0xB6;
 }
 namespace UField {
 inline constexpr std::uint32_t Next = 0x28;
@@ -121,6 +126,7 @@ inline constexpr std::uint32_t Controller = 0x2E8;
 namespace ACharacter {
 inline constexpr std::uint32_t CharacterMovement = 0x318;
 inline constexpr std::uint32_t Mesh = 0x310;
+inline constexpr std::uint32_t CapsuleComponent = 0x320;
 }
 namespace AController {
 inline constexpr std::uint32_t Pawn = 0x2E0;
@@ -256,13 +262,88 @@ inline constexpr std::uint32_t CapsuleRadius = 0x4AC;
 namespace UEngine {
 inline constexpr std::uint32_t GameViewport = 0x798;
 }
+namespace ASCCharacter {
+inline constexpr std::uint32_t m_bIsPooled = 0x5BE;
+inline constexpr std::uint32_t m_bPooledActorActive = 0x5BF;
+}
 namespace AFightingCharacter {
 inline constexpr std::uint32_t m_HealthComponent = 0x1350;
 inline constexpr std::uint32_t m_eFaction = 0x1530;
+inline constexpr std::uint32_t m_HitComponent = 0x1328;
+inline constexpr std::uint32_t m_DefenseComponent = 0x12A8;
+inline constexpr std::uint32_t m_AttackComponent = 0x1308;
+inline constexpr std::uint32_t m_HitCapsule = 0x1348;
+inline constexpr std::uint32_t m_AvoidCapsule = 0x1340;
+inline constexpr std::uint32_t m_AbilityComponent = 0x12B0;
+inline constexpr std::uint32_t m_bHasJustBeenHitted = 0xCF8;
+inline constexpr std::uint32_t m_HittedDescription = 0xD00;
 }
 namespace UHealthComponent {
 inline constexpr std::uint32_t m_fHealth = 0x138;
 inline constexpr std::uint32_t m_fMaxHealth = 0x140;
+inline constexpr std::uint32_t m_bCanBeDamaged = 0x13C;
+inline constexpr std::uint32_t m_bCanDieByDamage = 0x13D;
+inline constexpr std::uint32_t m_bForceDeathOnApplyDamage = 0x149;
+}
+namespace UCharacterHealthComponent {
+inline constexpr std::uint32_t m_fMaxHealthMultiplier = 0x178;
+inline constexpr std::uint32_t m_bIsDown = 0x19C;
+inline constexpr std::uint32_t m_eDownState = 0x19D;
+}
+namespace FDamageInfos {
+inline constexpr std::uint32_t m_fDamage = 0x0;
+inline constexpr std::uint32_t m_fHealthBeforeDamage = 0x4;
+inline constexpr std::uint32_t m_Instigator = 0x8;
+inline constexpr std::uint32_t m_uiApplyDamageBehavior = 0x14;
+}
+namespace FHitRequest {
+inline constexpr std::uint32_t m_Instigator = 0xE4;
+inline constexpr std::uint32_t m_HitBox = 0x110;
+inline constexpr std::uint32_t m_uiApplyDamageBehavior = 0x3B4;
+inline constexpr std::uint32_t m_vDamageDir = 0x3CC;
+inline constexpr std::uint32_t m_AttackProperties = 0x3E8;
+inline constexpr std::uint32_t m_bCanBeDefended = 0x409;
+}
+namespace FHitBox {
+inline constexpr std::uint32_t m_HitRow = 0x20;
+inline constexpr std::uint32_t m_CachedRow = 0x50;
+inline constexpr std::uint32_t m_bCachedRowSetup = 0x290;
+}
+namespace FHitboxDataRow {
+inline constexpr std::uint32_t m_bCanBeLethal = 0x84;
+inline constexpr std::uint32_t m_bCanBreakStructure = 0x85;
+inline constexpr std::uint32_t m_OnHitImpact = 0x88;
+inline constexpr std::uint32_t m_OnGuardImpact = 0xC0;
+inline constexpr std::uint32_t m_OnDeflectImpact = 0xF8;
+inline constexpr std::uint32_t m_eHitType = 0x154;
+inline constexpr std::uint32_t m_eAttackPower = 0x1A8;
+inline constexpr std::uint32_t m_bParriable = 0x1B2;
+}
+namespace FHitImpact {
+inline constexpr std::uint32_t m_bUseDamage = 0x9;
+inline constexpr std::uint32_t m_fDamage = 0xC;
+inline constexpr std::uint32_t m_fStructureDamage = 0x14;
+}
+namespace FHitDescription {
+inline constexpr std::uint32_t m_Request = 0x0;
+inline constexpr std::uint32_t m_Result = 0x450;
+inline constexpr std::uint32_t m_ImpactResult = 0x4E0;
+}
+namespace FImpactResult {
+inline constexpr std::uint32_t m_bIsValid = 0x0;
+inline constexpr std::uint32_t m_fDamage = 0x4;
+inline constexpr std::uint32_t m_bLethal = 0x68;
+inline constexpr std::uint32_t m_HitImpact = 0x20;
+}
+namespace UAbilitySystemComponent {
+inline constexpr std::uint32_t SpawnedAttributes = 0x150;
+}
+namespace UCharacterStatAttributeSet {
+inline constexpr std::uint32_t GameDifficulty = 0x180;
+}
+namespace FGameplayAttributeData {
+inline constexpr std::uint32_t BaseValue = 0x8;
+inline constexpr std::uint32_t CurrentValue = 0xC;
 }
 }  // namespace off
 
@@ -278,6 +359,13 @@ inline constexpr std::uint32_t FKSphereElem = 0x40;
 inline constexpr std::uint32_t FKSphylElem = 0x50;
 inline constexpr std::uint32_t FKTaperedCapsuleElem = 0x58;
 inline constexpr std::uint32_t FInstancedStaticMeshInstanceData = 0x40;
+inline constexpr std::uint32_t FDamageInfos = 0x28;
+inline constexpr std::uint32_t FHitRequest = 0x450;
+inline constexpr std::uint32_t FHitBox = 0x298;
+inline constexpr std::uint32_t FHitboxDataRow = 0x240;
+inline constexpr std::uint32_t FHitImpact = 0x30;
+inline constexpr std::uint32_t FHitDescription = 0x5A0;
+inline constexpr std::uint32_t FImpactResult = 0xC0;
 }  // namespace size
 
 namespace bits {
@@ -354,6 +442,10 @@ inline constexpr Target PlayerInputAxis{"PlayerInputAxis", 0x4893030, 0xD10, 0x1
 inline constexpr Target CameraUpdate{"CameraUpdate", 0x487DD98, 0x760, 0x3763770};
 // UFightingMovementComponent vftable, UActorComponent::TickComponent slot -> UFightingMovementComponent::TickComponent
 inline constexpr Target MovementTick{"MovementTick", 0x48A2968, 0x360, 0x1ABB6F0};
+// UHitComponent vftable, UHitComponent::BPE_ValidateHit_Implementation slot -> UHitComponent::BPE_ValidateHit_Implementation
+inline constexpr Target ValidateHit{"ValidateHit", 0x4897F48, 0x418, 0x85E600};
+// UCharacterHealthComponent vftable, UHealthComponent::InternalApplyDamage slot -> UCharacterHealthComponent::InternalApplyDamage
+inline constexpr Target InternalApplyDamage{"InternalApplyDamage", 0x4897AC0, 0x430, 0x1A62AE0};
 }  // namespace hook
 
 }  // namespace sifucraft::gen

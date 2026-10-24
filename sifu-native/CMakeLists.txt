@@ -40,6 +40,7 @@ add_library(sifucraft_native SHARED
     src/ue/transform.cpp
     src/probe/probe.cpp
     src/probe/block_census.cpp
+    src/probe/combat_census.cpp
     src/probe/collision_census.cpp
     src/blocks/block_mirror.cpp
     src/collision/builder.cpp

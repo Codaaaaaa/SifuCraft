@@ -35,6 +35,11 @@ HOOKS = {
                      "APlayerCameraManager::UpdateCamera"),
     "MovementTick": ("UFightingMovementComponent", "UActorComponent", "TickComponent",
                      "UFightingMovementComponent::TickComponent"),
+    # P5 S0 only inspects these targets; generating a plan does not install a hook.
+    "ValidateHit": ("UHitComponent", "UHitComponent", "BPE_ValidateHit_Implementation",
+                    "UHitComponent::BPE_ValidateHit_Implementation"),
+    "InternalApplyDamage": ("UCharacterHealthComponent", "UHealthComponent", "InternalApplyDamage",
+                            "UCharacterHealthComponent::InternalApplyDamage"),
 }
 
 # Functions sifu-native calls directly: identifier -> symbol.
@@ -47,7 +52,8 @@ CALL_SLOTS = {"UObject": ["ProcessEvent"]}
 MEMBERS = {
     # CoreUObject
     "UObjectBase": ["ObjectFlags", "InternalIndex", "ClassPrivate", "NamePrivate", "OuterPrivate"],
-    "UStruct": ["SuperStruct", "Children", "ChildProperties", "PropertiesSize"],
+    "UStruct": ["SuperStruct", "Children", "ChildProperties", "PropertiesSize", "Script"],
+    "UFunction": ["FunctionFlags", "ParmsSize"],
     "UField": ["Next"],
     "FField": ["ClassPrivate", "Next", "NamePrivate"],
     "FFieldClass": ["Name"],
@@ -72,7 +78,7 @@ MEMBERS = {
     "UPlayer": ["PlayerController"],
     "AActor": ["RootComponent"],
     "APawn": ["Controller"],
-    "ACharacter": ["CharacterMovement", "Mesh"],
+    "ACharacter": ["CharacterMovement", "Mesh", "CapsuleComponent"],
     "AController": ["Pawn", "IgnoreMoveInput", "IgnoreLookInput"],
     "APlayerController": ["PlayerCameraManager", "AcknowledgedPawn"],
     "APlayerCameraManager": ["CameraCachePrivate", "LastFrameCameraCachePrivate", "ViewTarget"],
@@ -106,12 +112,30 @@ MEMBERS = {
     "UCapsuleComponent": ["CapsuleHalfHeight", "CapsuleRadius"],
     "UEngine": ["GameViewport"],
     # Sifu
-    "AFightingCharacter": ["m_HealthComponent", "m_eFaction"],
-    "UHealthComponent": ["m_fHealth", "m_fMaxHealth"],
+    "ASCCharacter": ["m_bIsPooled", "m_bPooledActorActive"],
+    "AFightingCharacter": ["m_HealthComponent", "m_eFaction", "m_HitComponent", "m_DefenseComponent",
+                           "m_AttackComponent", "m_HitCapsule", "m_AvoidCapsule", "m_AbilityComponent",
+                           "m_bHasJustBeenHitted", "m_HittedDescription"],
+    "UHealthComponent": ["m_fHealth", "m_fMaxHealth", "m_bCanBeDamaged", "m_bCanDieByDamage",
+                         "m_bForceDeathOnApplyDamage"],
+    "UCharacterHealthComponent": ["m_fMaxHealthMultiplier", "m_bIsDown", "m_eDownState"],
+    "FDamageInfos": ["m_fDamage", "m_fHealthBeforeDamage", "m_Instigator", "m_uiApplyDamageBehavior"],
+    "FHitRequest": ["m_Instigator", "m_HitBox", "m_uiApplyDamageBehavior", "m_vDamageDir",
+                    "m_AttackProperties", "m_bCanBeDefended"],
+    "FHitBox": ["m_HitRow", "m_CachedRow", "m_bCachedRowSetup"],
+    "FHitboxDataRow": ["m_bCanBeLethal", "m_bCanBreakStructure", "m_OnHitImpact", "m_OnGuardImpact",
+                       "m_OnDeflectImpact", "m_eHitType", "m_eAttackPower", "m_bParriable"],
+    "FHitImpact": ["m_bUseDamage", "m_fDamage", "m_fStructureDamage"],
+    "FHitDescription": ["m_Request", "m_Result", "m_ImpactResult"],
+    "FImpactResult": ["m_bIsValid", "m_fDamage", "m_bLethal", "m_HitImpact"],
+    "UAbilitySystemComponent": ["SpawnedAttributes"],
+    "UCharacterStatAttributeSet": ["GameDifficulty"],
+    "FGameplayAttributeData": ["BaseValue", "CurrentValue"],
 }
 
 SIZES = ["FUObjectItem", "UObjectBase", "FName", "FNameEntryAllocator", "FTransform", "FKConvexElem", "FKBoxElem", "FKSphereElem",
-         "FKSphylElem", "FKTaperedCapsuleElem", "FInstancedStaticMeshInstanceData"]
+         "FKSphylElem", "FKTaperedCapsuleElem", "FInstancedStaticMeshInstanceData", "FDamageInfos",
+         "FHitRequest", "FHitBox", "FHitboxDataRow", "FHitImpact", "FHitDescription", "FImpactResult"]
 
 # type -> bitfield members whose bit position/width are emitted.
 BITFIELDS = {

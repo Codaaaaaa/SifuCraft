@@ -19,7 +19,7 @@ Sifu 与 Minecraft 作为两个独立进程运行：
 | P2 | Minecraft 输入与位姿接管 Sifu 玩家 | 已通过 |
 | P3 | Sifu 地形碰撞导入 Minecraft 物理 | 已通过 |
 | P4 | 方块放置/破坏的渲染与碰撞闭环 | 已通过 |
-| P5 | 敌人代理与双向伤害 | 未开始 |
+| P5 | 敌人代理与双向伤害 | S0 基础普查已验证，敌人代理开发中 |
 
 ## 目录
 
@@ -63,6 +63,8 @@ Sifu 的玩家由 Minecraft 驱动：键鼠输入转给 Minecraft，Minecraft �
 Esc 永远交给 Sifu，F8 切换。每次交给 Minecraft 都是一个新的锚定纪元（anchor epoch），Minecraft 从角色当前所在位置和朝向继续，不会把角色拉回之前的位置。
 
 逐步上线由 `SifuCraft\stage`（0–6，6 = P4 方块）控制，`SifuCraft\no-hooks` 只保留只读探针，`SifuCraft\disabled` 完全停用。
+
+P5 的只读普查在 stage 0 也可运行：日志中的 `[combat-census]` 检查命中/生命组件与候选 Hook 槽位、反射参数、胶囊尺寸及难度生命倍率，并采样生命与池化状态变化。它不安装战斗 Hook、不调用伤害函数；`last-hit` 是最近一次命中的采样，不能用于统计每次伤害的执行次数。
 
 ## 地形碰撞（P3）
 
