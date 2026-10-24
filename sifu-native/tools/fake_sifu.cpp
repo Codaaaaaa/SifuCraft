@@ -4,7 +4,7 @@
 //   sifucraft_fake_sifu [seconds] [--collision <grid.scvx>] [--pawn X Y Z [--yaw DEG] [--hand-over]]
 //                       [--key CODE:FROM:TO]... [--button CODE:FROM:TO]... [--mouse DX:DY:AT]...
 //                       [--then AT X Y Z DEG]...
-//                       [--enemies | --enemy-scenario | --combat-scenario | --player-hit-scenario]
+//                       [--enemies | --enemy-scenario | --combat-scenario | --player-hit-scenario | --respawn-scenario]
 //     seconds: 0 or omitted = run until Ctrl+C
 //     --collision: also publish that grid file in the CollisionManifest, as the game does
 //     --pawn: a pawn standing still at (X, Y, Z) (Unreal cm, capsule centre) in the grid's map
@@ -32,6 +32,7 @@
 
 #include "bridge/sifu_bridge.h"
 #include "combat/damage_ledger.h"
+#include "input/anchor_request.h"
 #include "core/log.h"
 
 namespace {
@@ -154,6 +155,7 @@ int main(int argc, char** argv) {
     std::vector<PawnMove> moves;
     bool with_enemies = false, enemy_scenario = false, combat_scenario = false;
     bool player_hit_scenario = false;
+    bool respawn_scenario = false;
     struct MouseMove {
         double dx = 0, dy = 0;
         std::uint64_t at_ms = 0;
@@ -204,6 +206,8 @@ int main(int argc, char** argv) {
             with_enemies = combat_scenario = true;
         } else if (std::strcmp(argv[i], "--player-hit-scenario") == 0) {
             with_enemies = combat_scenario = player_hit_scenario = true;
+        } else if (std::strcmp(argv[i], "--respawn-scenario") == 0) {
+            with_enemies = combat_scenario = respawn_scenario = true;
         } else {
             seconds = std::atof(argv[i]);
         }
@@ -224,6 +228,7 @@ int main(int argc, char** argv) {
     bridge::SharedMapping test_mapping;
     if (player_hit_scenario && !test_mapping.Open(protocol::kMappingName, protocol::kMappingSize)) return 1;
     int hit_phase = 0;
+    bool saw_dead = false, sent_lethal = false, saw_respawn_pose = false;
     bridge::CollisionInfo grid;
     if (!grid_file.empty()) {
         if (!DescribeGridFile(grid_file, &grid)) {
@@ -268,6 +273,27 @@ int main(int argc, char** argv) {
             }
         }
         bridge.Tick(frame, now);
+        if (respawn_scenario && bridge.peer_connected()) {
+            const auto& mc = bridge.peer_state();
+            if (!saw_dead && (mc.flags & protocol::kMcDead)) {
+                saw_dead = true;
+                SC_LOG("[fake-respawn] MC death reported, pose=%d", (mc.flags & protocol::kMcHasPose) != 0);
+            }
+            if (mc.valid && input::SameScope(mc.sifu_session, bridge.session(), mc.world_generation, frame.world_generation) &&
+                input::WantsAnchor(mc.flags, mc.anchor_epoch, pawn.epoch)) {
+                pawn.epoch = input::NextEpoch(pawn.epoch);
+                SC_LOG("[fake-respawn] acknowledged anchor %u -> %u", mc.anchor_epoch, pawn.epoch);
+            }
+            if (saw_dead && !saw_respawn_pose && pawn.epoch > 1 && mc.anchor_epoch == pawn.epoch &&
+                (mc.flags & protocol::kMcHasPose) && !(mc.flags & (protocol::kMcDead | protocol::kMcRequestAnchor))) {
+                saw_respawn_pose = true;
+                const float dx = mc.player_location.x - pawn.x, dy = mc.player_location.y - pawn.y;
+                const float dz = mc.player_location.z - (pawn.z - frame.capsule_half_height);
+                SC_LOG("[fake-respawn] pose resumed epoch=%u error=(%.2f,%.2f,%.2f) cm", pawn.epoch, dx, dy, dz);
+                protocol::PlayerHitPayload old{101, 1, 9000, protocol::kHitCanDefend, frame.world_generation, 1, 1, 0};
+                bridge.SendPlayerHit(old); // a delayed old-life lethal event must not touch the respawned player
+            }
+        }
         bridge.DrainEnemyDamage(&damage_events);
         damage_ledger.SetSession(bridge.peer_connected() ? bridge.peer_session() : 0);
         for (const auto& event : damage_events) {
@@ -332,6 +358,11 @@ int main(int argc, char** argv) {
         if (pawn.hand_over && !handed_over_at && bridge.peer_connected() && bridge.peer_state().anchor_epoch == 1) {
             handed_over_at = now;
             SC_LOG("[fake] minecraft has taken the player (anchor epoch 1)");
+        }
+        if (respawn_scenario && handed_over_at && !sent_lethal && now - handed_over_at >= 1000) {
+            protocol::PlayerHitPayload lethal{101, 1, 9000, protocol::kHitCanDefend, frame.world_generation, pawn.epoch, 1, 0};
+            sent_lethal = bridge.SendPlayerHit(lethal);
+            if (sent_lethal) SC_LOG("[fake-respawn] sent lethal hit at epoch %u", pawn.epoch);
         }
         for (MouseMove& move : mouse) {
             if (!handed_over_at || move.done || now - handed_over_at < move.at_ms) continue;

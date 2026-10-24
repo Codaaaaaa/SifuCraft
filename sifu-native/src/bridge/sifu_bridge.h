@@ -45,6 +45,8 @@ struct McState {
     float camera_fov = 0.0f;
     std::uint32_t anchor_epoch = 0;  // the SifuSnapshot.anchor_epoch these fields are anchored to
     std::uint32_t collision_generation = 0;  // the CollisionManifest.generation Minecraft has loaded
+    std::uint64_t sifu_session = 0;
+    std::uint32_t world_generation = 0;
 };
 
 // The voxel grid Sifu currently publishes (protocol::CollisionManifest).

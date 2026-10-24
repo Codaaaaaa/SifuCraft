@@ -13,14 +13,21 @@ public record McState(
         SifuFrame.Vec3 cameraLocation,
         SifuFrame.Vec3 cameraRotation,
         float cameraFov,
-        int anchorEpoch) {
+        int anchorEpoch,
+        long sifuSession,
+        int worldGeneration) {
 
     public static final McState NOT_READY = new McState(0, 0, SifuFrame.Vec3.ZERO, SifuFrame.Vec3.ZERO,
-            SifuFrame.Vec3.ZERO, SifuFrame.Vec3.ZERO, SifuFrame.Vec3.ZERO, 0, 0);
+            SifuFrame.Vec3.ZERO, SifuFrame.Vec3.ZERO, SifuFrame.Vec3.ZERO, 0, 0, 0, 0);
 
     /** In a world, no pose yet. */
     public static McState ready() {
         return new McState(Protocol.MC_READY, 0, SifuFrame.Vec3.ZERO, SifuFrame.Vec3.ZERO, SifuFrame.Vec3.ZERO,
-                SifuFrame.Vec3.ZERO, SifuFrame.Vec3.ZERO, 0, 0);
+                SifuFrame.Vec3.ZERO, SifuFrame.Vec3.ZERO, 0, 0, 0, 0);
+    }
+
+    public static McState withoutPose(int flags, int epoch, long session, int world) {
+        return new McState(flags & ~Protocol.MC_HAS_POSE, 0, SifuFrame.Vec3.ZERO, SifuFrame.Vec3.ZERO,
+                SifuFrame.Vec3.ZERO, SifuFrame.Vec3.ZERO, SifuFrame.Vec3.ZERO, 0, epoch, session, world);
     }
 }

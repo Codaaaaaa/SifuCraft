@@ -28,6 +28,7 @@ public final class EnemyFrameTest {
         }
     }
     public static void main(String[] args) {
+        RespawnHandshakeTest.run();
         byte[] bytes = table();
         EnemyFrame frame = EnemyFrame.decode(1234, MemorySegment.ofArray(bytes), 5678);
         EnemyFrame.Entry e = frame.entries().getFirst();

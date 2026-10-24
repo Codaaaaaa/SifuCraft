@@ -235,7 +235,7 @@ void CombatCensus::Update(std::uintptr_t base, std::uintptr_t world, std::uint32
         difficulty_ = -1;
         logged_changes_ = 0;
         next_survey_ms_ = next_sample_ms_ = 0;
-        SC_LOG("[combat-census] reset world=%u (read-only; no combat hooks or calls)", generation);
+        SC_LOG("[combat-census] reset world=%u (read-only census)", generation);
     }
     if (!world || now_ms < next_sample_ms_) return;
     next_sample_ms_ = now_ms + 100;

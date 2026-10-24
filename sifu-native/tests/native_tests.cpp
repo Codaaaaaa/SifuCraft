@@ -21,6 +21,7 @@
 #include "generated/sifu_build.g.h"
 #include "hooks/vtable_hook.h"
 #include "input/input_router.h"
+#include "input/anchor_request.h"
 #include "input/key_map.h"
 #include "probe/combat_sample.h"
 #include "ue/transform.h"
@@ -707,6 +708,19 @@ void TestDataTableRows() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    {
+        using namespace sifucraft;
+        const auto request = protocol::kMcReady | protocol::kMcRequestAnchor;
+        std::uint32_t epoch = 7;
+        Expect(input::WantsAnchor(request, 7, epoch), "scoped respawn request asks for a new anchor");
+        epoch = input::NextEpoch(epoch);
+        Expect(!input::WantsAnchor(request, 7, epoch), "repeated snapshot cannot acknowledge respawn twice");
+        Expect(!input::WantsAnchor(request | protocol::kMcDead, epoch, epoch) &&
+               !input::WantsAnchor(request | protocol::kMcHasPose, epoch, epoch), "dead or old-pose snapshots cannot complete a respawn");
+        Expect(input::NextEpoch(0xffffffffu) == 1, "anchor wrap skips the invalid zero epoch");
+        Expect(input::SameScope(42, 42, 3, 3) && !input::SameScope(41, 42, 3, 3) && !input::SameScope(42, 42, 2, 3),
+               "matching epoch never makes an old Sifu lifetime or world a valid pose/request");
+    }
     {
         using namespace sifucraft;
         combat::DamageLedger ledger;

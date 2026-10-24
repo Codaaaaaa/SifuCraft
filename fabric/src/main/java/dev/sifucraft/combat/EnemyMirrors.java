@@ -24,19 +24,19 @@ public final class EnemyMirrors {
     private static int loggedDetails;
 
     private EnemyMirrors() {}
-    private record View(EnemyFrame enemies, MapPlacement placement, SifuFrame player) {}
+    private record View(EnemyFrame enemies, MapPlacement placement, SifuFrame player, boolean playerReady) {}
 
     /** Called on the bridge/client thread. A mismatch immediately removes the old world's targets. */
-    public static void offer(SifuFrame frame, EnemyFrame enemies, MapPlacement placement) {
+    public static void offer(SifuFrame frame, EnemyFrame enemies, MapPlacement placement, boolean playerReady) {
         requested = frame != null && frame.hasPawn() && enemies != null && placement != null &&
                 enemies.worldGeneration() != 0 && enemies.worldGeneration() == frame.worldGeneration()
-                ? new View(enemies, placement, frame) : null;
+                ? new View(enemies, placement, frame, playerReady) : null;
     }
 
     /** Server thread: only a current proxy under MC ownership can produce a damage command. */
     public static CombatHits.Scope damageScope(EnemyProxy proxy) {
         View view = requested;
-        if (view == null || !view.player.minecraftOwnsInput() || view.player.anchorEpoch() == 0 ||
+        if (view == null || !view.playerReady || !view.player.minecraftOwnsInput() || view.player.anchorEpoch() == 0 ||
                 System.currentTimeMillis() - view.enemies.receivedMs() > STALE_MS ||
                 session != view.enemies.session() || world != view.enemies.worldGeneration() ||
                 proxies.get(proxy.sifuKey()) != proxy) return null;
@@ -53,7 +53,7 @@ public final class EnemyMirrors {
     /** Server thread recheck, including ownership changes while an incoming hit was in flight. */
     public static boolean acceptsHit(long expectedSession, int expectedWorld, int epoch) {
         View view = requested;
-        return view != null && view.player.minecraftOwnsInput() && view.player.anchorEpoch() == epoch &&
+        return view != null && view.playerReady && view.player.minecraftOwnsInput() && view.player.anchorEpoch() == epoch &&
                 session == expectedSession && view.enemies.session() == expectedSession && world == expectedWorld &&
                 view.player.worldGeneration() == expectedWorld && System.currentTimeMillis() - view.enemies.receivedMs() <= STALE_MS;
     }

@@ -9,7 +9,7 @@ public final class Protocol {
     private Protocol() {}
 
     public static final int MAGIC = 0x52434653; // "SFCR"
-    public static final int VERSION = 9;
+    public static final int VERSION = 11;
     public static final String MAPPING_NAME = "Local\\SifuCraft.Bridge";
     public static final int MAPPING_SIZE = 0x10000;
 
@@ -59,6 +59,8 @@ public final class Protocol {
     public static final int MC_SNEAKING = 1 << 3;
     public static final int MC_SPRINTING = 1 << 4;
     public static final int MC_FLYING = 1 << 5;
+    public static final int MC_REQUEST_ANCHOR = 1 << 6;
+    public static final int MC_DEAD = 1 << 7;
 
     public static final int HEADER_OFFSET = 0x0000;
     public static final int SIFU_STATUS_OFFSET = 0x0040;
@@ -141,6 +143,8 @@ public final class Protocol {
         public static final int CAMERA_FOV = 100;
         public static final int ANCHOR_EPOCH = 104;
         public static final int COLLISION_GENERATION = 108;
+        public static final int SIFU_SESSION = 112;
+        public static final int WORLD_GENERATION = 120;
     }
 
     /** CollisionManifest (seqlock, written by Sifu): the current voxel grid file. */
@@ -282,6 +286,8 @@ public final class Protocol {
         McSnap.CAMERA_FOV,
         McSnap.ANCHOR_EPOCH,
         McSnap.COLLISION_GENERATION,
+        McSnap.SIFU_SESSION,
+        McSnap.WORLD_GENERATION,
         SIFU_TO_MC_RING_OFFSET,
         MC_TO_SIFU_RING_OFFSET,
         Ring.SIZE,

@@ -15,6 +15,7 @@ import dev.sifucraft.combat.EnemyProxy;
 import dev.sifucraft.combat.CombatHits;
 import dev.sifucraft.combat.PlayerDamage;
 import dev.sifucraft.bridge.PlayerHit;
+import dev.sifucraft.bridge.RespawnHandshake;
 import dev.sifucraft.bridge.DamageResult;
 import java.nio.file.Path;
 import java.util.HashSet;
@@ -79,6 +80,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private InputInjector input;
     private CollisionLoader collision;
     private final UnrealSpace space = new UnrealSpace();
+    private final RespawnHandshake respawn = new RespawnHandshake();
     private final MapSlots slots = new MapSlots(message -> LOG.info("[space] {}", message));
     private int teleportEpoch;
     private int teleportWorld;
@@ -132,6 +134,7 @@ public final class SifuCraftClient implements ClientModInitializer {
             public void onPeerConnection(boolean connected, String reason) {
                 if (connected) return;
                 input.setOwner(false);
+                space.reset(); teleportEpoch = 0; lastGround = null;
                 if ("peer closing".equals(reason) && Boolean.getBoolean("sifucraft.exitWithSifu")) {
                     LOG.info("[dev] Sifu went away, stopping the client");
                     minecraft.stop();
@@ -156,7 +159,8 @@ public final class SifuCraftClient implements ClientModInitializer {
             CombatCheck check = new CombatCheck();
             ServerTickEvents.END_SERVER_TICK.register(check::tick);
         }
-        if (Boolean.getBoolean("sifucraft.playerDamageTest") || Boolean.getBoolean("sifucraft.playerHitSelfTest")) {
+        if (Boolean.getBoolean("sifucraft.playerDamageTest") || Boolean.getBoolean("sifucraft.playerHitSelfTest") ||
+                Boolean.getBoolean("sifucraft.respawnSelfTest")) {
             PlayerHitCheck check = new PlayerHitCheck();
             ServerTickEvents.END_SERVER_TICK.register(check::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
@@ -197,7 +201,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         SifuFrame previous = bridge.latest();
         collision.update(bridge.collisionManifest());
         bridge.setLoadedCollision(collision.loadedGeneration());
-        respawnIfDead();
+        respawnIfDead(now, previous);
         closeInvisibleScreens();
         placeIfNeeded(previous);
         publishCollision();
@@ -208,9 +212,10 @@ public final class SifuCraftClient implements ClientModInitializer {
         SifuFrame frame = bridge.latest();
         publishEnemies(frame);
         CombatHits.pump(bridge);
-        PlayerDamage.pump(bridge, minecraft.getSingleplayerServer(), minecraft.player == null ? null : minecraft.player.getUUID());
+        PlayerDamage.pump(bridge, minecraft.getSingleplayerServer(), minecraft.player == null ? null : minecraft.player.getUUID(),
+                minecraft.player, respawn.ready() && minecraft.player != null && minecraft.player.isAlive());
         if (frame == null) space.reset();
-        input.setOwner(frame != null && frame.minecraftOwnsInput());
+        input.setOwner(frame != null && frame.minecraftOwnsInput() && respawn.ready());
         input.applyMotion(frame);
         if (now >= nextStatusMs) {
             nextStatusMs = now + STATUS_EVERY_MS;
@@ -228,7 +233,8 @@ public final class SifuCraftClient implements ClientModInitializer {
     private void placeIfNeeded(SifuFrame frame) {
         Player player = minecraft.player;
         IntegratedServer server = minecraft.getSingleplayerServer();
-        if (frame == null || !frame.hasPawn() || frame.anchorEpoch() == 0 || player == null || server == null
+        if (frame == null || !frame.hasPawn() || frame.anchorEpoch() == 0 || player == null || server == null ||
+                !player.isAlive() || !respawn.mayPlace()
                 || space.anchoredTo(frame)) {
             return;
         }
@@ -351,16 +357,34 @@ public final class SifuCraftClient implements ClientModInitializer {
         publishedBlocksVersion = version;
     }
 
-    /**
-     * Health is not bridged yet (P5): a player that dies in Minecraft while attached to Sifu (the void
-     * under a level, a save left there) respawns at once, and the next hand-over puts it back.
-     */
-    private void respawnIfDead() {
-        if (minecraft.player == null || !bridge.peerConnected() || !minecraft.player.isDeadOrDying()) return;
-        if (minecraft.gui.screen() instanceof DeathScreen) minecraft.gui.setScreen(null);
-        minecraft.player.respawn();
-        teleportEpoch = 0; // hand the current epoch over again once alive
-        LOG.info("[space] the Minecraft player died: respawned");
+    /** Keep old-life poses out of the bridge until respawn and a fresh Sifu anchor have landed. */
+    private void respawnIfDead(long now, SifuFrame frame) {
+        var player = minecraft.player;
+        boolean dead = player != null && player.isDeadOrDying();
+        var action = respawn.tick(now, bridge.peerConnected(), bridge.peerSession(), frame, player != null, dead,
+                frame != null && space.anchoredTo(frame));
+        if (dead && bridge.peerConnected() && minecraft.gui.screen() instanceof DeathScreen) minecraft.gui.setScreen(null);
+        switch (action) {
+            case DIED -> {
+                space.reset(); teleportEpoch = 0; lastGround = null;
+                input.setOwner(false);
+                LOG.info("[respawn] Minecraft player died; waiting 1 s, pose and damage suspended");
+            }
+            case RESPAWN -> {
+                if (player != null) player.respawn();
+                LOG.info("[respawn] sent vanilla respawn request");
+            }
+            case REQUEST -> {
+                space.reset(); teleportEpoch = 0; lastGround = null;
+                LOG.info("[respawn] requesting new anchor after epoch {}", respawn.requestEpoch());
+            }
+            case ACKNOWLEDGED -> {
+                space.reset(); teleportEpoch = 0;
+                LOG.info("[respawn] Sifu acknowledged new epoch {}; awaiting landing", frame.anchorEpoch());
+            }
+            case LANDED -> LOG.info("[respawn] completed at epoch {}; pose, input and damage resumed", frame.anchorEpoch());
+            default -> { }
+        }
     }
 
     /**
@@ -441,14 +465,17 @@ public final class SifuCraftClient implements ClientModInitializer {
     private void publishEnemies(SifuFrame frame) {
         IntegratedServer server = minecraft.getSingleplayerServer();
         if (server == null || frame == null || !frame.hasPawn()) {
-            EnemyMirrors.offer(null, null, null);
+            EnemyMirrors.offer(null, null, null, false);
             return;
         }
         slots.open(server.getWorldPath(LevelResource.ROOT));
-        EnemyMirrors.offer(frame, bridge.enemies(), slots.placement(UnrealSpace.mapName(frame.worldPath())));
+        EnemyMirrors.offer(frame, bridge.enemies(), slots.placement(UnrealSpace.mapName(frame.worldPath())),
+                respawn.ready() && minecraft.player != null && minecraft.player.isAlive() && space.anchoredTo(frame));
     }
 
     private McState currentState(SifuFrame frame) {
+        if (!respawn.ready()) return McState.withoutPose(respawn.flags(), respawn.requestEpoch(),
+                bridge.peerSession(), frame == null ? 0 : frame.worldGeneration());
         Player player = minecraft.player;
         if (minecraft.level == null || player == null) return McState.NOT_READY;
         if (frame == null || !space.anchoredTo(frame)) return McState.ready();
@@ -473,7 +500,7 @@ public final class SifuCraftClient implements ClientModInitializer {
                 space.toUnreal(eye.x, eye.y, eye.z),
                 UnrealSpace.rotationToUnreal(cameraPitch, cameraYaw),
                 minecraft.options.fov().get(),
-                space.anchorEpoch());
+                space.anchorEpoch(), bridge.peerSession(), frame.worldGeneration());
     }
 
     private static int perspective(CameraType type) {

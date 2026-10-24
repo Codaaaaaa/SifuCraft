@@ -17,6 +17,8 @@ public final class PlayerDamage {
     private static final ArrayDeque<Pending> incoming = new ArrayDeque<>(); // bridge thread
     private static final AtomicInteger scheduled = new AtomicInteger();
     private static final AtomicInteger logged = new AtomicInteger();
+    private record Life(Object player, boolean ready) {}
+    private static volatile Life currentLife = new Life(null, false);
     public record Applied(long eventId, float before, float after, boolean accepted) {}
     private static java.util.function.Consumer<Applied> diagnostic; // server-thread opt-in check
     public static void diagnostic(java.util.function.Consumer<Applied> listener) { diagnostic = listener; }
@@ -27,14 +29,15 @@ public final class PlayerDamage {
         else LOG.warn("[player-hits] incoming queue full; discarded event {}", id);
     }
 
-    public static void pump(McBridge bridge, MinecraftServer server, UUID playerId) {
+    public static void pump(McBridge bridge, MinecraftServer server, UUID playerId, Object lifeToken, boolean ready) {
+        currentLife = new Life(lifeToken, ready);
         while (!incoming.isEmpty()) {
             Pending pending = incoming.removeFirst();
             PlayerHit hit = pending.hit;
             var frame = bridge.latest();
             if (!bridge.peerConnected() || frame == null || !frame.minecraftOwnsInput() ||
                     pending.session != bridge.peerSession() || frame.worldGeneration() != hit.worldGeneration() ||
-                    frame.anchorEpoch() != hit.anchorEpoch() || server == null || playerId == null ||
+                    frame.anchorEpoch() != hit.anchorEpoch() || !ready || server == null || playerId == null ||
                     System.nanoTime() - pending.receivedNs > 2_000_000_000L || scheduled.get() >= 128) {
                 if (logged.getAndIncrement() < 200) LOG.info("[player-hits] discarded stale/unowned event={}", pending.id);
                 continue;
@@ -43,7 +46,8 @@ public final class PlayerDamage {
             server.execute(() -> {
                 try {
                     var player = server.getPlayerList().getPlayer(playerId);
-                    if (player == null || !player.isAlive() || System.nanoTime() - pending.receivedNs > 2_000_000_000L ||
+                    Life life = currentLife;
+                    if (player == null || life.player != lifeToken || !life.ready || !player.isAlive() || System.nanoTime() - pending.receivedNs > 2_000_000_000L ||
                             !EnemyMirrors.acceptsHit(pending.session, hit.worldGeneration(), hit.anchorEpoch())) {
                         if (logged.getAndIncrement() < 200) LOG.info("[player-hits] server discarded stale/dead event={}", pending.id);
                         return;

@@ -35,7 +35,7 @@ struct Context {
     ue::ObjectIdentity identity;
     std::uint32_t generation = 0, epoch = 0;
     std::uint64_t session = 0, updated_ms = 0;
-    bool active = false;
+    bool active = false, can_forward = false;
     std::vector<Enemies::Target> targets;
 };
 Context g_context;
@@ -51,7 +51,7 @@ std::uintptr_t CurrentPawn() {
 }
 
 bool Active(std::uintptr_t pawn, Context* context) {
-    if (!pawn || input::Router().owner() != protocol::InputOwner::Minecraft || !hooks::PoseActive()) return false;
+    if (!pawn || input::Router().owner() != protocol::InputOwner::Minecraft) return false;
     AcquireSRWLockShared(&g_lock);
     *context = g_context;
     ReleaseSRWLockShared(&g_lock);
@@ -122,7 +122,7 @@ bool ObserveHit(void* component, const void* result, const void* request_ptr) {
         }
         if (active) {
             g_cancelled.fetch_add(1, std::memory_order_relaxed);
-            if (valid && resolved > 0 && resolved <= 1000000 && (hit.behavior & 1)) {
+            if (context.can_forward && hooks::PoseActive() && valid && resolved > 0 && resolved <= 1000000 && (hit.behavior & 1)) {
                 protocol::PlayerHitPayload payload{};
                 const auto target = std::find_if(context.targets.begin(), context.targets.end(), [&](const auto& t) {
                     return t.actor == attacker && t.identity == identity;
@@ -197,11 +197,11 @@ void ObserveHealthDamage(std::uintptr_t health, std::uintptr_t infos, float befo
            static_cast<unsigned long long>(g_last_ms ? GetTickCount64() - g_last_ms : 0));
 }
 
-void UpdateContext(std::uintptr_t world, std::uint32_t generation, std::uintptr_t pawn, bool active,
+void UpdateContext(std::uintptr_t world, std::uint32_t generation, std::uintptr_t pawn, bool active, bool can_forward,
                    std::uint32_t epoch, std::uint64_t session, const std::vector<Enemies::Target>& targets) {
     const auto identity = ue::IdentityOf(pawn);
     AcquireSRWLockExclusive(&g_lock);
-    g_context = {world, pawn, identity, generation, epoch, session, GetTickCount64(), active && identity.valid(), targets};
+    g_context = {world, pawn, identity, generation, epoch, session, GetTickCount64(), active && identity.valid(), can_forward, targets};
     ReleaseSRWLockExclusive(&g_lock);
 }
 

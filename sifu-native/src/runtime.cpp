@@ -24,6 +24,7 @@
 #include "hooks/game_hooks.h"
 #include "hooks/hook_plan.h"
 #include "input/input_router.h"
+#include "input/anchor_request.h"
 #include "collision/builder.h"
 #include "collision/components.h"
 #include "collision/shapes.h"
@@ -130,17 +131,19 @@ float HorizontalFov(float vertical_degrees, float aspect) {
 }
 
 // Minecraft's pose and camera are usable once Minecraft re-anchored to the current hand-over.
-bool McAnchoredTo(std::uint32_t epoch) {
+bool McAnchoredTo(std::uint32_t epoch, std::uint32_t generation) {
     const bridge::McState& mc = g_bridge.peer_state();
-    return epoch != 0 && mc.valid && (mc.flags & protocol::kMcHasPose) && mc.anchor_epoch == epoch;
+    return epoch != 0 && mc.valid && (mc.flags & protocol::kMcHasPose) &&
+        !(mc.flags & (protocol::kMcDead | protocol::kMcRequestAnchor)) && mc.anchor_epoch == epoch &&
+        input::SameScope(mc.sifu_session, g_bridge.session(), mc.world_generation, generation);
 }
 
 // H4's input (stage >= 4): Minecraft's camera replaces Sifu's while Minecraft owns the input.
-void UpdateCameraOverride(std::uint32_t epoch) {
+void UpdateCameraOverride(std::uint32_t epoch, std::uint32_t generation) {
     static bool was_active = false;
     const bridge::McState& mc = g_bridge.peer_state();
     hooks::CameraOverride view;
-    view.active = input::Router().owner() == InputOwner::Minecraft && McAnchoredTo(epoch);
+    view.active = input::Router().owner() == InputOwner::Minecraft && McAnchoredTo(epoch, generation);
     if (view.active) {
         view.location = {mc.camera_location.x, mc.camera_location.y, mc.camera_location.z};
         view.rotation = {mc.camera_rotation.pitch, mc.camera_rotation.yaw, mc.camera_rotation.roll};
@@ -180,12 +183,12 @@ std::vector<std::uintptr_t> PlayerImpostorsNear(std::uintptr_t pawn, const proto
 
 // H1's input (stage >= 5): Minecraft's player pose drives the Sifu pawn while Minecraft owns the
 // input. Minecraft publishes feet; the pawn's location is its capsule centre.
-void UpdatePoseOverride(std::uintptr_t pawn, float capsule_half_height, std::uint32_t epoch) {
+void UpdatePoseOverride(std::uintptr_t pawn, float capsule_half_height, std::uint32_t epoch, std::uint32_t generation) {
     static bool was_active = false;
     const bridge::McState& mc = g_bridge.peer_state();
     hooks::PoseOverride pose;
     pose.active = hooks::PoseHooksReady() && input::Router().owner() == InputOwner::Minecraft &&
-                  McAnchoredTo(epoch) && capsule_half_height > 0.0f;
+                  McAnchoredTo(epoch, generation) && capsule_half_height > 0.0f;
     std::vector<std::uintptr_t> impostors;
     if (pose.active) {
         pose.location = {mc.player_location.x, mc.player_location.y, mc.player_location.z + capsule_half_height};
@@ -265,7 +268,7 @@ class Ownership {
 public:
     // `minecraft_has_collision`: Minecraft has loaded a collision grid of the current world.
     void Update(std::uintptr_t world, const probe::PlayerObjects& player, const protocol::Vec3& pawn_location,
-                std::uint64_t now_ms, bool minecraft_has_collision) {
+                std::uint64_t now_ms, bool minecraft_has_collision, std::uint32_t generation, bool allow_reanchor) {
         collision_ready_ = minecraft_has_collision;
         if (input::Router().TakeToggleRequest()) {
             enabled_ = !enabled_;
@@ -278,9 +281,23 @@ public:
                    DescribeComponent(signals.attached_to).c_str());
             signals_ = signals;
         }
-        if (player.pawn != pawn_) {
+        const auto identity = ue::IdentityOf(player.pawn);
+        if (player.pawn != pawn_ || identity != pawn_identity_ || generation != world_generation_) {
             pawn_ = player.pawn;
+            pawn_identity_ = identity;
+            world_generation_ = generation;
             pawn_since_ms_ = now_ms;
+            if (input::Router().owner() == InputOwner::Minecraft) {
+                epoch_ = input::NextEpoch(epoch_);
+                SC_LOG("[input] invalidated old pose after world/pawn change (epoch %u)", epoch_);
+            }
+        }
+        const auto& mc = g_bridge.peer_state();
+        if (allow_reanchor && world && player.pawn && g_bridge.peer_connected() && mc.valid &&
+            input::SameScope(mc.sifu_session, g_bridge.session(), mc.world_generation, generation) &&
+            input::WantsAnchor(mc.flags, mc.anchor_epoch, epoch_)) {
+            epoch_ = input::NextEpoch(epoch_);
+            SC_LOG("[respawn] acknowledged anchor request %u -> %u world=%u", mc.anchor_epoch, epoch_, generation);
         }
         now_ms_ = now_ms;
         UpdateDriving(player.pawn != 0, pawn_location, now_ms);
@@ -288,7 +305,7 @@ public:
         const char* blocked = BlockReason(world, player);
         const InputOwner desired = blocked ? InputOwner::Sifu : InputOwner::Minecraft;
         if (desired != input::Router().owner()) {
-            if (desired == InputOwner::Minecraft) ++epoch_;
+            if (desired == InputOwner::Minecraft) epoch_ = input::NextEpoch(epoch_);
             input::Router().SetOwner(desired);
             g_bridge.SendOwnerChanged(desired);
             SC_LOG("[input] owner -> %s%s%s (epoch %u)", desired == InputOwner::Minecraft ? "MINECRAFT" : "sifu",
@@ -365,6 +382,8 @@ private:
     std::string last_reason_;
     ScriptSignals signals_;
     std::uintptr_t pawn_ = 0;
+    ue::ObjectIdentity pawn_identity_;
+    std::uint32_t world_generation_ = 0;
     std::uint64_t pawn_since_ms_ = 0;
     std::uint64_t now_ms_ = 0;
     bool driving_ = false;
@@ -647,7 +666,7 @@ void Run(std::uintptr_t image_base) {
             hooks::Maintain(GetTickCount64());
             if (settings.stage >= 3) {
                 ownership.Update(world, player, frame.player_location, GetTickCount64(),
-                                 collision_schedule.MinecraftHasGrid(generation));
+                                 collision_schedule.MinecraftHasGrid(generation), generation, settings.stage >= 7);
                 frame.anchor_epoch = ownership.epoch();
                 drained.events.clear();
                 input::Router().Drain(&drained);
@@ -672,10 +691,10 @@ void Run(std::uintptr_t image_base) {
             blocks::Update(world, MapName(world_path), g_bridge.blocks());
         }
         if (settings.stage >= 4) {
-            UpdateCameraOverride(ownership.epoch());
+            UpdateCameraOverride(ownership.epoch(), generation);
             if (world) hooks::camera_fade::Resolve();
         }
-        if (settings.stage >= 5) UpdatePoseOverride(player.pawn, frame.capsule_half_height, ownership.epoch());
+        if (settings.stage >= 5) UpdatePoseOverride(player.pawn, frame.capsule_half_height, ownership.epoch(), generation);
         if (settings.stage >= 7) {
             combat::damage::InstallObserver(image_base, player.pawn);
             combat::player_hits::InstallObserver(image_base, player.pawn);
@@ -683,8 +702,9 @@ void Run(std::uintptr_t image_base) {
                 g_bridge.peer_connected() && frame.input_owner == InputOwner::Minecraft && hooks::PoseActive(),
                 ownership.epoch(), g_bridge.peer_connected() ? g_bridge.peer_session() : 0, enemies.targets());
             combat::player_hits::UpdateContext(world, generation, player.pawn,
-                g_bridge.peer_connected() && frame.input_owner == InputOwner::Minecraft && hooks::PoseActive(),
-                ownership.epoch(), g_bridge.peer_connected() ? g_bridge.peer_session() : 0, enemies.targets());
+                g_bridge.peer_connected() && frame.input_owner == InputOwner::Minecraft,
+                hooks::PoseActive() && McAnchoredTo(ownership.epoch(), generation), ownership.epoch(),
+                g_bridge.peer_connected() ? g_bridge.peer_session() : 0, enemies.targets());
             g_bridge.DrainEnemyDamage(&damage_events);
             for (const auto& event : damage_events) combat::damage::Submit(event);
             if (pending_damage_replies.size() < 512) {
@@ -708,7 +728,7 @@ void Run(std::uintptr_t image_base) {
                 const auto& hit = pending_player_hits.front();
                 if (!g_bridge.peer_connected() || hit.session != g_bridge.peer_session() ||
                     frame.input_owner != InputOwner::Minecraft || hit.payload.world_generation != generation ||
-                    hit.payload.anchor_epoch != ownership.epoch() || GetTickCount64() - hit.created_ms > 2000) {
+                    hit.payload.anchor_epoch != ownership.epoch() || !McAnchoredTo(ownership.epoch(), generation) || GetTickCount64() - hit.created_ms > 2000) {
                     if (logged_player_hits++ < 200) SC_LOG("[player-hits] discarded queued hit after scope change or timeout");
                     pending_player_hits.pop_front(); continue;
                 }

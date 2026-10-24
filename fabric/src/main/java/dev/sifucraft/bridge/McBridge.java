@@ -606,6 +606,8 @@ public final class McBridge implements AutoCloseable {
         s.set(JAVA_FLOAT, McSnap.CAMERA_FOV, state.cameraFov());
         s.set(JAVA_INT, McSnap.ANCHOR_EPOCH, state.anchorEpoch());
         s.set(JAVA_INT, McSnap.COLLISION_GENERATION, loadedCollision);
+        s.set(JAVA_LONG, McSnap.SIFU_SESSION, state.sifuSession());
+        s.set(JAVA_INT, McSnap.WORLD_GENERATION, state.worldGeneration());
         LONG.setRelease(s, (long) McSnap.SEQ, start + 2);
     }
 

@@ -362,6 +362,8 @@ void SifuBridge::ReadPeerSnapshot() {
         peer_state_.camera_fov = copy.camera_fov;
         peer_state_.anchor_epoch = copy.anchor_epoch;
         peer_state_.collision_generation = copy.collision_generation;
+        peer_state_.sifu_session = copy.sifu_session;
+        peer_state_.world_generation = copy.world_generation;
         return;
     }
 }

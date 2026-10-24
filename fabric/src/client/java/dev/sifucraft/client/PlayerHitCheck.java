@@ -2,9 +2,11 @@ package dev.sifucraft.client;
 
 import dev.sifucraft.combat.EnemyMirrors;
 import dev.sifucraft.combat.PlayerDamage;
+import dev.sifucraft.combat.CombatHits;
 import java.util.ArrayList;
 import java.util.UUID;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.gamerules.GameRules;
@@ -21,15 +23,21 @@ final class PlayerHitCheck {
     private float oldHealth, oldAbsorption;
     private int ticks;
     private boolean done;
+    private int initialEntityId, landedTicks;
+    private ServerPlayer initialPlayer;
+    private long deadAt;
     private final ArrayList<PlayerDamage.Applied> applied = new ArrayList<>();
 
     void tick(MinecraftServer server) {
         boolean selfTest = Boolean.getBoolean("sifucraft.playerHitSelfTest");
-        if (selfTest && EnemyMirrors.testTarget(101) == null) return;
+        boolean respawnTest = Boolean.getBoolean("sifucraft.respawnSelfTest");
+        if ((selfTest || respawnTest) && EnemyMirrors.testTarget(101) == null) return;
         if (server.getPlayerList().getPlayers().isEmpty()) return;
         var player = server.getPlayerList().getPlayers().getFirst();
         if (playerId == null) {
             playerId = player.getUUID(); oldMode = player.gameMode(); oldDifficulty = server.overworld().getDifficulty();
+            initialEntityId = player.getId();
+            initialPlayer = player;
             oldHealth = player.getHealth(); oldAbsorption = player.getAbsorptionAmount();
             var rules = server.getGameRules();
             oldKeep = rules.get(GameRules.KEEP_INVENTORY); oldRegen = rules.get(GameRules.NATURAL_HEALTH_REGENERATION);
@@ -52,6 +60,21 @@ final class PlayerHitCheck {
             PlayerDamage.diagnostic(null);
             LOG.info("[player-hit-test] PASS: native PlayerHit wire -> vanilla mobAttack; 20->18->18->14, " +
                     "duplicate suppressed, stale world/epoch and NaN rejected; applications={}", applied);
+        }
+        if (respawnTest && !done) {
+            if (!player.isAlive() && deadAt == 0) deadAt = System.currentTimeMillis();
+            var target = EnemyMirrors.testTarget(101);
+            var scope = target == null ? null : CombatHits.canCapture(target) ? EnemyMirrors.damageScope(target) : null;
+            if (deadAt != 0 && player.isAlive() && player != initialPlayer && scope != null && scope.epoch() > 1) {
+                if (++landedTicks == 40) {
+                    if (System.currentTimeMillis() - deadAt < 900 || Math.abs(player.getHealth() - 20) > 0.001f) {
+                        throw new AssertionError("respawn delay or old-life hit check failed: health=" + player.getHealth());
+                    }
+                    done = true;
+                    LOG.info("[respawn-test] PASS: delayed vanilla respawn, player object replaced (id {}->{}), new epoch={}, health=20; old-life hit rejected",
+                            initialEntityId, player.getId(), scope.epoch());
+                }
+            }
         }
     }
 

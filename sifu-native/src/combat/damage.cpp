@@ -59,8 +59,8 @@ using InternalDamageFn = void (*)(void*, void*);
 
 void ObserveDamage(void* health, void* infos) {
     if (player_hits::BlockHealthDamage(reinterpret_cast<std::uintptr_t>(health), reinterpret_cast<std::uintptr_t>(infos))) return;
-    // S2 never suppresses damage, especially the local player's. The shared vtable is filtered
-    // against the one health component whose MC event is currently being applied.
+    // Enemy observation is filtered against the one health component whose MC event is being
+    // applied. Local player protection above uses the separate ownership/lifecycle gate.
     if (g_application && reinterpret_cast<std::uintptr_t>(health) == g_application->health) {
         ++g_application->calls;
         g_observed.fetch_add(1, std::memory_order_relaxed);

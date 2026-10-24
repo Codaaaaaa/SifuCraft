@@ -26,7 +26,7 @@ namespace sifucraft::protocol {
 
 inline constexpr std::uint32_t kMagic = 0x52434653;  // "SFCR"
 // The name carries no version so that mismatched builds see each other and report INCOMPATIBLE.
-inline constexpr std::uint32_t kVersion = 9;
+inline constexpr std::uint32_t kVersion = 11;
 inline constexpr wchar_t kMappingName[] = L"Local\\SifuCraft.Bridge";
 inline constexpr std::uint32_t kMappingSize = 0x10000;
 
@@ -69,6 +69,8 @@ inline constexpr std::uint32_t kMcOnGround = 1u << 2;
 inline constexpr std::uint32_t kMcSneaking = 1u << 3;
 inline constexpr std::uint32_t kMcSprinting = 1u << 4;
 inline constexpr std::uint32_t kMcFlying = 1u << 5;
+inline constexpr std::uint32_t kMcRequestAnchor = 1u << 6; // respawned; anchor_epoch is the epoch to invalidate
+inline constexpr std::uint32_t kMcDead = 1u << 7;          // keep ownership/protection, publish no pose
 
 struct Vec3 {
     float x, y, z;
@@ -142,7 +144,9 @@ struct McSnapshot {
     float camera_fov;               // vertical, degrees (Minecraft's convention)
     std::uint32_t anchor_epoch;     // SifuSnapshot.anchor_epoch the pose fields are anchored to
     std::uint32_t collision_generation;  // CollisionManifest.generation Minecraft has loaded (0 = none)
-    std::uint8_t reserved[144];
+    std::uint64_t sifu_session;          // target Sifu lifetime, captured with this pose/request
+    std::uint32_t world_generation;
+    std::uint8_t reserved[132];
 };
 
 // Sifu's collision as a voxel grid, published as a file Minecraft loads whole (format: the
@@ -321,6 +325,7 @@ static_assert(sizeof(PingPayload) == 16 && sizeof(InputPayload) == 16 && sizeof(
 static_assert(sizeof(EnemyDamagePayload) == 32 && offsetof(EnemyDamagePayload, world_generation) == 20);
 static_assert(sizeof(DamageResultPayload) == 32 && offsetof(DamageResultPayload, health_after) == 24);
 static_assert(sizeof(PlayerHitPayload) == 32 && offsetof(PlayerHitPayload, world_generation) == 16);
+static_assert(offsetof(McSnapshot, sifu_session) == 112 && offsetof(McSnapshot, world_generation) == 120);
 static_assert(sizeof(Event) == 0x40 && offsetof(Event, payload) == 32);
 static_assert(offsetof(EventRing, read_index) == 64 && offsetof(EventRing, slots) == 128);
 static_assert(sizeof(EventRing) == 0x80 + kRingCapacity * sizeof(Event));
@@ -369,6 +374,8 @@ inline constexpr std::uint32_t kLayoutTable[] = {
     offsetof(McSnapshot, camera_fov),
     offsetof(McSnapshot, anchor_epoch),
     offsetof(McSnapshot, collision_generation),
+    offsetof(McSnapshot, sifu_session),
+    offsetof(McSnapshot, world_generation),
     kSifuToMcRingOffset,
     kMcToSifuRingOffset,
     sizeof(EventRing),
