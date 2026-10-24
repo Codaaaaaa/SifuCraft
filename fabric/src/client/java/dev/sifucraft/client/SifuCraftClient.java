@@ -78,6 +78,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private Minecraft minecraft;
     private McBridge bridge;
     private InputInjector input;
+    private final OverlayCapture overlay = new OverlayCapture();
     private CollisionLoader collision;
     private final UnrealSpace space = new UnrealSpace();
     private final RespawnHandshake respawn = new RespawnHandshake();
@@ -166,6 +167,7 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
         }
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            overlay.close();
             collision.close();
             bridge.close();
         });
@@ -181,6 +183,26 @@ public final class SifuCraftClient implements ClientModInitializer {
     public static boolean attachedToSifu() {
         SifuCraftClient client = instance;
         return client != null && client.bridge.peerConnected();
+    }
+
+    /** Active only for an opted-in, live, anchored Minecraft-owned frame. */
+    public static boolean overlayActive() {
+        SifuCraftClient client = instance;
+        return client != null && client.overlay.enabled() && client.overlayScope() != null;
+    }
+
+    public static void captureOverlay() {
+        SifuCraftClient client = instance;
+        if (client != null && client.overlay.enabled()) client.overlay.render(client.minecraft, client.overlayScope());
+    }
+
+    private OverlayCapture.Scope overlayScope() {
+        SifuFrame frame = bridge.latest();
+        if (!bridge.peerConnected() || frame == null || !frame.minecraftOwnsInput() ||
+                minecraft.level == null || minecraft.player == null || !minecraft.player.isAlive() ||
+                minecraft.gui.screen() != null || minecraft.gui.overlay() != null ||
+                !respawn.ready() || !space.anchoredTo(frame)) return null;
+        return new OverlayCapture.Scope(bridge.session(), bridge.peerSession(), frame.worldGeneration(), frame.anchorEpoch());
     }
 
     /** Called by {@code SDLEventHandlerMixin} on the render thread after Minecraft polled its input. */

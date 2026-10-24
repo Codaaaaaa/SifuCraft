@@ -20,6 +20,7 @@ Sifu 与 Minecraft 作为两个独立进程运行：
 | P3 | Sifu 地形碰撞导入 Minecraft 物理 | 已通过 |
 | P4 | 方块放置/破坏的渲染与碰撞闭环 | 已通过 |
 | P5 | 敌人代理与双向伤害 | 已通过（武馆、第一关、跨图及 F8 实机验收） |
+| P6 | 核心物品系统与 GUI | S0 开发中：透明 HUD/手部帧导出；Sifu 渲染接入待确认 |
 
 ## 目录
 
@@ -111,6 +112,18 @@ MC 死亡后等待约 1 秒自动重生，通过快照请求 Sifu 更新锚定�
 MC 位姿和重锚请求还绑定目标 Sifu 会话与世界代数；Sifu 重启或切关时，即使纪元数字相同，也不会套用之前的位姿。
 
 离线场景可用 `sifucraft_fake_sifu.exe --enemies`，或 `--enemy-scenario` 自动测试增删、尺寸变化、激活复用和世界切换。Java 协议解析测试随 `tools/gradle.ps1 build` 运行；单独运行用 `tools/gradle.ps1 protocolTest`。日志前缀为 `[combat]`；需要查看 Minecraft 的 F3+B 碰撞箱时，可用 `tools/gradle.ps1 runClient -Psifucraft.hideWindow=false` 显示开发窗口。
+
+## GUI 帧导出（P6 S0，实验功能）
+
+`runClient -Psifucraft.overlay=true` 启用透明 HUD 与第一人称手部的异步 GPU 回读，默认关闭。
+图像通过独立的共享内存三缓冲传给原生读取端，使用 RGBA8、预乘 alpha，最高 1920×1080；
+`-Psifucraft.overlayFps=30` 控制回读频率（1–60）。映射绑定双方会话，每帧带地图代数与锚定纪元，切换后丢弃旧帧。
+
+目前实现的是帧导出与离线接收，Sifu 内合成仍待接入。背包输入和 Sifu 血条隐藏属于后续步骤。
+加载期间保持原版渲染；导出时跳过 MC 世界和暗角，保留原版 HUD/手部，且不修改暗角设置。
+离线验证可给 `sifucraft_fake_sifu.exe` 增加 `--overlay-output <输出.rgba>`：运行至少 30 帧后，
+保存一个 64 字节帧头及其 RGBA 像素，并检查透明背景与可见内容。格式定义在
+[protocol/sifucraft_overlay.h](protocol/sifucraft_overlay.h)，不改变现有 v12 游戏协议。
 
 ## Fabric Mod（Minecraft 26.3）
 

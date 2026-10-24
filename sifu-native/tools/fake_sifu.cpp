@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "bridge/sifu_bridge.h"
+#include "bridge/overlay_reader.h"
 #include "combat/damage_ledger.h"
 #include "input/anchor_request.h"
 #include "core/log.h"
@@ -150,6 +151,7 @@ int main(int argc, char** argv) {
     using namespace sifucraft;
     double seconds = 0.0;
     std::string grid_file;
+    std::string overlay_output;
     StandingPawn pawn;
     std::vector<HeldKey> keys;
     std::vector<PawnMove> moves;
@@ -165,6 +167,8 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--collision") == 0 && i + 1 < argc) {
             grid_file = argv[++i];
+        } else if (std::strcmp(argv[i], "--overlay-output") == 0 && i + 1 < argc) {
+            overlay_output = argv[++i];
         } else if (std::strcmp(argv[i], "--pawn") == 0 && i + 3 < argc) {
             pawn.enabled = true;
             pawn.x = static_cast<float>(std::atof(argv[++i]));
@@ -250,6 +254,10 @@ int main(int argc, char** argv) {
     combat::DamageLedger damage_ledger;
     std::vector<protocol::Event> damage_events;
     unsigned applied_damage = 0;
+    overlay::Reader overlay_reader;
+    overlay::Frame overlay_frame;
+    unsigned overlay_frames = 0;
+    bool overlay_saved = false;
     const ULONGLONG begin = GetTickCount64();
     for (std::uint64_t tick = 1; !g_stop; ++tick) {
         Sleep(kTickMs);
@@ -273,6 +281,26 @@ int main(int argc, char** argv) {
             }
         }
         bridge.Tick(frame, now);
+        if (!overlay_output.empty() && bridge.peer_connected() &&
+            frame.input_owner == protocol::InputOwner::Minecraft &&
+            overlay_reader.Read(bridge.peer_session(), bridge.session(), frame.world_generation, frame.anchor_epoch, &overlay_frame)) {
+            ++overlay_frames;
+            std::size_t transparent = 0, visible = 0;
+            for (std::size_t at = 3; at < overlay_frame.pixels.size(); at += 4) {
+                if (overlay_frame.pixels[at] == 0) ++transparent; else ++visible;
+            }
+            const bool transparent_hud = transparent > visible && visible > 0;
+            if (overlay_frames == 30 || (overlay_frames > 30 && !overlay_saved && transparent_hud)) {
+                std::ofstream output(overlay_output, std::ios::binary);
+                output.write(reinterpret_cast<const char*>(&overlay_frame.header), sizeof(overlay_frame.header));
+                output.write(reinterpret_cast<const char*>(overlay_frame.pixels.data()), static_cast<std::streamsize>(overlay_frame.pixels.size()));
+                if (!output) { SC_LOG("[overlay-test] failed to save capture"); return 1; }
+                overlay_saved = transparent_hud;
+                SC_LOG("[overlay-test] saved %ux%u frame=%llu transparent=%zu visible=%zu -> %s",
+                    overlay_frame.header.width, overlay_frame.header.height,
+                    static_cast<unsigned long long>(overlay_frame.header.frame_id), transparent, visible, overlay_output.c_str());
+            }
+        }
         if (respawn_scenario && bridge.peer_connected()) {
             const auto& mc = bridge.peer_state();
             if (!saw_dead && (mc.flags & protocol::kMcDead)) {
@@ -435,5 +463,10 @@ int main(int argc, char** argv) {
     }
     bridge.MarkClosing();
     SC_LOG("[bridge] final: %s", bridge.Describe().c_str());
+    if (!overlay_output.empty()) {
+        SC_LOG("[overlay-test] %s frames=%u schema=%u layout=%016llX", overlay_saved ? "PASS" : "FAIL", overlay_frames,
+            overlay::kVersion, static_cast<unsigned long long>(overlay::kLayoutHash));
+        if (!overlay_saved) return 1;
+    }
     return 0;
 }

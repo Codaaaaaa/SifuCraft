@@ -3,6 +3,9 @@
 	"package": "dev.sifucraft.client.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
+		"GameRendererMixin",
+		"HudMixin",
+		"LevelRendererMixin",
 		"MinecraftMixin",
 		"MouseHandlerAccessor",
 		"MouseHandlerMixin",
