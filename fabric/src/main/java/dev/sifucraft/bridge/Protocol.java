@@ -9,7 +9,10 @@ public final class Protocol {
     private Protocol() {}
 
     public static final int MAGIC = 0x52434653; // "SFCR"
-    public static final int VERSION = 18;
+    public static final int VERSION = 20;
+    public static final int EVENT_NATIVE_INTERACT = 12, EVENT_NATIVE_INTERACT_RESULT = 13;
+    public static final int INTERACTION_OFFSET = 0xFC00, DOOR_MANIFEST_OFFSET = 0xFD00;
+    public static final int INTERACTION_SIZE = 128, INTERACT_AVAILABLE = 1;
     public static final String MAPPING_NAME = "Local\\SifuCraft.Bridge";
     public static final int MAPPING_SIZE = 0x10000;
 
@@ -35,6 +38,7 @@ public final class Protocol {
     public static final int EVENT_GUI_MOUSE_MOTION = 9;
     public static final int GUI_MOUSE_SIZE = 24;
     public static final int EVENT_PLAYER_BLOCKED = 10, PLAYER_BLOCKED_SIZE = 32;
+    public static final int EVENT_ENEMY_IMPULSE = 11, ENEMY_IMPULSE_SIZE = 32;
     public static final int HIT_PERFECT_WINDOW = 1 << 3, BLOCKED_PERFECT = 1;
     public static final int HIT_GUARD_BREAKER = 1 << 4;
     public static final int HIT_CAN_DEFEND = 1;
@@ -268,10 +272,12 @@ public final class Protocol {
 
     /** Same entries, same order as {@code kLayoutTable} in sifucraft_protocol.h. */
     static final int[] LAYOUT_TABLE = {
+        INTERACTION_OFFSET, INTERACTION_SIZE, 16, 24, 32, 36, 56, 68, 80, 92, 96, DOOR_MANIFEST_OFFSET, 32, 32,
         VERSION,
         SNAPSHOT_GUI_AVAILABLE, MC_GUI_AVAILABLE, MC_GUI_OPEN, MC_GUI_TEXT_INPUT,
         EVENT_GUI_MOUSE_MOTION, GUI_MOUSE_SIZE,
         EVENT_PLAYER_BLOCKED, PLAYER_BLOCKED_SIZE, HIT_PERFECT_WINDOW, BLOCKED_PERFECT, HIT_GUARD_BREAKER,
+        EVENT_ENEMY_IMPULSE, ENEMY_IMPULSE_SIZE, 0, 8, 12, 16, 20, 24, 28,
         Float.floatToRawIntBits(PLAYER_SIFU_HP_PER_MC_HP),
         Float.floatToRawIntBits(ENEMY_SIFU_HP_PER_MC_HP),
         MAPPING_SIZE,

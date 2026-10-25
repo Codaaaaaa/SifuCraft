@@ -50,6 +50,7 @@ public final class McBridge implements AutoCloseable {
         default void onPeerConnection(boolean connected, String reason) {}
         default void onDamageResult(DamageResult result) {}
         default void onPlayerHit(long sourceSession, long eventId, PlayerHit hit) {}
+        default void onNativeInteraction(NativeInteraction.Result result) {}
     }
 
     /** Counters; read them from the bridge thread. */
@@ -94,6 +95,16 @@ public final class McBridge implements AutoCloseable {
     private MemorySegment manifest;
     private MemorySegment blockTable;
     private MemorySegment enemyTable;
+    private MemorySegment interactionSnapshot, doorManifest;
+    private NativeInteraction interaction;
+    private CollisionManifest doors = CollisionManifest.NONE;
+    private long interactionSeq, doorSeq;
+    public NativeInteraction interaction() { return interaction; }
+    public CollisionManifest doors() { return doors; }
+    public boolean sendNativeInteraction(NativeInteraction candidate) {
+        return mapping != null && peerConnected && candidate != null && candidate.session() == peerSession &&
+                send(Protocol.EVENT_NATIVE_INTERACT, MemorySegment.ofArray(candidate.request()));
+    }
     private MemorySegment outgoing;
     private MemorySegment incoming;
     private Thread heartbeatThread;
@@ -139,6 +150,8 @@ public final class McBridge implements AutoCloseable {
         manifest = base.asSlice(Protocol.COLLISION_MANIFEST_OFFSET, Protocol.Manifest.SIZE);
         blockTable = base.asSlice(Protocol.BLOCK_TABLE_OFFSET, Protocol.Blocks.SIZE);
         enemyTable = base.asSlice(Protocol.ENEMY_TABLE_OFFSET, Protocol.Enemies.SIZE);
+        interactionSnapshot = base.asSlice(Protocol.INTERACTION_OFFSET, Protocol.INTERACTION_SIZE);
+        doorManifest = base.asSlice(Protocol.DOOR_MANIFEST_OFFSET, Protocol.Manifest.SIZE);
         outgoing = base.asSlice(Protocol.MC_TO_SIFU_RING_OFFSET, Ring.SIZE);
         incoming = base.asSlice(Protocol.SIFU_TO_MC_RING_OFFSET, Ring.SIZE);
 
@@ -198,6 +211,8 @@ public final class McBridge implements AutoCloseable {
             readSifuSnapshot();
             readManifest();
             readEnemies(nowMs);
+            readInteraction(nowMs);
+            readDoors();
         }
         publish(state);
     }
@@ -230,6 +245,10 @@ public final class McBridge implements AutoCloseable {
     /** Tells Sifu we are going away. Safe to call from a shutdown hook. */
     public boolean sendPlayerBlocked(PlayerBlocked blocked) {
         return mapping != null && peerConnected && send(Protocol.EVENT_PLAYER_BLOCKED, MemorySegment.ofArray(blocked.encode()));
+    }
+
+    public boolean sendEnemyImpulse(EnemyImpulse impulse) {
+        return mapping != null && peerConnected && send(Protocol.EVENT_ENEMY_IMPULSE, MemorySegment.ofArray(impulse.encode()));
     }
 
     /** Tells Sifu we are going away. Safe to call from a shutdown hook. */
@@ -389,6 +408,7 @@ public final class McBridge implements AutoCloseable {
         manifestSeq = 0;
         enemies = null;
         enemySeq = 0;
+        interaction = null; interactionSeq = 0; doors = CollisionManifest.NONE; doorSeq = 0;
         // Events are addressed to one peer session; answers to them can no longer arrive.
         stats.pingsAbandoned += pendingPings.size();
         pendingPings.clear();
@@ -455,6 +475,10 @@ public final class McBridge implements AutoCloseable {
                     else stats.eventsUnknown++;
                 }
                 case Protocol.EVENT_OWNER_CHANGED -> listener.onOwnerChanged(incoming.get(JAVA_INT, payload));
+                case Protocol.EVENT_NATIVE_INTERACT_RESULT -> {
+                    if (incoming.get(JAVA_INT, slot + Event.PAYLOAD_SIZE) != 32) { stats.eventsUnknown++; break; }
+                    listener.onNativeInteraction(NativeInteraction.Result.decode(incoming.asSlice(payload, 32).toArray(JAVA_BYTE)));
+                }
                 case Protocol.EVENT_PLAYER_HIT -> {
                     if (incoming.get(JAVA_INT, slot + Event.PAYLOAD_SIZE) != Protocol.PlayerHit.SIZE) {
                         stats.eventsUnknown++;
@@ -584,6 +608,31 @@ public final class McBridge implements AutoCloseable {
         }
     }
 
+    private void readInteraction(long nowMs) {
+        for (int attempt = 0; attempt < SEQLOCK_ATTEMPTS; attempt++) {
+            long before = getLongAcquire(interactionSnapshot, 0);
+            if (before == 0 || before == interactionSeq) return;
+            if ((before & 1) != 0) continue;
+            byte[] bytes = interactionSnapshot.toArray(JAVA_BYTE); VarHandle.loadLoadFence();
+            if (getLongAcquire(interactionSnapshot, 0) != before) continue;
+            interactionSeq = before;
+            try { interaction = NativeInteraction.decode(peerSession, bytes, nowMs); }
+            catch (IllegalArgumentException invalid) { interaction = null; }
+            return;
+        }
+    }
+    private void readDoors() {
+        var m = doorManifest;
+        for (int attempt = 0; attempt < SEQLOCK_ATTEMPTS; attempt++) {
+            long before = getLongAcquire(m, 0);
+            if (before == 0 || before == doorSeq) return;
+            if ((before & 1) != 0) continue;
+            var copy = new CollisionManifest(m.get(JAVA_INT, 8), m.get(JAVA_INT, 12), m.get(JAVA_INT, 16),
+                    m.get(JAVA_LONG, 24), utf8z(m, 32, 64), utf8z(m, 96, 384));
+            VarHandle.loadLoadFence(); if (getLongAcquire(m, 0) != before) continue;
+            doorSeq = before; doors = copy; return;
+        }
+    }
     private void readEnemies(long nowMs) {
         for (int attempt = 0; attempt < SEQLOCK_ATTEMPTS; attempt++) {
             long before = getLongAcquire(enemyTable, Protocol.Enemies.SEQ);

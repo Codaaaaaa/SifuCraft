@@ -57,5 +57,8 @@ struct ShapeSet {
 // with collision filtering `pawn` and walkable floor Z `pawn_walkable_z`. Runtime thread; reads
 // memory only.
 ShapeSet ExtractShapes(std::uintptr_t world, const Responses& pawn, float pawn_walkable_z);
+bool DynamicSceneComponent(std::uintptr_t component);
+std::vector<std::uintptr_t> DynamicSceneComponents(std::uintptr_t world);
+ShapeSet ExtractComponents(const std::vector<std::uintptr_t>& components, const Responses& pawn, float walkable_z);
 
 }  // namespace sifucraft::collision

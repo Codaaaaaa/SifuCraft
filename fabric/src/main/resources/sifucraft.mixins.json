@@ -8,7 +8,9 @@
 		"EntityMixin",
 		"LevelMixin",
 		"PlayerAttackMixin",
-		"ShieldBlockingMixin"
+		"ShieldBlockingMixin",
+		"WindChargeCollisionMixin",
+		"WindChargeSceneHitMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

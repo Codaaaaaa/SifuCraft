@@ -35,6 +35,8 @@ add_library(sifucraft_native SHARED
     src/combat/damage.cpp
     src/combat/player_hits.cpp
     src/hooks/camera_fade.cpp
+    src/hooks/streaming_guard.cpp
+    src/interaction/native_interaction.cpp
     src/hooks/game_hooks.cpp
     src/hooks/hook_plan.cpp
     src/hooks/vtable_hook.cpp

@@ -5,6 +5,7 @@
 	"client": [
 		"ContainerScreenAccessor",
 		"DevItemGuiMixin",
+		"FireworkRocketAccessor",
 		"GameRendererMixin",
 		"HudMixin",
 		"KeyMappingAccessor",

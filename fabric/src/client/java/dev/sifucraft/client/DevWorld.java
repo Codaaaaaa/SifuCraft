@@ -3,6 +3,7 @@ package dev.sifucraft.client;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.LevelSettings;
@@ -21,6 +22,29 @@ final class DevWorld {
 
     static boolean enabled() {
         return Boolean.getBoolean("sifucraft.devWorld");
+    }
+
+    /** Old development saves predate survival and used peaceful to suppress vanilla mobs. */
+    static void migrateDifficulty(MinecraftServer server) {
+        if (!enabled()) return;
+        var marker = server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT)
+                .resolve("sifucraft-survival-difficulty-v1");
+        if (java.nio.file.Files.exists(marker)) return;
+        boolean migrated = server.overworld().getDifficulty() == Difficulty.PEACEFUL;
+        if (migrated) {
+            // Peaceful previously suppressed mobs in this otherwise invisible backing world.
+            server.getGameRules().set(net.minecraft.world.level.gamerules.GameRules.SPAWN_MOBS, false, server);
+            server.setDifficulty(Difficulty.NORMAL, true);
+            org.slf4j.LoggerFactory.getLogger("sifucraft").info(
+                    "[world] migrated legacy development difficulty PEACEFUL -> NORMAL, natural mob spawning disabled; vanilla incoming mob damage restored");
+        }
+        try {
+            if (migrated && !server.saveEverything(true, true, false))
+                throw new java.io.IOException("World save did not complete; migration marker deferred");
+            java.nio.file.Files.writeString(marker, "Legacy survival difficulty checked; later difficulty choices are preserved.\n");
+        } catch (java.io.IOException e) {
+            org.slf4j.LoggerFactory.getLogger("sifucraft").warn("[world] could not save difficulty migration marker", e);
+        }
     }
 
     static void enter(Minecraft minecraft) {

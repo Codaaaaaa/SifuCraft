@@ -9,10 +9,14 @@ import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.enchantment.Enchantments;
 
 /** Vanilla survival inventory plus a searchable copy of the vanilla creative catalog. */
 public final class DevItemInventoryScreen extends InventoryScreen {
@@ -36,15 +40,28 @@ public final class DevItemInventoryScreen extends InventoryScreen {
         search.setMaxLength(80);
         CreativeModeTabs.tryRebuildTabContents(minecraft.level.enabledFeatures(), true, minecraft.level.registryAccess());
         catalog.clear();
-        for (var item : CreativeModeTabs.searchTab().getDisplayItems()) {
-            var stack = item.copy();
-            String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
-            String text = stack.getHoverName().getString() + " " + id + " " + stack.getComponents();
-            catalog.add(new Entry(stack, id, text.toLowerCase(Locale.ROOT)));
+        for (var item : CreativeModeTabs.searchTab().getDisplayItems()) addToCatalog(item.copy());
+        var enchantments = minecraft.level.registryAccess().lookupOrThrow(Registries.ENCHANTMENT);
+        for (int density : new int[]{0, 5}) {
+            ItemStack mace = new ItemStack(Items.MACE);
+            mace.enchant(enchantments.getOrThrow(Enchantments.WIND_BURST), 3);
+            if (density > 0) mace.enchant(enchantments.getOrThrow(Enchantments.DENSITY), density);
+            mace.set(DataComponents.CUSTOM_NAME, Component.literal(density > 0 ? "测试重锤（致密 V + 风爆 III）" : "测试重锤（风爆 III）"));
+            addToCatalog(mace);
         }
+        ItemStack flightRocket = new ItemStack(Items.FIREWORK_ROCKET);
+        flightRocket.set(DataComponents.FIREWORKS, new net.minecraft.world.item.component.Fireworks(3, List.of()));
+        flightRocket.set(DataComponents.CUSTOM_NAME, Component.literal("测试飞行烟花（持续 III，无烟火之星）"));
+        addToCatalog(flightRocket);
         search.setResponder(this::filter);
         search.setValue(query);
         filter(query);
+    }
+
+    private void addToCatalog(ItemStack stack) {
+        String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+        String text = stack.getHoverName().getString() + " " + id + " " + stack.getComponents();
+        catalog.add(new Entry(stack, id, text.toLowerCase(Locale.ROOT)));
     }
 
     private void layoutCatalog() {

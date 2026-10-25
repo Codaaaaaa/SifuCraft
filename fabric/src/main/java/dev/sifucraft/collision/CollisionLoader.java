@@ -29,6 +29,9 @@ public final class CollisionLoader {
     public void update(CollisionManifest manifest) {
         synchronized (lock) {
             if (manifest.generation() == wanted.generation()) return;
+            if (manifest.worldGeneration() != wanted.worldGeneration() || !manifest.map().equals(wanted.map())) {
+                grid = null; loadedGeneration = 0;
+            }
             wanted = manifest;
             if (manifest.generation() == 0) {
                 grid = null;

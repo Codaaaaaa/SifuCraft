@@ -28,8 +28,10 @@ public final class EnemyFrameTest {
         }
     }
     public static void main(String[] args) {
+        NativeInteractionTest.run();
         LanguageMatchTest.run();
         ShieldWireTest.run();
+        ImpulseWireTest.run();
         OverlayWriterTest.run();
         GuiCursorTest.run();
         RespawnHandshakeTest.run();

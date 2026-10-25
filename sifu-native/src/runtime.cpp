@@ -22,9 +22,13 @@
 #include "core/safe_memory.h"
 #include "generated/sifu_build.g.h"
 #include "hooks/camera_fade.h"
+#include "hooks/streaming_guard.h"
+#include "interaction/native_interaction.h"
 #include "hooks/game_hooks.h"
 #include "hooks/hook_plan.h"
 #include "input/input_router.h"
+#include "input/ownership_intent.h"
+#include "input/displacement_guard.h"
 #include "input/anchor_request.h"
 #include "collision/builder.h"
 #include "collision/components.h"
@@ -273,10 +277,6 @@ public:
     void Update(std::uintptr_t world, const probe::PlayerObjects& player, const protocol::Vec3& pawn_location,
                 std::uint64_t now_ms, bool minecraft_has_collision, std::uint32_t generation, bool allow_reanchor) {
         collision_ready_ = minecraft_has_collision;
-        if (input::Router().TakeToggleRequest()) {
-            enabled_ = !enabled_;
-            SC_LOG("[input] F8: routing to minecraft %s", enabled_ ? "ENABLED" : "DISABLED");
-        }
         const ScriptSignals signals = ReadScriptSignals(player);
         if (!(signals == signals_)) {
             SC_LOG("[script] inputs_disabled=%d ignore_move=%u ignore_look=%u cinematic=%d attached_to=%s",
@@ -285,11 +285,13 @@ public:
             signals_ = signals;
         }
         const auto identity = ue::IdentityOf(player.pawn);
-        if (player.pawn != pawn_ || identity != pawn_identity_ || generation != world_generation_) {
+        const bool new_pawn_scope = player.pawn != pawn_ || identity != pawn_identity_ || generation != world_generation_;
+        if (new_pawn_scope) {
             pawn_ = player.pawn;
             pawn_identity_ = identity;
             world_generation_ = generation;
             pawn_since_ms_ = now_ms;
+            displacement_.Reset(pawn_location, now_ms);
             if (input::Router().owner() == InputOwner::Minecraft) {
                 epoch_ = input::NextEpoch(epoch_);
                 SC_LOG("[input] invalidated old pose after world/pawn change (epoch %u)", epoch_);
@@ -303,10 +305,19 @@ public:
             SC_LOG("[respawn] acknowledged anchor request %u -> %u world=%u", mc.anchor_epoch, epoch_, generation);
         }
         now_ms_ = now_ms;
-        UpdateDriving(player.pawn != 0, pawn_location, now_ms);
+        if (!new_pawn_scope) UpdateDriving(player.pawn != 0, pawn_location, now_ms);
 
-        const char* blocked = BlockReason(world, player);
-        const InputOwner desired = blocked ? InputOwner::Sifu : InputOwner::Minecraft;
+        const bool toggle = input::Router().TakeToggleRequest();
+        const bool recovered = toggle && displacement_.ManualRecovery(now_ms);
+        if (recovered) SC_LOG("[script] F8 cleared the displacement-only handover wait; explicit script/menu guards remain active");
+        const char* guard = GuardReason(world, player);
+        if (toggle) {
+            intent_.RequestSwitch(input::Router().owner(), guard != nullptr || recovered);
+            SC_LOG("[input] F8: request %s%s%s", intent_.enabled() ? "MINECRAFT" : "sifu",
+                   guard ? "; waiting: " : "", guard ? guard : "");
+        }
+        const char* blocked = intent_.enabled() ? guard : "disabled with F8";
+        const InputOwner desired = intent_.Desired(guard != nullptr);
         if (desired != input::Router().owner()) {
             if (desired == InputOwner::Minecraft) epoch_ = input::NextEpoch(epoch_);
             input::Router().SetOwner(desired);
@@ -323,44 +334,24 @@ public:
 
 private:
     static constexpr std::uint64_t kSettleMs = 2000;
-    static constexpr std::uint32_t kYieldAfterFrames = 3;
-    static constexpr float kStillToleranceCm = 1.0f;
-    static constexpr std::uint64_t kStillForMs = 1000;
-    static constexpr std::uint64_t kMaxStillForMs = 8000;
-    static constexpr std::uint64_t kRelapseWithinMs = 3000;
 
     // Fallback for scripts that set none of the flags: Sifu moving the pawn over our writes on
     // several frames in a row means it is driving the player. Take the player back only once the
     // pawn has stood still for a moment; each time Sifu takes it again right after, wait twice as
     // long before the next try.
     void UpdateDriving(bool has_pawn, const protocol::Vec3& location, std::uint64_t now_ms) {
-        if (!driving_) {
-            const std::uint32_t frames = hooks::ConsecutiveDisplacements();
-            if (frames < kYieldAfterFrames) return;
-            driving_ = true;
-            still_ref_ = location;
-            still_since_ms_ = now_ms;
-            const bool relapse = released_ms_ && now_ms - released_ms_ < kRelapseWithinMs;
-            still_for_ms_ = relapse ? std::min(still_for_ms_ * 2, kMaxStillForMs) : kStillForMs;
+        const auto frames = hooks::ConsecutiveDisplacements();
+        const auto change = displacement_.Update(input::Router().owner() == InputOwner::Minecraft,
+            hooks::PoseActive(), has_pawn, location, frames, now_ms);
+        if (change == input::DisplacementGuard::Change::Yield) {
             SC_LOG("[script] Sifu moved the pawn on %u frames in a row: yielding the player to Sifu until it "
-                   "stands still for %llu ms", frames, static_cast<unsigned long long>(still_for_ms_));
-            return;
-        }
-        if (!has_pawn) return;
-        const float dx = location.x - still_ref_.x, dy = location.y - still_ref_.y, dz = location.z - still_ref_.z;
-        if (dx * dx + dy * dy + dz * dz > kStillToleranceCm * kStillToleranceCm) {
-            still_ref_ = location;
-            still_since_ms_ = now_ms;
-        } else if (now_ms - still_since_ms_ >= still_for_ms_) {
-            driving_ = false;
-            released_ms_ = now_ms;
-            SC_LOG("[script] the pawn has been still for %llu ms: Sifu stopped driving it",
-                   static_cast<unsigned long long>(now_ms - still_since_ms_));
+                   "stands still for %llu ms", frames, static_cast<unsigned long long>(displacement_.quiet_ms()));
+        } else if (change == input::DisplacementGuard::Change::Recovered) {
+            SC_LOG("[script] the pawn has been still for %llu ms: Sifu stopped driving it", static_cast<unsigned long long>(displacement_.quiet_ms()));
         }
     }
 
-    const char* BlockReason(std::uintptr_t world, const probe::PlayerObjects& player) const {
-        if (!enabled_) return "disabled with F8";
+    const char* GuardReason(std::uintptr_t world, const probe::PlayerObjects& player) const {
         if (!hooks::InputHooksInstalled()) return "input hooks not installed";
         if (!g_bridge.peer_connected()) return "minecraft not connected";
         const bridge::McState& mc = g_bridge.peer_state();
@@ -375,12 +366,12 @@ private:
         if (signals_.ignore_look) return "sifu script: look input ignored";
         if (signals_.attached_to) return "sifu script: pawn attached";
         if (now_ms_ - pawn_since_ms_ < kSettleMs) return "pawn just spawned (settling)";
-        if (driving_) return "sifu script: Sifu is driving the pawn";
+        if (displacement_.driving()) return "sifu script: Sifu is driving the pawn";
         if (!OurWindowInForeground()) return "sifu window not in foreground";
         return nullptr;
     }
 
-    bool enabled_ = true;
+    input::OwnershipIntent intent_;
     bool collision_ready_ = false;
     std::string last_reason_;
     ScriptSignals signals_;
@@ -389,11 +380,7 @@ private:
     std::uint32_t world_generation_ = 0;
     std::uint64_t pawn_since_ms_ = 0;
     std::uint64_t now_ms_ = 0;
-    bool driving_ = false;
-    protocol::Vec3 still_ref_{};
-    std::uint64_t still_since_ms_ = 0;
-    std::uint64_t still_for_ms_ = kStillForMs;
-    std::uint64_t released_ms_ = 0;
+    input::DisplacementGuard displacement_;
     std::uint32_t epoch_ = 0;
 };
 
@@ -473,6 +460,13 @@ public:
 
     // Logs the walk check and appends its samples to SifuCraft\debug\walk_<map>.csv.
     bool GridBuilt(std::uint32_t generation) const { return builder_.Latest(generation) != nullptr; }
+    bool HasReference() const { return have_reference_; }
+    collision::Responses Reference() const { return reference_; }
+    float WalkableZ(std::uintptr_t pawn) { return PawnWalkableFloorZ(pawn); }
+    bool NativeSupport(std::uint32_t generation, const protocol::Vec3& feet) const {
+        const auto grid = builder_.Latest(generation);
+        return grid && collision::HasFloorSupport(*grid, {feet.x, feet.y, feet.z});
+    }
 
     void FlushCheck() {
         if (walk_check_.samples() == 0) return;
@@ -595,6 +589,72 @@ private:
     bool done_ = false;
 };
 
+class DoorSchedule {
+public:
+    void Update(std::uintptr_t world, std::uint32_t generation, const std::string& path, std::uintptr_t pawn,
+                CollisionSchedule& collision, std::uint64_t now) {
+        if (!world || !pawn || !collision.HasReference() || now < next_) return;
+        next_ = now + 100;
+        if (generation != generation_) {
+            generation_ = generation; hash_ = 0; scan_ = 0; shared_ = 0; components_.clear();
+            g_bridge.PublishDoors({});
+        }
+        const int visible = collision::VisibleLevelCount(world);
+        const auto candidate = interaction::Snapshot();
+        if (now >= scan_ || visible != levels_ || (candidate.owner && candidate.owner != target_owner_)) {
+            components_.clear();
+            for (auto p : collision::DynamicSceneComponents(world)) components_.push_back({p, ue::IdentityOf(p)});
+            scan_ = now + 5000; levels_ = visible; target_owner_ = candidate.owner;
+        }
+        ue::FVector center{};
+        if (!ue::ReadWorldLocation(mem::ReadPtr(pawn + off::AActor::RootComponent), &center)) return;
+        std::uint64_t hash = 14695981039346656037ull;
+        auto mix = [&](std::uint64_t v) { hash = (hash ^ v) * 1099511628211ull; };
+        std::vector<std::uintptr_t> nearby;
+        const auto reference = collision.Reference();
+        for (const auto& [p, id] : components_) {
+            if (!ue::IsLive(p) || ue::IdentityOf(p) != id || !collision::VisibleLevelOf(p, world)) continue;
+            ue::Affine transform;
+            if (!ue::ReadComponentToWorld(p, &transform)) continue;
+            ue::FVector origin = transform.t, extent{};
+            mem::Read(p + off::USceneComponent::Bounds + off::FBoxSphereBounds::Origin, &origin);
+            mem::Read(p + off::USceneComponent::Bounds + off::FBoxSphereBounds::BoxExtent, &extent);
+            const float dx = std::max(0.0f, std::fabs(origin.x - center.x) - extent.x),
+                dy = std::max(0.0f, std::fabs(origin.y - center.y) - extent.y),
+                dz = std::max(0.0f, std::fabs(origin.z - center.z) - extent.z);
+            if (dx * dx + dy * dy + dz * dz > 2500 * 2500) continue;
+            nearby.push_back(p); mix(static_cast<std::uint32_t>(id.index)); mix(id.serial);
+            mix(collision::Blocks(p, reference));
+            mix(collision::BodySetupOf(p));
+            const float* values = &transform.m[0][0];
+            for (int i = 0; i < 9; ++i) mix(std::bit_cast<std::uint32_t>(values[i]));
+            mix(std::bit_cast<std::uint32_t>(transform.t.x)); mix(std::bit_cast<std::uint32_t>(transform.t.y)); mix(std::bit_cast<std::uint32_t>(transform.t.z));
+        }
+        if (hash != hash_) {
+            hash_ = hash;
+            collision::BuildRequest request;
+            request.shapes = collision::ExtractComponents(nearby, reference, collision.WalkableZ(pawn));
+            request.map = path.substr(path.find_last_of('.') + 1); request.generation = generation;
+            request.file_tag = "-doors"; request.diagnostics = false; request.pawn_feet = center;
+            builder_.Submit(std::move(request));
+        }
+        const auto grid = builder_.Published();
+        if (grid.generation && grid.world_generation == generation && grid.generation != shared_) {
+            shared_ = grid.generation;
+            const int size = WideCharToMultiByte(CP_UTF8, 0, grid.path.data(), static_cast<int>(grid.path.size()), nullptr, 0, nullptr, nullptr);
+            std::string file(size, '\0');
+            WideCharToMultiByte(CP_UTF8, 0, grid.path.data(), static_cast<int>(grid.path.size()), file.data(), size, nullptr, nullptr);
+            g_bridge.PublishDoors({grid.generation, grid.world_generation, grid.block_count, grid.cell_count, grid.map, file});
+        }
+    }
+private:
+    collision::Builder builder_;
+    std::vector<std::pair<std::uintptr_t, ue::ObjectIdentity>> components_;
+    std::uint64_t next_ = 0, scan_ = 0, hash_ = 0;
+    std::uint32_t generation_ = 0, shared_ = 0;
+    std::uint32_t target_owner_ = 0;
+    int levels_ = -1;
+};
 }  // namespace
 
 void Run(std::uintptr_t image_base) {
@@ -605,6 +665,7 @@ void Run(std::uintptr_t image_base) {
     bool engine_hooked = false;
     Ownership ownership;
     CollisionSchedule collision_schedule;
+    DoorSchedule door_schedule;
     probe::CombatCensus combat_census;
     combat::Enemies enemies;
     std::vector<protocol::Event> damage_events;
@@ -722,6 +783,29 @@ void Run(std::uintptr_t image_base) {
             if (world) hooks::camera_fade::Resolve();
         }
         if (settings.stage >= 5) UpdatePoseOverride(player.pawn, frame.capsule_half_height, ownership.epoch(), generation);
+        hooks::streaming_guard::Context streaming;
+        if (settings.stage >= 8) {
+            hooks::streaming_guard::Resolve();
+            streaming.world = world; streaming.pawn = player.pawn;
+            streaming.world_identity = ue::IdentityOf(world);
+            streaming.pawn_identity = ue::IdentityOf(player.pawn);
+            streaming.updated_ms = GetTickCount64();
+            streaming.active = hooks::PoseActive() && input::Router().owner() == InputOwner::Minecraft &&
+                McAnchoredTo(ownership.epoch(), generation);
+            const auto& mc = g_bridge.peer_state();
+            streaming.freeze = !(mc.flags & protocol::kMcOnGround) || !collision_schedule.NativeSupport(generation, mc.player_location);
+        }
+        hooks::streaming_guard::UpdateContext(streaming);
+        interaction::Context interact;
+        interact.world = world; interact.pawn = player.pawn; interact.controller = player.controller;
+        interact.pawn_id = ue::IdentityOf(player.pawn); interact.controller_id = ue::IdentityOf(player.controller);
+        interact.generation = generation; interact.epoch = ownership.epoch(); interact.updated_ms = GetTickCount64();
+        interact.session = g_bridge.peer_connected() ? g_bridge.peer_session() : 0;
+        interact.eye = g_bridge.peer_state().camera_location;
+        interact.pose_owned = settings.stage >= 8 && streaming.active;
+        interact.active = interact.pose_owned && !(g_bridge.peer_state().flags & protocol::kMcGuiOpen);
+        interaction::UpdateContext(interact);
+        g_bridge.PublishInteraction(interaction::Snapshot());
         if (settings.stage >= 8) {
             render::Scope scope;
             scope.mc_session = g_bridge.peer_connected() ? g_bridge.peer_session() : 0;
@@ -737,7 +821,7 @@ void Run(std::uintptr_t image_base) {
             combat::player_hits::InstallObserver(image_base, player.pawn);
             combat::damage::UpdateContext(world, generation, player.pawn,
                 g_bridge.peer_connected() && frame.input_owner == InputOwner::Minecraft && hooks::PoseActive(),
-                ownership.epoch(), g_bridge.peer_connected() ? g_bridge.peer_session() : 0, enemies.targets());
+                ownership.epoch(), g_bridge.peer_connected() ? g_bridge.peer_session() : 0, enemies.targets(), enemies.entries(), settings.stage >= 8);
             combat::player_hits::UpdateContext(world, generation, player.pawn,
                 g_bridge.peer_connected() && frame.input_owner == InputOwner::Minecraft,
                 hooks::PoseActive() && McAnchoredTo(ownership.epoch(), generation), ownership.epoch(),
@@ -746,6 +830,12 @@ void Run(std::uintptr_t image_base) {
             for (const auto& event : damage_events) {
                 if (event.type == static_cast<std::uint32_t>(protocol::EventType::PlayerBlocked)) {
                     if (settings.stage >= 8) combat::damage::SubmitBlocked(event);
+                }
+                else if (event.type == static_cast<std::uint32_t>(protocol::EventType::EnemyImpulse)) {
+                    if (settings.stage >= 8) combat::damage::SubmitImpulse(event);
+                }
+                else if (event.type == static_cast<std::uint32_t>(protocol::EventType::NativeInteract)) {
+                    if (settings.stage >= 8) interaction::Submit(event);
                 }
                 else combat::damage::Submit(event);
             }
@@ -783,6 +873,18 @@ void Run(std::uintptr_t image_base) {
                 pending_player_hits.pop_front();
             }
         }
+        if (settings.stage < 7) combat::damage::UpdateContext(world, generation, player.pawn, false, 0, 0, {}, {}, false);
+        {
+            static std::deque<interaction::Reply> pending;
+            std::vector<interaction::Reply> replies;
+            interaction::DrainReplies(&replies);
+            for (const auto& reply : replies) if (pending.size() < 64) pending.push_back(reply);
+            while (!pending.empty()) {
+                if (!g_bridge.peer_connected() || pending.front().session != g_bridge.peer_session()) { pending.pop_front(); continue; }
+                if (!g_bridge.SendInteractionResult(pending.front().payload)) break;
+                pending.pop_front();
+            }
+        }
         // The P5 S0 census remains read-only even at stage 0 / no-hooks, independently of
         // the stage-7 damage path.
         combat_census.Update(image_base, world, generation,
@@ -798,6 +900,7 @@ void Run(std::uintptr_t image_base) {
             collision_schedule.Check(generation, player.pawn ? player : probe::FindPlayerObjects(world), frame);
         }
         if (tick % kWalkCheckEveryTicks == 5) collision_schedule.Share();
+        if (settings.stage >= 8) door_schedule.Update(world, generation, world_path, player.pawn, collision_schedule, GetTickCount64());
         if (world && log_tick) {
             const LARGE_INTEGER log_start = Now();
             probe::LogWorld(world, frame);
@@ -815,6 +918,8 @@ void Run(std::uintptr_t image_base) {
             if (settings.stage >= 7) SC_LOG("[player-hits] %s", combat::player_hits::TakeStats().c_str());
             if (settings.stage >= 8) SC_LOG("[overlay] %s", render::TakeStats().c_str());
             if (settings.stage >= 8) SC_LOG("[hud] %s", ui::TakeHudStats().c_str());
+            if (settings.stage >= 8) SC_LOG("[streaming] %s", hooks::streaming_guard::TakeStats().c_str());
+            if (settings.stage >= 8) SC_LOG("[interaction] %s", interaction::TakeStats().c_str());
             collision_schedule.FlushCheck();
         }
     }

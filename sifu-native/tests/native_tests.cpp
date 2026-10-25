@@ -18,6 +18,8 @@
 #include "combat/light_impact.h"
 #include "combat/shield_timing.h"
 #include "combat/shield_ledger.h"
+#include "combat/impulse_ledger.h"
+#include "combat/launch_params.h"
 #include "collision/voxels.h"
 #include "collision/walk_check.h"
 #include "core/build_guard.h"
@@ -25,6 +27,11 @@
 #include "generated/sifu_build.g.h"
 #include "hooks/vtable_hook.h"
 #include "input/input_router.h"
+#include "input/ownership_intent.h"
+#include "input/displacement_guard.h"
+#include "interaction/door_motion.h"
+#include "hooks/streaming_lease.h"
+#include "interaction/intent.h"
 #include "input/anchor_request.h"
 #include "input/key_map.h"
 #include "probe/combat_sample.h"
@@ -935,6 +942,131 @@ void TestShieldTimingAndLedger() {
     Expect(ledger.Consume(55, reply, 1100), "ordinary blocks can be acknowledged without scheduling a native impact");
 }
 
+void TestMaceImpulses() {
+    using namespace sifucraft;
+    combat::ImpulseLedger ledger;
+    protocol::EnemyDamagePayload hit{101, 1, 21, .15f, 0, 3, 7, 0};
+    protocol::EnemyImpulsePayload push{100, 102, 1, 3, 7, 1, -2};
+    Expect(!ledger.Consume(10, push, {}, 200), "range impulse needs an applied origin");
+    ledger.Record(100, 10, hit, {}, 100);
+    Expect(!ledger.Consume(10, push, {}, 200), "ordinary damage cannot authorize range motion");
+    hit.flags = protocol::kDamageSmash; ledger.Record(100, 10, hit, {}, 100);
+    Expect(!ledger.Consume(11, push, {}, 200), "range impulse rejects another session");
+    auto bad = push; bad.world_generation++;
+    Expect(!ledger.Consume(10, bad, {}, 200), "range impulse rejects another world");
+    bad = push; bad.anchor_epoch++;
+    Expect(!ledger.Consume(10, bad, {}, 200), "range impulse rejects another anchor epoch");
+    bad = push; bad.mc_x = NAN;
+    Expect(!ledger.Consume(10, bad, {}, 200), "range impulse rejects NaN");
+    bad = push; bad.mc_z = 17;
+    Expect(!ledger.Consume(10, bad, {}, 200), "range impulse rejects unbounded motion");
+    Expect(!ledger.Consume(10, push, {}, 99) && !ledger.Consume(10, push, {}, 2101), "origin has a bounded forward-time lifetime");
+    Expect(!ledger.Consume(10, push, {401, 0, 0}, 200), "range impulse rejects distant targets");
+    combat::ImpulseLedger::Origin origin{};
+    Expect(ledger.Consume(10, push, {400, 0, 0}, 200, &origin) && origin.created == 100, "finite range boundary consumes the original credential");
+    Expect(!ledger.Consume(10, push, {}, 200), "a new transport ID cannot replay the same origin-target pair");
+    push.enemy_id++;
+    Expect(ledger.Consume(10, push, {}, 200), "one smash can push several distinct targets once");
+    ledger.Reset(); push.enemy_id++;
+    Expect(!ledger.Consume(10, push, {}, 200), "ownership, map and stage reset discard range credentials");
+    for (unsigned id = 1; id <= 300; ++id) ledger.Record(id, 10, hit, {}, 100);
+    push.origin_damage_id = 1;
+    Expect(!ledger.Consume(10, push, {}, 200), "bounded credential eviction cannot resurrect old motion");
+    protocol::Vec3 velocity{}; push.origin_damage_id = 300;
+    Expect(combat::ImpulseVelocity(push, {100, 0, 300}, &velocity) &&
+           std::abs(std::hypot(velocity.x, velocity.y) - 600) < .01 && velocity.z == 0,
+           "horizontal units map to Sifu with a 600cm/s vector cap and no added Z");
+    Expect(!combat::ImpulseVelocity(push, {NAN, 0, 0}, &velocity), "non-finite live velocity never reaches a game call");
+    combat::LaunchParams shape{16, 0, 12, 13, 1, 1};
+    std::uint8_t buffer[18]; std::memset(buffer, 0xAA, sizeof(buffer));
+    Expect(shape.Encode(std::span(buffer + 1, 16), {123, -456, 0}) && buffer[0] == 0xAA && buffer[17] == 0xAA &&
+           buffer[13] == 1 && buffer[14] == 0, "reflected launch params preserve guards and set XY true / Z false");
+    shape.z = 12; shape.xy_mask = 2; shape.z_mask = 4;
+    Expect(shape.Encode(std::span(buffer + 1, 16), {}) && buffer[13] == 2, "packed bool parameters honor distinct reflected masks");
+    shape.z_mask = 2;
+    Expect(!shape.valid(), "overlapping reflected bool masks reject the call");
+    shape.z = 4;
+    Expect(!shape.valid(), "reflected bools cannot overwrite the velocity vector");
+}
+void TestScriptHandoverIntent() {
+    using namespace sifucraft;
+    input::OwnershipIntent intent;
+    using protocol::InputOwner;
+    Expect(intent.Desired(false) == InputOwner::Minecraft, "safe startup requests Minecraft");
+    Expect(intent.Desired(true) == InputOwner::Sifu, "scripts and menus keep the real player");
+    intent.RequestSwitch(InputOwner::Minecraft, true); // cutscene entered before the router sampled it
+    Expect(intent.enabled() && intent.Desired(true) == InputOwner::Sifu,
+           "F8 on the first cinematic frame does not disable Minecraft or bypass the cinematic");
+    for (int i = 0; i < 5; ++i) intent.RequestSwitch(InputOwner::Sifu, true);
+    Expect(intent.Desired(true) == InputOwner::Sifu && intent.Desired(false) == InputOwner::Minecraft,
+           "repeated F8 during a blocked handover resumes Minecraft when the guard clears");
+    intent.RequestSwitch(InputOwner::Minecraft, false);
+    Expect(!intent.enabled() && intent.Desired(false) == InputOwner::Sifu, "F8 under actual MC control yields manually");
+    Expect(intent.Desired(true) == InputOwner::Sifu && intent.Desired(false) == InputOwner::Sifu,
+           "a manual yield is not undone just because a later cutscene ends");
+    intent.RequestSwitch(InputOwner::Sifu, false);
+    Expect(intent.Desired(false) == InputOwner::Minecraft, "F8 requests MC again after a manual yield");
+}
+void TestDoorViewHandover() {
+    using namespace sifucraft;
+    using input::DisplacementGuard;
+    using Change = DisplacementGuard::Change;
+    const interaction::MotionScope scope{10, 2, 3, 100, 5, 200, 6};
+    interaction::DoorMotionWindow door;
+    Expect(interaction::IsDoorClass("BP_2WaysInterractiveLockableDoor_C") &&
+           interaction::IsDoorClass("BP_Door_C") && !interaction::IsDoorClass("BP_OutdoorLamp_C") &&
+           !interaction::IsDoorClass("BP_Pickup_C"), "only door classes explain door animation motion");
+    Expect(!door.Observe(scope, 100, 1.1f), "no door motion exception without a dispatched use");
+    door.Arm(scope, 100, true);
+    DisplacementGuard guard;
+    guard.Reset({}, 100);
+    std::uint32_t consecutive = 0;
+    // Replay the 1.0-1.2 cm per-frame corrections observed before the real handover bug.
+    for (std::uint64_t now = 104; now < 4100; now += 4) {
+        const bool keep = door.Observe(scope, now, 1.1f);
+        consecutive = keep ? 0 : consecutive + 1;
+        guard.Update(true, true, true, {}, consecutive, now);
+    }
+    Expect(!guard.driving() && consecutive == 0, "own door root motion keeps MC pose and camera throughout the animation");
+    door.UpdateScope(scope, true); // MC inventory can stay open; ownership remains MC.
+    Expect(door.Observe(scope, 9999, 1.2f), "same-scope GUI does not cancel the door window");
+    Expect(!door.Observe(scope, 10100, 1.2f), "door exception expires at ten seconds without sliding extension");
+    Expect(guard.Update(true, true, true, {}, 3, 10104) == Change::Yield,
+           "ordinary displacement guard resumes after the bounded window");
+    Expect(guard.Update(false, false, true, {2, 0, 0}, 0, 11104) == Change::None && guard.driving(),
+           "continued native movement reproduces the old automatic recovery wait");
+    Expect(guard.ManualRecovery(11105) && !guard.driving(), "F8 immediately clears a displacement-only wait");
+    input::OwnershipIntent intent;
+    intent.RequestSwitch(protocol::InputOwner::Sifu, true);
+    Expect(intent.Desired(false) == protocol::InputOwner::Minecraft && intent.Desired(true) == protocol::InputOwner::Sifu,
+           "F8 recovery requests MC without bypassing real cinematic, pause or input guards");
+    Expect(guard.Update(true, true, true, {}, 0, 11106) == Change::None, "no stale displacement latch after F8");
+    Expect(guard.Update(true, true, true, {}, 3, 12000) == Change::Yield &&
+           guard.Update(false, false, true, {}, 0, 14000) == Change::Recovered,
+           "non-door script motion still yields and automatically recovers when quiet");
+    for (int field = 0; field < 6; ++field) {
+        auto changed = scope;
+        switch (field) {
+            case 0: ++changed.session; break; case 1: ++changed.world; break; case 2: ++changed.epoch; break;
+            case 3: ++changed.pawn_serial; break; case 4: ++changed.controller_serial; break; case 5: ++changed.pawn; break;
+        }
+        door.Arm(scope, 100, true);
+        Expect(!door.Observe(changed, 104, 1.1f) && !door.Observe(scope, 108, 1.1f),
+               "door view exception cannot survive a scope or object-lifetime change");
+    }
+    door.Arm(scope, 100, true); door.UpdateScope(scope, false); door.UpdateScope(scope, true);
+    Expect(!door.Observe(scope, 104, 1.1f), "F8, menu and disconnect clear rather than suspend a door exception");
+    door.Arm(scope, 100, true);
+    Expect(!door.Observe(scope, 104, 51) && !door.Observe(scope, 108, 1.1f), "large native snaps revoke the exception");
+    door.Arm(scope, 100, true);
+    Expect(!door.Observe(scope, 104, NAN), "invalid motion cannot suppress the native script guard");
+    door.Arm(scope, 100, true); door.Arm(scope, 104, false);
+    Expect(!door.Observe(scope, 108, 1.1f), "a new non-door use cannot inherit door motion permission");
+    auto invalid = scope; invalid.pawn_serial = 0; door.Arm(invalid, 100, true);
+    Expect(!door.Observe(invalid, 104, 1.1f), "door motion needs valid current actor identities");
+    guard.Reset({}, 15000);
+    Expect(!guard.driving() && !guard.ManualRecovery(15001), "new pawn scope and ordinary F8 have no old fallback state");
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -983,6 +1115,41 @@ int main(int argc, char** argv) {
     TestLanguage();
     TestShieldTimingAndLedger();
     TestLightImpactCall();
+    TestMaceImpulses();
+    TestScriptHandoverIntent();
+    TestDoorViewHandover();
+    {
+        sifucraft::interaction::Requests ledger;
+        Expect(ledger.Claim(10, 1) && !ledger.Claim(10, 1) && !ledger.Claim(10, 0), "native use gesture cannot replay a request");
+        Expect(ledger.Claim(10, 4) && !ledger.Claim(10, 2) && ledger.Claim(11, 1), "native use IDs are ordered per peer lifetime");
+        sifucraft::protocol::InteractionSnapshot target{};
+        target.minimum = {100, -50, 0}; target.maximum = {120, 50, 200}; target.range_cm = 150;
+        Expect(sifucraft::interaction::InRange({0, 0, 162}, target), "native use distance is measured to the target bounds");
+        Expect(!sifucraft::interaction::InRange({-100, 0, 162}, target) &&
+            !sifucraft::interaction::InRange({NAN, 0, 162}, target), "far and invalid native use positions are refused");
+        target.maximum.x = 0;
+        Expect(!sifucraft::interaction::InRange({0, 0, 162}, target), "inverted candidate bounds cannot authorize an input");
+    }
+    {
+        using sifucraft::hooks::StreamingLease;
+        StreamingLease lease;
+        Expect(!lease.Update(false, true) && !lease.held(), "ground movement keeps streaming enabled");
+        Expect(lease.Update(true, true) == false && lease.held(), "takeoff freezes streaming before the pawn moves");
+        Expect(!lease.Update(true, false), "airborne frames and sky platforms do not repeat the call");
+        Expect(lease.Update(false, false) == true && !lease.held(), "landing/F8/script/lost scope restores enabled streaming");
+        Expect(!lease.Update(false, true), "restored ground frames do not repeat the call");
+        Expect(!lease.Update(true, false) && lease.held() && !lease.Update(false, false),
+            "a pre-existing disabled state remains disabled on release");
+        lease.Update(true, true); lease.Discard();
+        Expect(!lease.Update(false, false), "a different world/manager does not receive a stale restore");
+        sifucraft::collision::VoxelGrid floor;
+        floor.Set(0, 0, -1);
+        Expect(sifucraft::collision::HasFloorSupport(floor, {6, 6, 0}), "original scene floor permits landing restore");
+        Expect(sifucraft::collision::HasFloorSupport(floor, {30, 6, 0}), "capsule edge support permits landing restore");
+        Expect(!sifucraft::collision::HasFloorSupport(floor, {6, 6, 100}) &&
+            !sifucraft::collision::HasFloorSupport(floor, {6, 6, 2000}), "a sky platform above the floor keeps the scene loaded");
+        Expect(!sifucraft::collision::HasFloorSupport(floor, {NAN, 6, 0}), "invalid support coordinates are refused");
+    }
     TestBuildGuard();
     TestVtableHook();
     TestKeyMap();

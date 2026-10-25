@@ -18,9 +18,25 @@ inline constexpr std::uintptr_t NamePoolData = 0x5D71C00;
 inline constexpr std::uintptr_t GD3D11RHI = 0x5D98E78;
 inline constexpr std::uintptr_t GDynamicRHI = 0x5E602C0;
 inline constexpr std::uintptr_t InternationalizationStore = 0x5D26918;
+inline constexpr std::uintptr_t LevelStreamingManager = 0x5C7EBF0;
+inline constexpr std::uintptr_t InteractionKey = 0x5D8AE10;
 }  // namespace rva
 
 namespace off {
+namespace AFightingPlayerController {
+inline constexpr std::uint32_t m_CurrentInteractionObjectComponent = 0x1330;
+}
+namespace UInteractionObjectComponent {
+inline constexpr std::uint32_t m_DetectionComponent = 0x1DC;
+inline constexpr std::uint32_t m_VisualComponent = 0x1E4;
+inline constexpr std::uint32_t m_bIsUsable = 0x161;
+inline constexpr std::uint32_t m_bUseCustomWalkInteractionDist = 0x128;
+inline constexpr std::uint32_t m_fCustomWalkInteractionDist = 0x12C;
+}
+namespace FSCLevelStreamingManager {
+inline constexpr std::uint32_t m_World = 0x148;
+inline constexpr std::uint32_t m_bStreamingVolumesEnabled = 0x2B0;
+}
 namespace InternationalizationStore {
 inline constexpr std::uint32_t Data = 0x0;
 inline constexpr std::uint32_t Ptr = 0x98;
@@ -583,6 +599,7 @@ inline constexpr std::uint32_t bOverrideWalkableSlopeOnInstance_Width = 1;
 
 // Functions called directly.
 namespace fn {
+inline constexpr std::uintptr_t FKey_Copy = 0x1BA9B10;
 inline constexpr std::uintptr_t FKey_Destructor = 0xF523F0;
 inline constexpr std::uintptr_t LaunchImpactInternal = 0x1A64D30;
 }  // namespace fn

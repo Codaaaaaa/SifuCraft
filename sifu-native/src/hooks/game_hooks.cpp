@@ -13,6 +13,8 @@
 #include "core/safe_memory.h"
 #include "generated/sifu_build.g.h"
 #include "hooks/camera_fade.h"
+#include "hooks/streaming_guard.h"
+#include "interaction/native_interaction.h"
 #include "hooks/vtable_hook.h"
 #include "input/input_router.h"
 #include "input/key_map.h"
@@ -146,6 +148,7 @@ void ApplyPose() {
         CallSetHidden(pawn, true);
         g_hidden_pawn = pawn;
         g_have_last_write = false;
+        g_consecutive_displacements.store(0, std::memory_order_relaxed);
     } else if (!probe::ActorHidden(pawn)) {
         CallSetHidden(pawn, true);
         g_pose_stats.pawn_rehides.fetch_add(1, std::memory_order_relaxed);
@@ -169,6 +172,7 @@ void ApplyPose() {
     const std::uintptr_t root = mem::ReadPtr(pawn + gen::off::AActor::RootComponent);
     if (ue::AttachParentOf(root)) {
         g_have_last_write = false;
+        g_consecutive_displacements.store(0, std::memory_order_relaxed);
         g_pose_stats.attached_skips.fetch_add(1, std::memory_order_relaxed);
         return;
     }
@@ -177,7 +181,7 @@ void ApplyPose() {
     if (g_have_last_write && ue::ReadWorldLocation(root, &current)) {
         const float dx = current.x - g_last_write.x, dy = current.y - g_last_write.y, dz = current.z - g_last_write.z;
         const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (distance <= kDisplacementToleranceCm) {
+        if (distance <= kDisplacementToleranceCm || interaction::PreserveDoorView(pawn, distance)) {
             g_consecutive_displacements.store(0, std::memory_order_relaxed);
         } else {
             g_consecutive_displacements.fetch_add(1, std::memory_order_relaxed);
@@ -282,10 +286,14 @@ void EngineTickHook(void* engine, float delta_seconds, bool idle_mode) {
     }
     g_frames.ticks.fetch_add(1, std::memory_order_relaxed);
     g_frames.window_ticks.fetch_add(1, std::memory_order_relaxed);
+    streaming_guard::ApplyOnGameThread(g_image_base, g_stage);
+    if (g_stage >= 8) InteractionKeyReady();
+    interaction::BeforeTick(g_image_base, g_stage);
     if (g_stage >= 5) ApplyPose();
     if (g_stage >= 6) blocks::ApplyOnGameThread(g_image_base);
     if (g_stage >= 7) combat::damage::ApplyOnGameThread(g_image_base);
     g_engine_tick.original<EngineTickFn>()(engine, delta_seconds, idle_mode);
+    interaction::AfterTick(g_image_base, g_stage);
     if (g_stage >= 8) ui::ApplyHudOnGameThread(g_image_base,
         input::Router().owner() == protocol::InputOwner::Minecraft && PoseActive(), render::LastPresentation());
 }
@@ -583,6 +591,37 @@ void SetPoseOverride(const PoseOverride& pose, const std::vector<std::uintptr_t>
 }
 
 bool InputHooksInstalled() { return g_input_key.installed() && g_input_axis.installed(); }
+bool InteractionKeyReady() {
+    static bool ready = false, failed = false;
+    if (ready || failed) return ready;
+    FKeyRaw source{};
+    if (!g_input_key.installed() || !mem::Read(g_image_base + gen::rva::InteractionKey, &source) || ue::NameToString(source.name) != "Q") return false;
+    const auto refs = reinterpret_cast<std::uintptr_t>(source.reference_controller);
+    const auto before = refs ? mem::ReadOr<std::int32_t>(refs + 8, -1) : 0;
+    if (refs && before < 1) { failed = true; return false; }
+    using Copy = void* (*)(void*, const void*);
+    FKeyRaw copy{};
+    reinterpret_cast<Copy>(g_image_base + gen::fn::FKey_Copy)(&copy, reinterpret_cast<const void*>(g_image_base + gen::rva::InteractionKey));
+    const bool same = std::memcmp(&copy, &source, sizeof(copy)) == 0;
+    const auto during = refs ? mem::ReadOr<std::int32_t>(refs + 8, -1) : 0;
+    DestroyKey(&copy);
+    const auto after = refs ? mem::ReadOr<std::int32_t>(refs + 8, -1) : 0;
+    ready = same && after == before && (!refs || during == before + 1);
+    failed = !ready;
+    SC_LOG("[interaction] FKey copy/destruction selfcheck %s refs=%d/%d/%d (no gameplay input)", ready ? "PASS" : "REFUSED", before, during, after);
+    return ready;
+}
+bool SendInteractionKey(std::uintptr_t controller, bool down) {
+    if (!InteractionKeyReady() || controller != g_controller.load() || !ue::IsLive(controller)) return false;
+    FKeyRaw source{};
+    if (!mem::Read(g_image_base + gen::rva::InteractionKey, &source) || ue::NameToString(source.name) != "Q") return false;
+    using Copy = void* (*)(void*, const void*);
+    FKeyRaw key{};
+    reinterpret_cast<Copy>(g_image_base + gen::fn::FKey_Copy)(&key,
+        reinterpret_cast<const void*>(g_image_base + gen::rva::InteractionKey));
+    g_input_key.original<InputKeyFn>()(reinterpret_cast<void*>(controller), &key, down ? 0 : 1, down ? 1.0f : 0.0f, false);
+    return true; // dispatched, not a claim that the interaction succeeded
+}
 
 void SetCameraOverride(const CameraOverride& view) {
     AcquireSRWLockExclusive(&g_camera_lock);

@@ -39,13 +39,19 @@ public final class SifuCollision {
     /** One grid in one place, with the Minecraft shape of each of its blocks built on first use. */
     public static final class Active {
         private final CollisionGrid grid;
+        private final CollisionGrid doors;
         private final MapPlacement placement;
         private final Map<long[], VoxelShape> shapes = new ConcurrentHashMap<>(); // keyed by the grid's own arrays
 
         public Active(CollisionGrid grid, MapPlacement placement) {
+            this(grid, placement, null);
+        }
+        public Active(CollisionGrid grid, MapPlacement placement, CollisionGrid doors) {
             this.grid = grid;
             this.placement = placement;
+            this.doors = doors;
         }
+        public CollisionGrid doors() { return doors; }
 
         public CollisionGrid grid() {
             return grid;
@@ -66,8 +72,9 @@ public final class SifuCollision {
                     for (int x = x0; x <= x1; x++) {
                         // Minecraft (x, y, z) block = Unreal block (x, z, y) shifted by the map's origin.
                         long[] layers = grid.block(x - placement.originX(), z - placement.originZ(), y - placement.originY());
-                        if (layers == null) continue;
-                        sink.accept(pos.set(x, y, z), shapes.computeIfAbsent(layers, SifuCollision::shapeOf).move(x, y, z));
+                        if (layers != null) sink.accept(pos.set(x, y, z), shapes.computeIfAbsent(layers, SifuCollision::shapeOf).move(x, y, z));
+                        long[] moving = doors == null ? null : doors.block(x - placement.originX(), z - placement.originZ(), y - placement.originY());
+                        if (moving != null) sink.accept(pos.set(x, y, z), shapes.computeIfAbsent(moving, SifuCollision::shapeOf).move(x, y, z));
                     }
                 }
             }
@@ -82,8 +89,8 @@ public final class SifuCollision {
         /** Minecraft-space cell (x, y, z) of the 1/8 grid (cell = floor(coordinate * 8)). */
         private boolean solidCell(int x, int y, int z) {
             int perBlock = CollisionGrid.CELLS_PER_BLOCK;
-            return grid.solid(x - placement.originX() * perBlock, z - placement.originZ() * perBlock,
-                    y - placement.originY() * perBlock);
+            int gx = x - placement.originX() * perBlock, gy = z - placement.originZ() * perBlock, gz = y - placement.originY() * perBlock;
+            return grid.solid(gx, gy, gz) || doors != null && doors.solid(gx, gy, gz);
         }
 
         /**
@@ -155,7 +162,7 @@ public final class SifuCollision {
                     double outZ = Math.max(0, Math.max(box.minZ - mcZ, mcZ - box.maxZ));
                     if (outX * outX + outZ * outZ > reach * reach) continue;
                     for (int z = z0; z <= z1; z++) {
-                        if (!grid.solid(x, y, z)) continue;
+                        if (!grid.solid(x, y, z) && (doors == null || !doors.solid(x, y, z))) continue;
                         sumX += mcX - centreX;
                         sumZ += mcZ - centreZ;
                     }

@@ -101,6 +101,9 @@ public:
     void PublishCollision(const CollisionInfo& info);
     // Replaces the whole nearby-enemy table (Sifu owns enemy state). Runtime thread only.
     void PublishEnemies(std::uint32_t world_generation, const std::vector<protocol::EnemyEntry>& entries);
+    void PublishInteraction(const protocol::InteractionSnapshot& snapshot);
+    void PublishDoors(const CollisionInfo& info);
+    bool SendInteractionResult(const protocol::InteractResultPayload& result);
     void DrainEnemyDamage(std::vector<protocol::Event>* events);
     bool SendDamageResult(const protocol::DamageResultPayload& result);
     bool SendPlayerHit(const protocol::PlayerHitPayload& hit, std::uint64_t* published_id = nullptr);
@@ -137,6 +140,8 @@ private:
     protocol::CollisionManifest* manifest_ = nullptr;
     protocol::BlockTable* block_table_ = nullptr;
     protocol::EnemyTable* enemy_table_ = nullptr;
+    protocol::InteractionSnapshot* interaction_ = nullptr;
+    protocol::CollisionManifest* doors_ = nullptr;
     protocol::EventRing* outgoing_ = nullptr;
     protocol::EventRing* incoming_ = nullptr;
 

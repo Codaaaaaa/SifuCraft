@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <unordered_map>
 
 #include "collision/components.h"
@@ -194,7 +195,55 @@ std::vector<Affine> WorldTransforms(std::uintptr_t component, std::uintptr_t ins
 
 }  // namespace
 
+namespace {
+std::unordered_map<std::uintptr_t, ue::ObjectIdentity> g_interactive_owners;
+void RefreshInteractiveOwners(std::uintptr_t world) {
+    g_interactive_owners.clear();
+    const auto cls = ue::FindClass("InteractionObjectComponent");
+    if (!cls) return;
+    for (int i = 0, count = ue::ObjectCount(); i < count; ++i) {
+        const auto component = ue::ObjectAt(i);
+        if (!ue::IsLive(component) || !ue::IsA(component, cls)) continue;
+        const auto owner = ue::OuterOf(component);
+        if (ue::IsLive(owner) && VisibleLevelOf(component, world)) g_interactive_owners[owner] = ue::IdentityOf(owner);
+    }
+}
+}
+bool DynamicSceneComponent(std::uintptr_t component) {
+    const auto owner = ue::OuterOf(component);
+    if (!ue::IsLive(owner)) return false;
+    const auto character = ue::FindClass("Character");
+    if (character && ue::IsA(owner, character)) return false;
+    if (auto at = g_interactive_owners.find(owner); !IsFixed(component) && at != g_interactive_owners.end() && at->second == ue::IdentityOf(owner)) return true;
+    std::string text = ue::ClassName(owner) + " " + ue::ObjectName(component);
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text.find("door") != std::string::npos;
+}
+std::vector<std::uintptr_t> DynamicSceneComponents(std::uintptr_t world) {
+    RefreshInteractiveOwners(world);
+    const auto primitive = ue::FindClass("PrimitiveComponent");
+    std::vector<std::uintptr_t> out;
+    for (int i = 0, count = ue::ObjectCount(); i < count; ++i) {
+        const auto component = ue::ObjectAt(i);
+        if (ue::IsLive(component) && ue::IsA(component, primitive) && VisibleLevelOf(component, world) && DynamicSceneComponent(component))
+            out.push_back(component);
+    }
+    return out;
+}
+ShapeSet ExtractComponents(const std::vector<std::uintptr_t>& components, const Responses& pawn, float walkable_z) {
+    ShapeSet out; out.pawn_walkable_z = walkable_z; Extractor extractor(&out);
+    const auto instanced = ue::FindClass("InstancedStaticMeshComponent");
+    for (const auto component : components) {
+        if (!ue::IsLive(component) || !Blocks(component, pawn)) continue;
+        const auto setup = BodySetupOf(component);
+        if (!setup) continue;
+        auto transforms = WorldTransforms(component, instanced, &out);
+        if (!transforms.empty()) extractor.AddComponent(setup, transforms, WalkableFloorZOn(component, walkable_z));
+    }
+    return out;
+}
 ShapeSet ExtractShapes(std::uintptr_t world, const Responses& pawn_responses, float pawn_walkable_z) {
+    RefreshInteractiveOwners(world);
     ShapeSet out;
     out.pawn_walkable_z = pawn_walkable_z;
     static const std::uintptr_t primitive_class = ue::FindClass("PrimitiveComponent");
@@ -206,6 +255,7 @@ ShapeSet ExtractShapes(std::uintptr_t world, const Responses& pawn_responses, fl
         const std::uintptr_t component = ue::ObjectAt(i);
         if (!component || !ue::IsA(component, primitive_class) || !ue::IsLive(component)) continue;
         if (!VisibleLevelOf(component, world) || !Blocks(component, pawn_responses)) continue;
+        if (DynamicSceneComponent(component)) continue;
         if (!IsFixed(component)) {
             ++out.skipped_movable;
             continue;

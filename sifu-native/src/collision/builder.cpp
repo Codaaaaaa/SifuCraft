@@ -44,6 +44,7 @@ std::shared_ptr<const VoxelGrid> Build(const BuildRequest& request) {
     VoxelGrid& grid = *built;
     VoxelStats stats;
     Voxelize(s, &grid, &stats);
+    if (!request.diagnostics) return built;
     SC_LOG("[collision] %s: voxelized %d convex (%d degenerate) %d capsules %d triangles (%d slivers) in %.0f + %.0f + "
            "%.0f ms -> %llu cells in %zu blocks (%d oversized shapes left out) | %d steep faces made walls "
            "(walkable floor Z %.3f, %d components with a slope override)",
@@ -101,7 +102,7 @@ std::optional<PublishedGrid> Builder::Publish(const BuildRequest& request, const
 
     const std::wstring directory = log::RootDirectory() + L"\\collision";
     CreateDirectoryW(directory.c_str(), nullptr);
-    out.path = directory + L"\\" + Widen(request.map) + L"-" + std::to_wstring(out.generation) + L".scvx";
+    out.path = directory + L"\\" + Widen(request.map + request.file_tag) + L"-" + std::to_wstring(out.generation) + L".scvx";
     // Written aside and renamed into place, so Minecraft never sees a partial file.
     const std::wstring partial = out.path + L".partial";
     if (!WriteVoxelFile(partial, grid, request.map, request.pawn_feet) ||

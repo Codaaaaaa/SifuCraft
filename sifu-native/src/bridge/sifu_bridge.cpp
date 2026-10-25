@@ -56,6 +56,8 @@ bool SifuBridge::Start() {
     manifest_ = At<CollisionManifest>(base, kCollisionManifestOffset);
     block_table_ = At<BlockTable>(base, kBlockTableOffset);
     enemy_table_ = At<EnemyTable>(base, kEnemyTableOffset);
+    interaction_ = At<InteractionSnapshot>(base, kInteractionOffset);
+    doors_ = At<CollisionManifest>(base, kDoorManifestOffset);
     outgoing_ = At<EventRing>(base, kSifuToMcRingOffset);
     incoming_ = At<EventRing>(base, kMcToSifuRingOffset);
 
@@ -80,6 +82,8 @@ bool SifuBridge::Start() {
     Atomic(self_->magic).store(kMagic, std::memory_order_release);
     PublishCollision({});  // nothing yet: a previous Sifu session's grid is gone
     PublishEnemies(0, {});
+    PublishInteraction({});
+    PublishDoors({});
 
     SC_LOG("[bridge] shared memory %s: %ls (%u bytes) protocol v%u layout=%016llX session=%016llX",
            mapping_.created() ? "created" : "opened", kMappingName, kMappingSize, kVersion,
@@ -235,6 +239,14 @@ void SifuBridge::PumpEvents() {
                 if (peer_connected_ && event.size == sizeof(PlayerBlockedPayload)) damage_events_.push_back(event);
                 else ++stats_.events_unknown;
                 break;
+            case EventType::EnemyImpulse:
+                if (peer_connected_ && event.size == sizeof(EnemyImpulsePayload)) damage_events_.push_back(event);
+                else ++stats_.events_unknown;
+                break;
+            case EventType::NativeInteract:
+                if (peer_connected_ && event.size == sizeof(InteractPayload)) damage_events_.push_back(event);
+                else ++stats_.events_unknown;
+                break;
             default:
                 ++stats_.events_unknown;
                 break;
@@ -383,6 +395,29 @@ void SifuBridge::ReadPeerSnapshot() {
         peer_state_.use_binding = copy.use_binding;
         return;
     }
+}
+
+void SifuBridge::PublishInteraction(const InteractionSnapshot& value) {
+    if (!interaction_) return;
+    auto seq = Atomic(interaction_->seq);
+    const auto start = seq.load(std::memory_order_relaxed) & ~1ull;
+    seq.store(start + 1, std::memory_order_relaxed); CompilerBarrier();
+    std::memcpy(reinterpret_cast<std::uint8_t*>(interaction_) + 8, reinterpret_cast<const std::uint8_t*>(&value) + 8, sizeof(value) - 8);
+    CompilerBarrier(); seq.store(start + 2, std::memory_order_release);
+}
+void SifuBridge::PublishDoors(const CollisionInfo& info) {
+    if (!doors_) return;
+    auto seq = Atomic(doors_->seq); const auto start = seq.load() & ~1ull;
+    seq.store(start + 1, std::memory_order_relaxed); CompilerBarrier();
+    doors_->generation = info.generation; doors_->world_generation = info.world_generation;
+    doors_->block_count = info.block_count; doors_->cell_count = info.cell_count;
+    std::memset(doors_->map, 0, sizeof(doors_->map)); std::memset(doors_->path, 0, sizeof(doors_->path));
+    std::memcpy(doors_->map, info.map.data(), std::min(info.map.size(), sizeof(doors_->map) - 1));
+    std::memcpy(doors_->path, info.path.data(), std::min(info.path.size(), sizeof(doors_->path) - 1));
+    CompilerBarrier(); seq.store(start + 2, std::memory_order_release);
+}
+bool SifuBridge::SendInteractionResult(const InteractResultPayload& result) {
+    return Send(EventType::NativeInteractResult, &result, sizeof(result));
 }
 
 void SifuBridge::ReadBlocks() {

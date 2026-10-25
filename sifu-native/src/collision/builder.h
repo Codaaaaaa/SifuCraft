@@ -20,6 +20,8 @@ struct BuildRequest {
     std::string map;       // e.g. "Wuguan_Main"
     FVector pawn_feet{};   // for the floor check
     std::uint32_t generation = 0;  // the runtime's world generation the shapes came from
+    std::string file_tag;
+    bool diagnostics = true;
 };
 
 // The latest grid written for Minecraft.

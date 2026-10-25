@@ -30,8 +30,9 @@ public final class NewPlayerSetup {
         }
         int total = 0;
         for (int i = 0; i < player.getInventory().getContainerSize(); i++) total += player.getInventory().getItem(i).getCount();
-        LoggerFactory.getLogger("sifucraft").info("[inventory] profile={} starter={} mode={} items={} naturalRegen={}", player.getUUID(),
+        LoggerFactory.getLogger("sifucraft").info("[inventory] profile={} starter={} mode={} items={} difficulty={} naturalRegen={}", player.getUUID(),
                 first && !Boolean.getBoolean("sifucraft.inventorySelfTest") ? "granted-once" : "preserved", player.gameMode(), total,
+                player.level().getDifficulty(),
                 player.level().getGameRules().get(net.minecraft.world.level.gamerules.GameRules.NATURAL_HEALTH_REGENERATION));
     }
 }

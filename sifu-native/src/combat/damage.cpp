@@ -11,6 +11,8 @@
 #include "combat/damage_ledger.h"
 #include "combat/light_impact.h"
 #include "combat/shield_ledger.h"
+#include "combat/impulse_ledger.h"
+#include "combat/launch_params.h"
 #include "combat/player_hits.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
@@ -23,6 +25,8 @@
 #include "ue/names.h"
 #include "ue/objects.h"
 #include "ue/transform.h"
+#include "ue/function_call.h"
+#include "ue/reflection.h"
 
 namespace sifucraft::combat::damage {
 namespace {
@@ -37,12 +41,19 @@ struct Context {
     std::uint64_t session = 0;
     bool active = false;
     std::vector<Enemies::Target> targets;
+    std::vector<protocol::EnemyEntry> entries;
+    std::uint64_t revision = 0;
+    bool impulses_allowed = false;
 };
 struct Job {
     std::uint64_t session = 0, id = 0, queued_ms = 0;
     protocol::EnemyDamagePayload payload{};
     Enemies::Target target{};
     bool shield_feedback = false;
+    bool impulse = false;
+    std::uint64_t revision = 0;
+    protocol::EnemyImpulsePayload push{};
+    ImpulseLedger::Origin origin{};
 };
 SRWLOCK g_lock = SRWLOCK_INIT;
 Context g_context;
@@ -51,6 +62,13 @@ std::size_t g_inflight = 0;
 std::vector<Reply> g_replies;
 DamageLedger g_ledger;
 ShieldLedger g_shield_ledger;
+ImpulseLedger g_impulse_ledger;
+std::atomic<bool> g_impulse_failed{false}, g_launch_ready{false};
+std::atomic<std::uint64_t> g_impulse_received{0}, g_impulse_applied{0}, g_impulse_rejected{0};
+ue::FunctionCall g_launch_character; // H1 only; shared base function, named reflection validation
+ue::ObjectIdentity g_launch_identity;
+LaunchParams g_launch_params;
+int g_impulse_logged = 0;
 std::atomic<bool> g_shield_failed{false};
 hooks::VtableHook g_observer;
 LaunchImpactFn g_launch = nullptr;
@@ -99,6 +117,72 @@ protocol::DamageResultPayload Result(const Job& job, DamageOutcome outcome, floa
             lost, health, job.payload.world_generation};
 }
 
+const protocol::EnemyEntry* Entry(const Context& context, std::uint32_t id, std::uint32_t spawn) {
+    for (const auto& e : context.entries) if (e.id == id && e.spawn == spawn) return &e;
+    return nullptr;
+}
+protocol::Vec3 Feet(const protocol::EnemyEntry& e) { return {e.location.x, e.location.y, e.location.z - e.capsule_half_height}; }
+bool NamedBase(std::uintptr_t object, const char* name) {
+    auto cls = ue::ClassOf(object);
+    for (int i = 0; i < 64 && ue::IsRegistered(cls); ++i, cls = ue::SuperOf(cls)) {
+        if (ue::ObjectName(cls) == name) return true;
+        if (!ue::SuperOf(cls)) break;
+    }
+    return false;
+}
+bool ResolveLaunch(std::uintptr_t actor) {
+    if (!ue::IsLive(actor) || !NamedBase(actor, "Character")) return false;
+    const auto cls = ue::ClassOf(actor), function = ue::FindFunction(cls, "LaunchCharacter");
+    if (ue::IsRegistered(function) && function == g_launch_character.function() && ue::IdentityOf(function) == g_launch_identity && g_launch_params.valid()) return true;
+    g_launch_ready.store(false);
+    if (!g_launch_character.Resolve(cls, "LaunchCharacter") || !ue::IsRegistered(function) ||
+        !(mem::ReadOr<std::uint32_t>(function + off::UFunction::FunctionFlags, 0) & 0x400u)) return false;
+    LaunchParams p; p.size = g_launch_character.params_size();
+    const auto properties = ue::ListProperties(function);
+    if (properties.size() != 3) return false;
+    for (const auto& property : properties) {
+        if (property.array_dim != 1 || property.offset < 0 || property.element_size <= 0 ||
+            property.offset > p.size - property.element_size) return false;
+        if (property.name == "LaunchVelocity" && property.type == "StructProperty" && property.detail == "Vector" && property.element_size == 12) p.vector = property.offset;
+        else if ((property.name == "bXYOverride" || property.name == "bZOverride") && property.type == "BoolProperty" && property.element_size == 1) {
+            const auto byte = mem::ReadOr<std::uint8_t>(property.field + off::FBoolProperty::ByteOffset, 0xFF);
+            const auto mask = mem::ReadOr<std::uint8_t>(property.field + off::FBoolProperty::ByteMask, 0);
+            if (mem::ReadOr<std::uint8_t>(property.field + off::FBoolProperty::FieldSize, 0) != 1 || byte != 0) return false;
+            if (property.name == "bXYOverride") { p.xy = property.offset + byte; p.xy_mask = mask; }
+            else { p.z = property.offset + byte; p.z_mask = mask; }
+        } else return false;
+    }
+    if (!p.valid()) return false;
+    g_launch_params = p; g_launch_identity = ue::IdentityOf(function); g_launch_ready.store(true);
+    if (g_impulse_logged++ < 80) SC_LOG("[mace] LaunchCharacter selfcheck PASS params=%d velocity=%d xy=%d/%u z=%d/%u cap=600cm/s",
+        p.size, p.vector, p.xy, p.xy_mask, p.z, p.z_mask);
+    return true;
+}
+
+protocol::DamageResultPayload ApplyImpulse(const Context& context, const Job& job, std::uintptr_t actor,
+                                         std::uintptr_t health_component, const probe::HealthSample& health) {
+    if (!context.impulses_allowed || context.revision != job.revision || g_impulse_failed.load() ||
+        GetTickCount64() < job.origin.created || GetTickCount64() - job.origin.created > 2000) return Result(job, DamageOutcome::Stale);
+    const auto entry = Entry(context, job.payload.enemy_id, job.payload.spawn);
+    if (!entry || !InImpulseRange(job.origin.feet, Feet(*entry))) return Result(job, DamageOutcome::Stale);
+    const auto movement = mem::ReadPtr(actor + off::ACharacter::CharacterMovement);
+    if (!ue::IsLive(movement) || ue::OuterOf(movement) != actor || !NamedBase(movement, "CharacterMovementComponent") ||
+        ue::FindPropertyOffset(ue::ClassOf(movement), "Velocity") != off::UMovementComponent::Velocity || !ResolveLaunch(actor)) return Result(job, DamageOutcome::Unavailable);
+    protocol::Vec3 current{}, velocity{};
+    if (!mem::Read(movement + off::UMovementComponent::Velocity, &current) || !ImpulseVelocity(job.push, current, &velocity)) return Result(job, DamageOutcome::Invalid);
+    std::vector<std::uint8_t> params(g_launch_params.size);
+    if (!g_launch_params.Encode(params, velocity)) return Result(job, DamageOutcome::Unavailable);
+    g_launch_character.Invoke(actor, params.data());
+    const float after = mem::ReadOr<float>(health_component + off::UHealthComponent::m_fHealth, NAN);
+    if (!std::isfinite(after) || after != health.health) g_impulse_failed.store(true);
+    if (g_impulse_logged++ < 200) SC_LOG("[mace] impulse original=%llu target=%u/%u world=%u epoch=%u velocity=(%.2f,%.2f,%.2f) HP=%.3f->%.3f%s",
+        static_cast<unsigned long long>(job.push.origin_damage_id), job.payload.enemy_id, job.payload.spawn,
+        context.generation, context.epoch, velocity.x, velocity.y, velocity.z, health.health, after,
+        g_impulse_failed.load() ? " DISABLED: health changed" : "");
+    if (g_impulse_failed.load()) return Result(job, DamageOutcome::Unavailable);
+    g_impulse_applied.fetch_add(1); return Result(job, DamageOutcome::Applied, after);
+}
+
 // Caller holds g_lock. Accepted commands have a reserved place in the bounded job queue.
 void FinishLocked(const Job& job, const protocol::DamageResultPayload& result, bool application = false) {
     if (application) --g_inflight;
@@ -138,6 +222,7 @@ protocol::DamageResultPayload Apply(std::uintptr_t base, const Context& context,
         !probe::ReadHealthSample(health_component, &health)) return Result(job, DamageOutcome::Stale);
     if (health.health <= 0) return Result(job, DamageOutcome::Dead, health.health);
     if (!health.can_be_damaged) return Result(job, DamageOutcome::Invincible, health.health);
+    if (job.impulse) return ApplyImpulse(context, job, actor, health_component, health);
     const auto hit_component = mem::ReadPtr(actor + off::AFightingCharacter::m_HitComponent);
     if (!ue::IsLive(hit_component) || !ue::IsA(hit_component, g_hit_class) ||
         ue::OuterOf(hit_component) != actor) return Result(job, DamageOutcome::Stale);
@@ -167,6 +252,14 @@ protocol::DamageResultPayload Apply(std::uintptr_t base, const Context& context,
     }
     const auto outcome = job.shield_feedback ? (after == health.health ? DamageOutcome::Applied : DamageOutcome::Unavailable)
                                             : (lost > 0 ? DamageOutcome::Applied : DamageOutcome::Invincible);
+    if (!job.shield_feedback && outcome == DamageOutcome::Applied && (job.payload.flags & protocol::kDamageSmash)) {
+        if (const auto entry = Entry(context, job.payload.enemy_id, job.payload.spawn)) {
+            AcquireSRWLockExclusive(&g_lock);
+            if (g_context.revision == context.revision && g_context.impulses_allowed)
+                g_impulse_ledger.Record(job.id, job.session, job.payload, Feet(*entry), job.queued_ms);
+            ReleaseSRWLockExclusive(&g_lock);
+        }
+    }
     if (!job.shield_feedback && outcome == DamageOutcome::Applied) g_applied.fetch_add(1, std::memory_order_relaxed);
     if (job.shield_feedback) {
         if (!std::isfinite(after) || after != health.health) g_shield_failed.store(true);
@@ -225,12 +318,16 @@ bool OwnsObserver(std::uintptr_t value) {
 bool ObserverReady() { return g_ready.load(std::memory_order_acquire); }
 
 void UpdateContext(std::uintptr_t world, std::uint32_t generation, std::uintptr_t pawn, bool active,
-                   std::uint32_t epoch, std::uint64_t peer_session, const std::vector<Enemies::Target>& targets) {
+                   std::uint32_t epoch, std::uint64_t peer_session, const std::vector<Enemies::Target>& targets,
+                   const std::vector<protocol::EnemyEntry>& entries, bool impulses_allowed) {
     const auto identity = ue::IdentityOf(pawn);
     AcquireSRWLockExclusive(&g_lock);
     if (g_context.world != world || g_context.generation != generation || g_context.pawn != pawn || g_context.pawn_identity != identity || g_context.epoch != epoch ||
-        g_context.session != peer_session || g_context.active != (active && identity.valid())) g_shield_ledger.Reset();
-    g_context = {world, pawn, identity, generation, epoch, peer_session, active && identity.valid(), targets};
+        g_context.session != peer_session || g_context.active != (active && identity.valid()) || g_context.impulses_allowed != impulses_allowed) {
+        g_shield_ledger.Reset(); g_impulse_ledger.Reset(); ++g_context.revision;
+    }
+    const auto revision = g_context.revision;
+    g_context = {world, pawn, identity, generation, epoch, peer_session, active && identity.valid(), targets, entries, revision, impulses_allowed};
     g_ledger.SetSession(peer_session);
     ReleaseSRWLockExclusive(&g_lock);
 }
@@ -315,7 +412,33 @@ void SubmitBlocked(const protocol::Event& event) {
         (reply.flags & protocol::kBlockedPerfect) != 0, accepted, queued);
 }
 
+void SubmitImpulse(const protocol::Event& event) {
+    Job job; job.session = event.source_session; job.id = event.id; job.impulse = true;
+    if (event.size != sizeof(job.push)) return;
+    std::memcpy(&job.push, event.payload, sizeof(job.push));
+    g_impulse_received.fetch_add(1);
+    AcquireSRWLockExclusive(&g_lock);
+    const auto target = std::find_if(g_context.targets.begin(), g_context.targets.end(), [&](const auto& t) {
+        return t.id == job.push.enemy_id && t.spawn == job.push.spawn;
+    });
+    const auto entry = Entry(g_context, job.push.enemy_id, job.push.spawn);
+    const bool accepted = g_context.active && g_context.impulses_allowed && !g_impulse_failed.load() &&
+        g_context.session == job.session && target != g_context.targets.end() && entry && g_jobs.size() < kMaxJobs &&
+        g_jobs.size() + g_replies.size() + g_inflight < kMaxReplies &&
+        g_impulse_ledger.Consume(job.session, job.push, Feet(*entry), GetTickCount64(), &job.origin);
+    if (accepted) {
+        job.target = *target; job.revision = g_context.revision; job.queued_ms = job.origin.created;
+        job.payload = {job.push.enemy_id, job.push.spawn, 0, 0, 0, job.push.world_generation, job.push.anchor_epoch, 0};
+        g_jobs.push_back(job);
+    } else g_impulse_rejected.fetch_add(1);
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
 void ApplyOnGameThread(std::uintptr_t base) {
+    AcquireSRWLockShared(&g_lock);
+    const auto schema_pawn = g_context.impulses_allowed ? g_context.pawn : 0;
+    ReleaseSRWLockShared(&g_lock);
+    if (!g_launch_ready.load() && schema_pawn) ResolveLaunch(schema_pawn); // metadata-only preflight
     for (int i = 0; i < 8; ++i) {
         AcquireSRWLockExclusive(&g_lock);
         if (g_jobs.empty()) { ReleaseSRWLockExclusive(&g_lock); return; }
@@ -327,7 +450,10 @@ void ApplyOnGameThread(std::uintptr_t base) {
         const auto result = Apply(base, context, job);
         if (result.result != static_cast<std::uint32_t>(DamageOutcome::Applied)) g_rejected.fetch_add(1, std::memory_order_relaxed);
         AcquireSRWLockExclusive(&g_lock);
-        if (job.shield_feedback) --g_inflight;
+        if (job.shield_feedback || job.impulse) {
+            --g_inflight;
+            if (job.impulse && result.result != static_cast<std::uint32_t>(DamageOutcome::Applied)) g_impulse_rejected.fetch_add(1);
+        }
         else FinishLocked(job, result, true);
         ReleaseSRWLockExclusive(&g_lock);
     }
@@ -340,8 +466,9 @@ std::string TakeStats() {
     ReleaseSRWLockShared(&g_lock);
     const auto take = [](std::atomic<std::uint64_t>& n) { return static_cast<unsigned long long>(n.exchange(0)); };
     return FormatString("H7=%s calls=%s received=%llu applied=%llu rejected=%llu duplicate=%llu observed=%llu "
-        "ledger_mismatch=%llu reply_overflow=%llu queued=%zu replies=%zu", g_ready.load() ? "on" : "off",
+        "ledger_mismatch=%llu reply_overflow=%llu queued=%zu replies=%zu mace_ready=%d mace_received=%llu mace_applied=%llu mace_rejected=%llu mace_disabled=%d", g_ready.load() ? "on" : "off",
         g_failed.load() ? "DISABLED" : "ready", take(g_received), take(g_applied), take(g_rejected), take(g_duplicate),
-        take(g_observed), take(g_mismatch), take(g_reply_overflow), queued, replies);
+        take(g_observed), take(g_mismatch), take(g_reply_overflow), queued, replies, g_launch_ready.load(),
+        take(g_impulse_received), take(g_impulse_applied), take(g_impulse_rejected), g_impulse_failed.load());
 }
 }  // namespace sifucraft::combat::damage

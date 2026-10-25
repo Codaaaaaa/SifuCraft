@@ -20,8 +20,10 @@ from pathlib import Path
 EXE_NAME = "Sifu-Win64-Shipping.exe"
 
 # Global variables whose RVA the native module reads.
-SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData", "GD3D11RHI", "GDynamicRHI", "InternationalizationStore"]
-SYMBOL_MATCHES = {"InternationalizationStore": ("*FInternationalization*Singleton", "::Singleton")}
+SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData", "GD3D11RHI", "GDynamicRHI", "InternationalizationStore", "LevelStreamingManager", "InteractionKey"]
+SYMBOL_MATCHES = {"InternationalizationStore": ("*FInternationalization*Singleton", "::Singleton"),
+                  "LevelStreamingManager": ("FSCLevelStreamingManager::s_Instance", "::s_Instance"),
+                  "InteractionKey": ("EKeys::Q", "::Q")}
 
 # Vtable hook plan: name -> (class whose vftable is patched, class that introduces the virtual,
 # method, implementation the slot must hold). Checked against the exe file here and against live
@@ -45,6 +47,7 @@ HOOKS = {
 
 # Functions sifu-native calls directly: identifier -> symbol.
 FUNCTIONS = {
+    "FKey_Copy": "FKey::FKey",
     "FKey_Destructor": "FKey::~FKey",
     "LaunchImpactInternal": "UHitComponent::LaunchImpactInternal",
 }
@@ -74,6 +77,9 @@ TYPE_ALIASES = {
 
 # type -> members. A member may live in a base class; its offset is then made absolute.
 MEMBERS = {
+    "AFightingPlayerController": ["m_CurrentInteractionObjectComponent"],
+    "UInteractionObjectComponent": ["m_DetectionComponent", "m_VisualComponent", "m_bIsUsable", "m_bUseCustomWalkInteractionDist", "m_fCustomWalkInteractionDist"],
+    "FSCLevelStreamingManager": ["m_World", "m_bStreamingVolumesEnabled"],
     "InternationalizationStore": ["Data", "Ptr"],
     "FInternationalization": ["bIsInitialized", "CurrentLanguage"],
     "FCulture": ["CachedName"],
@@ -317,6 +323,17 @@ class Pdb:
         if len(matches) != 1: raise LookupError(f"expected one '{mask}' ending '{suffix}', found {len(matches)}")
         return matches.pop()
 
+    def sized_rva(self, mask: str, size: int) -> int:
+        matches = set()
+        def collect(info, _size, context):
+            symbol = info.contents
+            if symbol.Size == size: matches.add(symbol.Address - self.base)
+            return True
+        self.dbg.SymEnumSymbolsW.argtypes = [C.c_void_p, C.c_uint64, W.LPCWSTR, ENUM_CALLBACK, C.c_void_p]
+        self.dbg.SymEnumSymbolsW(self.process, self.base, mask, ENUM_CALLBACK(collect), None)
+        if len(matches) != 1: raise LookupError(f"expected one '{mask}' of PDB size {size}, found {len(matches)}")
+        return matches.pop()
+
     def type_id(self, name: str) -> int:
         if name in self._type_cache:
             return self._type_cache[name]
@@ -552,7 +569,7 @@ def main() -> int:
     try:
         for name, symbol in FUNCTIONS.items():
             try:
-                functions[name] = pdb.rva(symbol)
+                functions[name] = pdb.sized_rva(symbol, 34) if name == "FKey_Copy" else pdb.rva(symbol)
             except LookupError as e:
                 errors.append(str(e))
         for type_name, methods in CALL_SLOTS.items():

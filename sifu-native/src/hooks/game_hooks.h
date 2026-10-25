@@ -24,6 +24,9 @@ void SetLocalPlayer(std::uintptr_t controller, std::uintptr_t camera, std::uintp
 // camera manager match the plan.
 void InstallPlayerHooks();
 bool InputHooksInstalled();
+// Game thread, current local controller only. Uses the original input path and an owned FKey copy.
+bool SendInteractionKey(std::uintptr_t controller, bool down);
+bool InteractionKeyReady(); // H1-only balanced copy/destruction self-check, no gameplay input
 
 // The view H4 writes over Sifu's camera after Sifu computed its own (Unreal space).
 struct CameraOverride {

@@ -90,6 +90,12 @@ public final class EnemyProxy extends Mob {
     @Override public boolean isPushable() { return false; }
     @Override public boolean canBeCollidedWith(Entity other) { return false; }
 
+    @Override public void push(double x, double y, double z) {
+        // Capture vanilla mace/wind impulses within the attack; Sifu remains the movement owner.
+        CombatHits.push(this, x, z);
+    }
+    @Override public void push(Vec3 motion) { CombatHits.push(this, motion.x, motion.z); }
+
     @Override public boolean hurtServer(ServerLevel level, DamageSource source, float amount) {
         if (!(source.getEntity() instanceof Player attacker) ||
                 (source.getDirectEntity() != attacker && !(source.getDirectEntity() instanceof Projectile)) ||

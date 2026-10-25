@@ -77,11 +77,19 @@ public final class SifuCraftClient implements ClientModInitializer {
     private DevItemCheck devItemCheck;
     private dev.sifucraft.combat.TotemCheck totemCheck;
     private FoodCheck foodCheck;
+    private MaceCheck maceCheck;
+    private WindChargeCheck windChargeCheck;
+    private ElytraCheck elytraCheck;
+    private NativeInteractionCheck interactionCheck;
+    private final NativeUse nativeUse = new NativeUse();
+    public static void beginUseGesture() { if (instance != null) instance.nativeUse.press(); }
+    public static boolean handleNativeUse() { return instance != null && instance.nativeUse.handle(instance.bridge, instance.minecraft); }
     private int guiWireEvents;
     private final OverlayCapture overlay = new OverlayCapture();
     private final HostLanguage hostLanguage = new HostLanguage();
     private boolean crosshair;
     private CollisionLoader collision;
+    private CollisionLoader doors;
     private final UnrealSpace space = new UnrealSpace();
     private final RespawnHandshake respawn = new RespawnHandshake();
     private final dev.sifucraft.combat.ShieldBlockAnimation shieldAnimation = new dev.sifucraft.combat.ShieldBlockAnimation();
@@ -109,6 +117,10 @@ public final class SifuCraftClient implements ClientModInitializer {
         minecraft = Minecraft.getInstance();
         input = new InputInjector(minecraft);
         bridge = new McBridge(new McBridge.Listener() {
+            @Override public void onNativeInteraction(dev.sifucraft.bridge.NativeInteraction.Result result) {
+                LOG.info("[interaction] native reply request={} outcome={} target={} world={} epoch={}",
+                        result.request(), result.outcome(), result.target(), result.world(), result.epoch());
+            }
             @Override public void onDamageResult(DamageResult result) { CombatHits.result(result); }
             @Override public void onPlayerHit(long session, long eventId, PlayerHit hit) {
                 var player = minecraft.player;
@@ -164,8 +176,15 @@ public final class SifuCraftClient implements ClientModInitializer {
             return;
         }
         collision = new CollisionLoader(message -> LOG.info("[collision] {}", message));
+        doors = new CollisionLoader(message -> LOG.info("[doors] {}", message));
         appearance = new BlockAppearance(minecraft, message -> LOG.info("[blocks] {}", message));
         instance = this;
+        if (Boolean.getBoolean("sifucraft.survivalDifficultySelfTest")) {
+            ServerLifecycleEvents.SERVER_STARTED.register(SurvivalDifficultyCheck::prepare);
+            var check = new SurvivalDifficultyCheck();
+            ServerTickEvents.END_SERVER_TICK.register(check::tick);
+        }
+        ServerLifecycleEvents.SERVER_STARTED.register(DevWorld::migrateDifficulty);
         ServerLifecycleEvents.SERVER_STARTED.register(server -> PlacedBlocks.open(server.getWorldPath(LevelResource.ROOT),
                 message -> LOG.info("[blocks] {}", message)));
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> PlacedBlocks.close());
@@ -196,6 +215,24 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerTickEvents.END_SERVER_TICK.register(foodCheck::serverTick);
             ServerLifecycleEvents.SERVER_STOPPING.register(foodCheck::restore);
         }
+        if (Boolean.getBoolean("sifucraft.maceSelfTest")) {
+            maceCheck = new MaceCheck();
+            ServerTickEvents.END_SERVER_TICK.register(maceCheck::serverTick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(maceCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.windChargeSelfTest")) {
+            windChargeCheck = new WindChargeCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(windChargeCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.elytraSelfTest")) {
+            elytraCheck = new ElytraCheck();
+            ServerTickEvents.END_SERVER_TICK.register(elytraCheck::serverTick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(elytraCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.nativeInteractionSelfTest")) {
+            interactionCheck = new NativeInteractionCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(interactionCheck::restore);
+        }
         if (Boolean.getBoolean("sifucraft.playerDamageTest") || Boolean.getBoolean("sifucraft.playerHitSelfTest") ||
                 Boolean.getBoolean("sifucraft.respawnSelfTest")) {
             PlayerHitCheck check = new PlayerHitCheck();
@@ -206,6 +243,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
             overlay.close();
             collision.close();
+            doors.close();
             bridge.close();
         });
     }
@@ -246,6 +284,15 @@ public final class SifuCraftClient implements ClientModInitializer {
     static int guiWireEvents() { return instance == null ? 0 : instance.guiWireEvents; }
     public static void drawPointer(net.minecraft.client.gui.GuiGraphicsExtractor gui) {
         if (mirroredScreenActive()) SmoothPointer.draw(instance.minecraft, gui);
+    }
+    public static void drawNativeInteraction(net.minecraft.client.gui.GuiGraphicsExtractor gui) {
+        var c = instance;
+        if (c == null || !overlayActive() || c.minecraft.gui.screen() != null || c.minecraft.options.keyShift.isDown() ||
+                c.nativeUse.candidate(c.bridge, c.minecraft) == null) return;
+        var text = net.minecraft.network.chat.Component.literal("[").append(c.minecraft.options.keyUse.getTranslatedKeyMessage())
+                .append("] ").append(net.minecraft.network.chat.Component.translatable("sifucraft.native_interact"));
+        int x = (gui.guiWidth() - c.minecraft.font.width(text)) / 2;
+        gui.text(c.minecraft.font, text, x, gui.guiHeight() / 2 + 20, 0xFFFFFFFF);
     }
     public static boolean mirroredScreenActive() {
         var client = instance;
@@ -289,7 +336,10 @@ public final class SifuCraftClient implements ClientModInitializer {
             space.reset();
         }
         SifuFrame previous = bridge.latest();
+        nativeUse.update(bridge, minecraft);
         collision.update(bridge.collisionManifest());
+        doors.update(previous != null && bridge.doors().worldGeneration() == previous.worldGeneration()
+                ? bridge.doors() : dev.sifucraft.bridge.CollisionManifest.NONE);
         bridge.setLoadedCollision(collision.loadedGeneration());
         respawnIfDead(now, previous);
         closeInvisibleScreens();
@@ -319,6 +369,10 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (devItemCheck != null) devItemCheck.tick(minecraft, input, guiAvailable(frame));
         if (totemCheck != null) totemCheck.clientTick(minecraft);
         if (foodCheck != null) foodCheck.tick(minecraft, input, guiAvailable(frame));
+        if (maceCheck != null) maceCheck.clientTick(minecraft, guiAvailable(frame));
+        if (windChargeCheck != null) windChargeCheck.tick(minecraft, input, guiAvailable(frame));
+        if (elytraCheck != null) elytraCheck.tick(minecraft, input, guiAvailable(frame));
+        if (interactionCheck != null) interactionCheck.tick(minecraft, input, guiAvailable(frame));
         if (now >= nextStatusMs) {
             nextStatusMs = now + STATUS_EVERY_MS;
             logStatus(frame);
@@ -536,9 +590,11 @@ public final class SifuCraftClient implements ClientModInitializer {
             if (current != null) SifuCollision.set(null);
             return;
         }
-        if (current != null && current.grid() == grid) return;
+        var dynamic = doors.grid();
+        if (dynamic != null && !dynamic.map().equals(grid.map())) dynamic = null;
+        if (current != null && current.grid() == grid && current.doors() == dynamic) return;
         MapPlacement placement = slots.placement(grid.map());
-        SifuCollision.set(new SifuCollision.Active(grid, placement));
+        SifuCollision.set(new SifuCollision.Active(grid, placement, dynamic));
         LOG.info("[collision] in force: {} ({} blocks) at Minecraft origin ({}, {}, {})", grid.map(), grid.blockCount(),
                 placement.originX(), placement.originY(), placement.originZ());
     }

@@ -81,9 +81,10 @@ public final class PlayerDamage {
                             hit.worldGeneration(), hit.anchorEpoch(), lifeToken, outcome.hand(), outcome.item(), pending.receivedNs));
                     if (diagnostic != null) diagnostic.accept(new Applied(pending.id, before, player.getHealth(), accepted));
                     if (logged.getAndIncrement() < 200) LOG.info("[player-hits] applied event={} attacker={}/{} source={} base={} mc={} accepted={} " +
-                                    "HP={}->{} absorption={}->{} flags={} world={} epoch={}", pending.id, hit.attackerId(), hit.spawn(),
+                                    "HP={}->{} absorption={}->{} flags={} world={} epoch={} difficulty={} invulnerable={} mode={}", pending.id, hit.attackerId(), hit.spawn(),
                             attacker == null ? "generic" : "mobAttack", hit.sifuDamage(), amount, accepted, before, player.getHealth(),
-                            absorption, player.getAbsorptionAmount(), hit.flags(), hit.worldGeneration(), hit.anchorEpoch());
+                            absorption, player.getAbsorptionAmount(), hit.flags(), hit.worldGeneration(), hit.anchorEpoch(),
+                            player.level().getDifficulty(), player.getAbilities().invulnerable, player.gameMode());
                 } finally { scheduled.decrementAndGet(); }
             });
         }

@@ -64,6 +64,7 @@ final class InputInjector {
         boolean typing = guiMode;
         if (action == PRESS) heldKeys.add(scancode);
         if (action == RELEASE) heldKeys.remove(scancode);
+        if (action == PRESS && useBinding() == scancode) SifuCraftClient.beginUseGesture();
         int keycode = SDLKeyboard.SDL_GetKeyFromScancode(scancode, (short) modifiers, true);
         minecraft.keyboardHandler.keyPress(window(), action, new KeyEvent(scancode, keycode, modifiers));
         if (action == PRESS && useBinding() == scancode) raiseShieldImmediately();
@@ -93,6 +94,7 @@ final class InputInjector {
         syncMouseMode();
         if (action == PRESS) heldButtons.add(button);
         if (action == RELEASE) heldButtons.remove(button);
+        if (action == PRESS && useBinding() == (0x10000 | button)) SifuCraftClient.beginUseGesture();
         minecraft.mouseHandler.onButton(window(), new MouseButtonInfo(button, modifiers), action);
         if (action == PRESS && useBinding() == (0x10000 | button)) raiseShieldImmediately();
         stats.buttons++;

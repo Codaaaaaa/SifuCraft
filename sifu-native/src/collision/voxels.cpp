@@ -440,6 +440,17 @@ std::uint64_t VoxelGrid::CellCount() const {
     return cells;
 }
 
+bool HasFloorSupport(const VoxelGrid& grid, const FVector& feet) {
+    if (!std::isfinite(feet.x) || !std::isfinite(feet.y) || !std::isfinite(feet.z)) return false;
+    const float offsets[][2] = {{0, 0}, {25, 0}, {-25, 0}, {0, 25}, {0, -25}};
+    const int from = CellIndex(feet.z + kCellCm), to = CellIndex(feet.z - 25);
+    for (const auto& offset : offsets) {
+        const int top = grid.TopCellBetween(CellIndex(feet.x + offset[0]), CellIndex(feet.y + offset[1]), from, to);
+        if (top >= to && std::fabs((top + 1) * kCellCm - feet.z) <= 25) return true;
+    }
+    return false;
+}
+
 float FloorUnder(const VoxelGrid& grid, float x, float y, float feet_z) {
     constexpr float kAboveCm = 100.0f, kBelowCm = 300.0f;
     const int to = CellIndex(feet_z - kBelowCm);

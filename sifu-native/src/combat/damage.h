@@ -14,10 +14,12 @@ bool UninstallObserver();
 bool OwnsObserver(std::uintptr_t slot_value);
 bool ObserverReady();
 void UpdateContext(std::uintptr_t world, std::uint32_t generation, std::uintptr_t pawn, bool active,
-                   std::uint32_t epoch, std::uint64_t peer_session, const std::vector<Enemies::Target>& targets);
+                   std::uint32_t epoch, std::uint64_t peer_session, const std::vector<Enemies::Target>& targets,
+                   const std::vector<protocol::EnemyEntry>& entries, bool impulses_allowed);
 void Submit(const protocol::Event& event);
 void RecordPlayerHit(std::uint64_t id, std::uint64_t peer_session, const protocol::PlayerHitPayload& hit, std::uint64_t created_ms);
 void SubmitBlocked(const protocol::Event& event);
+void SubmitImpulse(const protocol::Event& event);
 struct Reply { std::uint64_t session; protocol::DamageResultPayload payload; };
 void DrainReplies(std::vector<Reply>* replies);
 

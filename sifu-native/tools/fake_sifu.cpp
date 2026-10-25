@@ -36,6 +36,7 @@
 #include "bridge/overlay_reader.h"
 #include "combat/damage_ledger.h"
 #include "combat/shield_ledger.h"
+#include "combat/impulse_ledger.h"
 #include "input/anchor_request.h"
 #include "core/log.h"
 
@@ -161,6 +162,8 @@ int main(int argc, char** argv) {
     std::vector<PawnMove> moves;
     bool with_enemies = false, enemy_scenario = false, combat_scenario = false;
     bool player_hit_scenario = false;
+    bool interaction_scenario = false;
+    std::string door_closed, door_open;
     bool respawn_scenario = false;
     bool gui_test = false;
     bool shield_scenario = false;
@@ -215,6 +218,8 @@ int main(int argc, char** argv) {
                 key.to_ms = to;
                 keys.push_back(key);
             }
+        } else if (std::strcmp(argv[i], "--interaction-scenario") == 0 && i + 2 < argc) {
+            interaction_scenario = true; door_closed = argv[++i]; door_open = argv[++i];
         } else if (std::strcmp(argv[i], "--enemies") == 0) {
             with_enemies = true;
         } else if (std::strcmp(argv[i], "--enemy-scenario") == 0) {
@@ -272,10 +277,15 @@ int main(int argc, char** argv) {
     float enemy_health[2] = {1000, 1000};
     combat::DamageLedger damage_ledger;
     combat::ShieldLedger shield_ledger;
+    combat::ImpulseLedger impulse_ledger;
+    std::uint64_t impulse_session = 0;
+    unsigned impulse_accepted = 0, impulse_rejected = 0;
     unsigned shield_sent = 0, shield_replies = 0;
     bool shield_released = false, shield_fast_pressed = false;
     std::vector<protocol::Event> damage_events;
     unsigned applied_damage = 0;
+    unsigned interaction_accepted = 0, interaction_rejected = 0;
+    std::uint32_t door_generation = 0;
     overlay::Reader overlay_reader;
     overlay::Frame overlay_frame;
     unsigned overlay_frames = 0;
@@ -305,6 +315,21 @@ int main(int argc, char** argv) {
             }
         }
         bridge.Tick(frame, now);
+        if (interaction_scenario) {
+            protocol::InteractionSnapshot candidate{};
+            candidate.frame = now; candidate.revision = 7; candidate.world = frame.world_generation; candidate.epoch = frame.anchor_epoch;
+            candidate.flags = frame.input_owner == protocol::InputOwner::Minecraft ? protocol::kInteractAvailable : 0;
+            candidate.target = 1001; candidate.serial = 9; candidate.owner = 1002; candidate.owner_serial = 10;
+            candidate.minimum = {-14350, 6225, 0}; candidate.maximum = {-14325, 6350, 200}; candidate.location = {-14337.5f, 6275, 100};
+            candidate.range_cm = 300; bridge.PublishInteraction(candidate);
+            const auto desired = 100 + interaction_accepted;
+            if (door_generation != desired) {
+                door_generation = desired;
+                const bool closed = (interaction_accepted % 2) == 0;
+                bridge.PublishDoors({door_generation, frame.world_generation, closed ? 2u : 0u, closed ? 128ull : 0ull,
+                    "Hideout_1_Main", closed ? door_closed : door_open});
+            }
+        }
         if (gui_test && !gui_motion_sent && (bridge.peer_state().flags & protocol::kMcGuiOpen))
             gui_motion_sent = bridge.SendGuiMotion(0, 0, 0);
         if (!overlay_output.empty() && bridge.peer_connected() &&
@@ -352,7 +377,31 @@ int main(int argc, char** argv) {
         }
         bridge.DrainEnemyDamage(&damage_events);
         damage_ledger.SetSession(bridge.peer_connected() ? bridge.peer_session() : 0);
+        if (impulse_session != (bridge.peer_connected() ? bridge.peer_session() : 0)) {
+            impulse_session = bridge.peer_connected() ? bridge.peer_session() : 0; impulse_ledger.Reset();
+        }
         for (const auto& event : damage_events) {
+            if (event.type == static_cast<std::uint32_t>(protocol::EventType::NativeInteract)) {
+                protocol::InteractPayload request{}; std::memcpy(&request, event.payload, sizeof(request));
+                const bool valid = interaction_scenario && request.target == 1001 && request.serial == 9 && request.revision == 7 &&
+                    request.world == frame.world_generation && request.epoch == frame.anchor_epoch && request.flags == 0 && request.reserved == 0;
+                if (valid) ++interaction_accepted; else ++interaction_rejected;
+                bridge.SendInteractionResult({event.id, request.revision, valid ? 0u : 1u, request.target, request.world, request.epoch});
+                SC_LOG("[fake-interaction] request=%llu valid=%d accepted=%u rejected=%u", static_cast<unsigned long long>(event.id),
+                    valid, interaction_accepted, interaction_rejected);
+                continue;
+            }
+            if (event.type == static_cast<std::uint32_t>(protocol::EventType::EnemyImpulse)) {
+                protocol::EnemyImpulsePayload push{}; std::memcpy(&push, event.payload, sizeof(push));
+                const protocol::Vec3 feet{frame.player_location.x + 180, frame.player_location.y + (push.enemy_id == 101 ? 0.0f : 50.0f), frame.player_location.z + 2 - 92};
+                const bool accepted = combat_scenario && push.spawn == 1 && push.enemy_id >= 101 && push.enemy_id <= 102 &&
+                    frame.input_owner == protocol::InputOwner::Minecraft && frame.anchor_epoch == push.anchor_epoch &&
+                    impulse_ledger.Consume(event.source_session, push, feet, now);
+                if (accepted) ++impulse_accepted; else ++impulse_rejected;
+                SC_LOG("[fake-mace] original=%llu enemy=%u/%u x=%.4f z=%.4f accepted=%d total=%u rejected=%u",
+                    static_cast<unsigned long long>(push.origin_damage_id), push.enemy_id, push.spawn, push.mc_x, push.mc_z, accepted, impulse_accepted, impulse_rejected);
+                continue;
+            }
             if (event.type == static_cast<std::uint32_t>(protocol::EventType::PlayerBlocked)) {
                 protocol::PlayerBlockedPayload reply{};
                 std::memcpy(&reply, event.payload, sizeof(reply));
@@ -379,6 +428,8 @@ int main(int argc, char** argv) {
                         result.sifu_damage = std::min(hp, damage.mc_damage * protocol::kEnemySifuHpPerMcHp);
                         hp -= result.sifu_damage;
                         ++applied_damage;
+                        impulse_ledger.Record(event.id, event.source_session, damage,
+                            {frame.player_location.x + 180, frame.player_location.y + (damage.enemy_id == 101 ? 0.0f : 50.0f), frame.player_location.z + 2 - 92}, now);
                     }
                     result.health_after = hp;
                 }
@@ -525,7 +576,10 @@ int main(int argc, char** argv) {
         }
         if (tick % kStatsEveryTicks == 0) SC_LOG("[bridge] %s", bridge.Describe().c_str());
     }
+    if (interaction_scenario) SC_LOG("[fake-interaction] %s accepted=%u rejected=%u", interaction_accepted == 2 && interaction_rejected == 0 ? "PASS" : "FAIL",
+        interaction_accepted, interaction_rejected);
     bridge.MarkClosing();
+    if (impulse_accepted || impulse_rejected) SC_LOG("[fake-mace] %s accepted=%u rejected=%u", impulse_rejected ? "FAIL" : "PASS", impulse_accepted, impulse_rejected);
     SC_LOG("[bridge] final: %s", bridge.Describe().c_str());
     if (shield_scenario) {
         SC_LOG("[fake-shield] %s sent=%u replies=%u", shield_sent == 3 && shield_replies == 3 ? "PASS" : "FAIL", shield_sent, shield_replies);

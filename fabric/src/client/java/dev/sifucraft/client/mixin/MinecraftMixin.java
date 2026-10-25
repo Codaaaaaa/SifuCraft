@@ -6,10 +6,15 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /** While Sifu routes the player's input here, the (hidden, unfocused) window counts as active. */
 @Mixin(Minecraft.class)
 public abstract class MinecraftMixin {
+    @Inject(method = "startUseItem", at = @At("HEAD"), cancellable = true)
+    private void sifucraft$nativeUseGesture(CallbackInfo ci) {
+        if (SifuCraftClient.handleNativeUse()) ci.cancel();
+    }
     @Inject(method = "isWindowActive", at = @At("HEAD"), cancellable = true)
     private void sifucraft$activeWhileRouted(CallbackInfoReturnable<Boolean> cir) {
         if (SifuCraftClient.minecraftOwnsInput()) cir.setReturnValue(true);

@@ -47,6 +47,8 @@ private:
 // The top (cm) of the highest solid cell in the column under (x, y), searched from a metre above
 // `feet_z` to three metres below it; NAN if there is none.
 float FloorUnder(const VoxelGrid& grid, float x, float y, float feet_z);
+// Nearby original-scene support only, not a floor many metres below a Minecraft sky platform.
+bool HasFloorSupport(const VoxelGrid& grid, const FVector& feet);
 
 // A plane n.p + d = 0; inside is n.p + d <= 0.
 struct Plane {

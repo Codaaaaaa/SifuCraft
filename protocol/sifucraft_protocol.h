@@ -27,7 +27,7 @@ namespace sifucraft::protocol {
 
 inline constexpr std::uint32_t kMagic = 0x52434653;  // "SFCR"
 // The name carries no version so that mismatched builds see each other and report INCOMPATIBLE.
-inline constexpr std::uint32_t kVersion = 18;
+inline constexpr std::uint32_t kVersion = 20;
 inline constexpr wchar_t kMappingName[] = L"Local\\SifuCraft.Bridge";
 inline constexpr std::uint32_t kMappingSize = 0x10000;
 
@@ -56,6 +56,9 @@ enum class EventType : std::uint32_t {
     PlayerHit = 8,     // Sifu -> Minecraft, PlayerHitPayload
     GuiMouseMotion = 9, // Sifu -> Minecraft, GuiMousePayload (ordered with clicks)
     PlayerBlocked = 10, // Minecraft -> Sifu, references an actually published PlayerHit
+    EnemyImpulse = 11, // Minecraft -> Sifu, references an applied smash damage event
+    NativeInteract = 12,
+    NativeInteractResult = 13,
 };
 
 // Who receives the player's keyboard and mouse.
@@ -295,6 +298,32 @@ struct PlayerBlockedPayload {
 };
 static_assert(sizeof(PlayerBlockedPayload) == 32);
 
+struct EnemyImpulsePayload {
+    std::uint64_t origin_damage_id;
+    std::uint32_t enemy_id, spawn, world_generation, anchor_epoch;
+    float mc_x, mc_z;  // horizontal impulse, Minecraft blocks/tick; vertical motion stays with Sifu
+};
+static_assert(sizeof(EnemyImpulsePayload) == 32);
+
+inline constexpr std::uint32_t kInteractAvailable = 1;
+struct InteractionSnapshot {
+    std::uint64_t seq, frame, revision;
+    std::uint32_t world, epoch, flags, target, serial, owner, owner_serial, reserved;
+    Vec3 minimum, maximum, location;
+    float range_cm;
+    char label[32];
+};
+struct InteractPayload {
+    std::uint64_t revision;
+    std::uint32_t target, serial, world, epoch, flags, reserved;
+};
+struct InteractResultPayload {
+    std::uint64_t request_id, revision;
+    std::uint32_t outcome, target, world, epoch;
+};
+static_assert(sizeof(InteractionSnapshot) == 128 && offsetof(InteractionSnapshot, minimum) == 56);
+static_assert(sizeof(InteractPayload) == 32 && sizeof(InteractResultPayload) == 32);
+
 struct Event {
     std::uint64_t id;              // strictly increasing per source session, starting at 1
     std::uint64_t source_session;
@@ -324,6 +353,8 @@ inline constexpr std::uint32_t kMcToSifuRingOffset = 0x4800;
 inline constexpr std::uint32_t kCollisionManifestOffset = 0x9000;
 inline constexpr std::uint32_t kBlockTableOffset = 0x9200;
 inline constexpr std::uint32_t kEnemyTableOffset = 0xF300;
+inline constexpr std::uint32_t kInteractionOffset = 0xFC00;
+inline constexpr std::uint32_t kDoorManifestOffset = 0xFD00;
 
 static_assert(sizeof(ProtocolHeader) == 0x40);
 static_assert(sizeof(EndpointStatus) == 0x40);
@@ -360,13 +391,25 @@ static_assert(offsetof(EnemyEntry, flags) == 40 && offsetof(EnemyEntry, velocity
 static_assert(sizeof(EnemyTable) == 0x840 && offsetof(EnemyTable, entries) == 64);
 static_assert(kEnemyTableOffset >= kBlockTableOffset + sizeof(BlockTable));
 static_assert(kEnemyTableOffset + sizeof(EnemyTable) <= kMappingSize);
+static_assert(kInteractionOffset >= kEnemyTableOffset + sizeof(EnemyTable));
+static_assert(kDoorManifestOffset >= kInteractionOffset + sizeof(InteractionSnapshot));
+static_assert(kDoorManifestOffset + sizeof(CollisionManifest) <= kMappingSize);
 
 // Hashed in this order by both sides; keep it identical to Protocol.LAYOUT_TABLE in Java.
 inline constexpr std::uint32_t kLayoutTable[] = {
+    kInteractionOffset, sizeof(InteractionSnapshot), offsetof(InteractionSnapshot, revision),
+    offsetof(InteractionSnapshot, world), offsetof(InteractionSnapshot, flags), offsetof(InteractionSnapshot, target),
+    offsetof(InteractionSnapshot, minimum), offsetof(InteractionSnapshot, maximum), offsetof(InteractionSnapshot, location),
+    offsetof(InteractionSnapshot, range_cm), offsetof(InteractionSnapshot, label), kDoorManifestOffset,
+    sizeof(InteractPayload), sizeof(InteractResultPayload),
     kVersion,
     kSnapshotGuiAvailable, kMcGuiAvailable, kMcGuiOpen, kMcGuiTextInput,
     static_cast<std::uint32_t>(EventType::GuiMouseMotion), sizeof(GuiMousePayload),
     static_cast<std::uint32_t>(EventType::PlayerBlocked), sizeof(PlayerBlockedPayload), kHitPerfectWindow, kBlockedPerfect, kHitGuardBreaker,
+    static_cast<std::uint32_t>(EventType::EnemyImpulse), sizeof(EnemyImpulsePayload),
+    offsetof(EnemyImpulsePayload, origin_damage_id), offsetof(EnemyImpulsePayload, enemy_id), offsetof(EnemyImpulsePayload, spawn),
+    offsetof(EnemyImpulsePayload, world_generation), offsetof(EnemyImpulsePayload, anchor_epoch),
+    offsetof(EnemyImpulsePayload, mc_x), offsetof(EnemyImpulsePayload, mc_z),
     std::bit_cast<std::uint32_t>(kPlayerSifuHpPerMcHp),
     std::bit_cast<std::uint32_t>(kEnemySifuHpPerMcHp),
     kMappingSize,
