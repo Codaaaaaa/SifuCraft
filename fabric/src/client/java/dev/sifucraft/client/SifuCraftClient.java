@@ -74,6 +74,8 @@ public final class SifuCraftClient implements ClientModInitializer {
     private McBridge bridge;
     private InputInjector input;
     private InventoryCheck inventoryCheck;
+    private DevItemCheck devItemCheck;
+    private dev.sifucraft.combat.TotemCheck totemCheck;
     private int guiWireEvents;
     private final OverlayCapture overlay = new OverlayCapture();
     private final HostLanguage hostLanguage = new HostLanguage();
@@ -182,6 +184,12 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerTickEvents.END_SERVER_TICK.register(check::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
         }
+        if (Boolean.getBoolean("sifucraft.devItemsSelfTest")) devItemCheck = new DevItemCheck();
+        if (Boolean.getBoolean("sifucraft.totemSelfTest")) {
+            totemCheck = new dev.sifucraft.combat.TotemCheck();
+            ServerTickEvents.END_SERVER_TICK.register(totemCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(totemCheck::restore);
+        }
         if (Boolean.getBoolean("sifucraft.playerDamageTest") || Boolean.getBoolean("sifucraft.playerHitSelfTest") ||
                 Boolean.getBoolean("sifucraft.respawnSelfTest")) {
             PlayerHitCheck check = new PlayerHitCheck();
@@ -201,6 +209,13 @@ public final class SifuCraftClient implements ClientModInitializer {
         SifuCraftClient client = instance;
         return client != null && client.input.minecraftOwnsInput();
     }
+
+    public static boolean devItemsAvailable() {
+        var client = instance;
+        return Boolean.getBoolean("sifucraft.devItems") && DevWorld.enabled() && client != null &&
+                client.minecraft.getSingleplayerServer() != null && client.guiAvailable(client.bridge.latest());
+    }
+    public static boolean devItemsCheckComplete() { return !Boolean.getBoolean("sifucraft.devItemsSelfTest") || DevItemCheck.complete; }
 
     /** True while a Sifu peer is connected: the real cursor then belongs to Sifu. */
     public static boolean attachedToSifu() {
@@ -281,6 +296,8 @@ public final class SifuCraftClient implements ClientModInitializer {
         bridge.tick(now, currentState(previous));
         bridge.setUseBinding(input.useBinding());
         SifuFrame frame = bridge.latest();
+        DevItemAccess.update(minecraft, bridge.peerSession(), frame == null ? 0 : frame.worldGeneration(),
+                frame == null ? 0 : frame.anchorEpoch(), frame != null && guiAvailable(frame));
         if (bridge.peerConnected() && frame != null) hostLanguage.update(minecraft, frame.language());
         publishEnemies(frame);
         CombatHits.pump(bridge);
@@ -293,6 +310,8 @@ public final class SifuCraftClient implements ClientModInitializer {
         input.applyMotion(frame);
         overlay.updateViewport(minecraft);
         if (inventoryCheck != null) inventoryCheck.tick(minecraft, input, guiAvailable(frame));
+        if (devItemCheck != null) devItemCheck.tick(minecraft, input, guiAvailable(frame));
+        if (totemCheck != null) totemCheck.clientTick(minecraft);
         if (now >= nextStatusMs) {
             nextStatusMs = now + STATUS_EVERY_MS;
             logStatus(frame);
@@ -561,7 +580,8 @@ public final class SifuCraftClient implements ClientModInitializer {
                 minecraft.options.fov().get(),
                 space.anchorEpoch(), bridge.peerSession(), frame.worldGeneration()).withGui(
                     overlay.enabled() && frame.minecraftOwnsInput() && minecraft.gui.overlay() == null,
-                    mirroredScreenActive(), input.guiInputAck());
+                    mirroredScreenActive(), input.guiInputAck(), minecraft.gui.screen() != null &&
+                        minecraft.gui.screen().getFocused() instanceof net.minecraft.client.gui.components.EditBox);
     }
 
     private static int perspective(CameraType type) {

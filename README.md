@@ -20,7 +20,7 @@ Sifu 与 Minecraft 作为两个独立进程运行：
 | P3 | Sifu 地形碰撞导入 Minecraft 物理 | 已通过 |
 | P4 | 方块放置/破坏的渲染与碰撞闭环 | 已通过 |
 | P5 | 敌人代理与双向伤害 | 已通过（武馆、第一关、跨图及 F8 实机验收） |
-| P6 | 核心物品系统与 GUI | S0–S3 已通过；下一步 S4 图腾 |
+| P6 | 核心物品系统与 GUI | S0–S4、开发取物已通过；下一步 S5 食物/金苹果 |
 
 ## 目录
 
@@ -34,7 +34,7 @@ tools/         部署、卸载、启动与 bridge 测试脚本；tools/collision
 
 ## 共享内存 Bridge（P1）
 
-两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v17）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
+两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v18）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
 
 - 每个字段只有一个写入方；双方各自写自己的 `EndpointStatus`（pid、session、心跳），心跳 2 秒不前进即判定断连；
 - 高频位姿走 seqlock 快照（Sifu → MC 的 `SifuSnapshot`，MC → Sifu 的 `McSnapshot`）；
@@ -175,6 +175,18 @@ MC 界面语言随 Sifu 当前界面语言同步（包括简体/繁体中文）�
 拒绝在常用开发存档中执行，并在结束时恢复测试装备和玩家设置。
 旧存档手动验收缺盾时，可另加 `-Psifucraft.shieldTestSupplies=true`（配合 `playerDamageTest=true`），
 临时提供一面带标记的练习盾，正常断开保存前回收；已有盾时不另发。
+
+## 开发取物与图腾（P6 S4，已实机验收通过）
+
+本机开发启动加 `-Psifucraft.devItems=true`，E 背包右侧显示可搜索的原版创造物品目录，
+包括附魔书、药水等组件变体。左键领取一组、右键一个，滚轮或底部箭头翻页；
+搜索名称、物品 ID 或 `wind_burst` 等组件关键词。精确物品 ID 优先。搜索时 E 输入字符，Esc 关闭。
+玩家全程保持生存模式，背包满时只领取能放入的数量；领取的物品按原版存档保存。
+此功能默认关闭，仅开发世界的本机集成服务器可用；F8、关界面、换图后拒绝旧取物请求。
+
+图腾沿用原版致死保护：主手优先，其次副手，只消耗一枚；不可格挡命中仍能触发图腾。
+真实 MC 独立存档的原版基线、主副手/剑盾搭配、效果、无敌帧、桥接致死命中与动画检查通过。
+用户已确认取物及图腾保命、屏幕动画正常，Sifu 不进入死亡或变老；图腾世界粒子按 P7 视觉阶段推进。
 
 ## Fabric Mod（Minecraft 26.3）
 

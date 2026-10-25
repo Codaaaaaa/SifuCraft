@@ -163,6 +163,7 @@ int main(int argc, char** argv) {
     bool respawn_scenario = false;
     bool gui_test = false;
     bool shield_scenario = false;
+    bool totem_scenario = false, totem_sent = false;
     bool gui_motion_sent = false;
     struct MouseMove {
         double dx = 0, dy = 0;
@@ -220,6 +221,8 @@ int main(int argc, char** argv) {
             with_enemies = combat_scenario = true;
         } else if (std::strcmp(argv[i], "--shield-scenario") == 0) {
             with_enemies = combat_scenario = shield_scenario = true;
+        } else if (std::strcmp(argv[i], "--totem-scenario") == 0) {
+            with_enemies = combat_scenario = totem_scenario = true;
         } else if (std::strcmp(argv[i], "--player-hit-scenario") == 0) {
             with_enemies = combat_scenario = player_hit_scenario = true;
         } else if (std::strcmp(argv[i], "--respawn-scenario") == 0) {
@@ -429,6 +432,11 @@ int main(int argc, char** argv) {
             pawn.mouse_dy += move.dy;
             SC_LOG("[fake] mouse moved by (%.0f, %.0f)", move.dx, move.dy);
         }
+        if (totem_scenario && !totem_sent && handed_over_at && now - handed_over_at >= 40000u) {
+            protocol::PlayerHitPayload hit{101, 1, 270, protocol::kHitCanDefend, frame.world_generation, pawn.epoch, -1, 0};
+            totem_sent = bridge.SendPlayerHit(hit);
+            if (totem_sent) SC_LOG("[fake-totem] sent lethal hit: 270 Sifu / 30 Minecraft damage");
+        }
         if (shield_scenario && handed_over_at && shield_sent == 2 && !shield_released && now - handed_over_at >= 54000u)
             shield_released = bridge.SendInput(protocol::EventType::MouseButton, 3, 0, 0);
         if (shield_scenario && handed_over_at && now - handed_over_at >= (shield_sent == 2 ? 55000u : 45000u + shield_sent * 1500u) && shield_sent < 3) {
@@ -513,6 +521,10 @@ int main(int argc, char** argv) {
     if (shield_scenario) {
         SC_LOG("[fake-shield] %s sent=%u replies=%u", shield_sent == 3 && shield_replies == 3 ? "PASS" : "FAIL", shield_sent, shield_replies);
         if (shield_sent != 3 || shield_replies != 3) return 1;
+    }
+    if (totem_scenario) {
+        SC_LOG("[fake-totem] %s sent=%d", totem_sent ? "PASS" : "FAIL", totem_sent);
+        if (!totem_sent) return 1;
     }
     if (!overlay_output.empty()) {
         SC_LOG("[overlay-test] %s frames=%u schema=%u layout=%016llX", overlay_saved ? "PASS" : "FAIL", overlay_frames,

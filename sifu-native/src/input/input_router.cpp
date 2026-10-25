@@ -84,8 +84,9 @@ bool InputRouter::OnKey(const MappedKey& key, std::string_view unreal_name, int 
         else if (action == 1 && first_press) use_started_ = game_seconds;
     }
     std::uint32_t revision = 0;
-    if (action == 1 && gui_available_ && !button && (key.code == 8 || escape)) {
+    if (action == 1 && gui_available_ && !button && ((key.code == 8 && !gui_text_input_) || escape)) {
         gui_open_ = escape ? false : !gui_open_;
+        if (!gui_open_) gui_text_input_ = false;
         if (gui_open_) use_started_ = NAN;
         if (++gui_revision_ == 0) ++gui_revision_;
         revision = gui_pending_ = gui_revision_;
@@ -133,14 +134,15 @@ void InputRouter::SetOwner(InputOwner owner) {
     }
     owner_ = owner;
     use_started_ = NAN;
-    gui_available_ = gui_open_ = false;
+    gui_available_ = gui_open_ = gui_text_input_ = false;
     gui_pending_ = 0;
 }
 
-void InputRouter::SetGuiState(bool available, bool open, std::uint32_t acknowledged) {
+void InputRouter::SetGuiState(bool available, bool open, std::uint32_t acknowledged, bool text_input) {
     Lock lock(lock_);
     gui_available_ = available && owner_ == InputOwner::Minecraft;
-    if (!gui_available_) { gui_open_ = false; gui_pending_ = 0; return; }
+    if (!gui_available_) { gui_open_ = gui_text_input_ = false; gui_pending_ = 0; return; }
+    gui_text_input_ = open && text_input;
     if (!gui_pending_ || acknowledged == gui_pending_) {
         if (open && !gui_open_) PushLocked(EventType::GuiMouseMotion, 0, 0);
         gui_open_ = open; gui_pending_ = 0;
@@ -162,7 +164,7 @@ double InputRouter::UseAge(double game_seconds) const {
 }
 void InputRouter::GuiInputDropped(std::uint32_t revision) {
     Lock lock(lock_);
-    if (revision && gui_pending_ == revision) { gui_pending_ = 0; gui_open_ = false; }
+    if (revision && gui_pending_ == revision) { gui_pending_ = 0; gui_open_ = gui_text_input_ = false; }
 }
 
 bool InputRouter::TakeToggleRequest() {

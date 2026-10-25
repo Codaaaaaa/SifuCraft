@@ -23,6 +23,9 @@ loom {
 			property "sifucraft.devWorld", "true"
 			property "sifucraft.devWorldName", providers.gradleProperty("sifucraft.devWorldName").getOrElse("sifucraft-dev")
 			property "sifucraft.inventorySelfTest", providers.gradleProperty("sifucraft.inventorySelfTest").getOrElse("false")
+			property "sifucraft.devItems", providers.gradleProperty("sifucraft.devItems").getOrElse("false")
+			property "sifucraft.devItemsSelfTest", providers.gradleProperty("sifucraft.devItemsSelfTest").getOrElse("false")
+			property "sifucraft.totemSelfTest", providers.gradleProperty("sifucraft.totemSelfTest").getOrElse("false")
 			property "sifucraft.shieldSelfTest", providers.gradleProperty("sifucraft.shieldSelfTest").getOrElse("false")
 			property "sifucraft.shieldTestSupplies", providers.gradleProperty("sifucraft.shieldTestSupplies").getOrElse("false")
 			property "sifucraft.hideWindow", providers.gradleProperty("sifucraft.hideWindow").getOrElse("true")

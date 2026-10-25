@@ -25,9 +25,13 @@ public record McState(
                 cameraFov, anchorEpoch, sifuSession, worldGeneration, 0);
     }
     public McState withGui(boolean available, boolean open, int acknowledged) {
-        int updated = flags & ~(Protocol.MC_GUI_AVAILABLE | Protocol.MC_GUI_OPEN);
+        return withGui(available, open, acknowledged, false);
+    }
+    public McState withGui(boolean available, boolean open, int acknowledged, boolean textInput) {
+        int updated = flags & ~(Protocol.MC_GUI_AVAILABLE | Protocol.MC_GUI_OPEN | Protocol.MC_GUI_TEXT_INPUT);
         if (available) updated |= Protocol.MC_GUI_AVAILABLE;
         if (available && open) updated |= Protocol.MC_GUI_OPEN;
+        if (available && open && textInput) updated |= Protocol.MC_GUI_TEXT_INPUT;
         return new McState(updated, perspective, playerLocation, playerRotation, playerVelocity, cameraLocation,
                 cameraRotation, cameraFov, anchorEpoch, sifuSession, worldGeneration, acknowledged);
     }

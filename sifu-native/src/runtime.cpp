@@ -690,7 +690,8 @@ void Run(std::uintptr_t image_base) {
                     render::FreshPresentation(gui_scope, render::LastPresentation(), GetTickCount64());
                 if (gui_surface) frame.flags |= protocol::kSnapshotGuiAvailable;
                 input::Router().SetGuiState(gui_surface && gui_peer.valid && (gui_peer.flags & protocol::kMcGuiAvailable),
-                    (gui_peer.flags & protocol::kMcGuiOpen) != 0, gui_peer.gui_input_ack);
+                    (gui_peer.flags & protocol::kMcGuiOpen) != 0, gui_peer.gui_input_ack,
+                    (gui_peer.flags & protocol::kMcGuiTextInput) != 0);
                 drained.events.clear();
                 input::Router().Drain(&drained);
                 for (const input::ForwardedEvent& e : drained.events) {

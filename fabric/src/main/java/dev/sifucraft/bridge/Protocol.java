@@ -9,7 +9,7 @@ public final class Protocol {
     private Protocol() {}
 
     public static final int MAGIC = 0x52434653; // "SFCR"
-    public static final int VERSION = 17;
+    public static final int VERSION = 18;
     public static final String MAPPING_NAME = "Local\\SifuCraft.Bridge";
     public static final int MAPPING_SIZE = 0x10000;
 
@@ -70,6 +70,7 @@ public final class Protocol {
     public static final int MC_DEAD = 1 << 7;
     public static final int MC_GUI_AVAILABLE = 1 << 8;
     public static final int MC_GUI_OPEN = 1 << 9;
+    public static final int MC_GUI_TEXT_INPUT = 1 << 10;
 
     public static final int HEADER_OFFSET = 0x0000;
     public static final int SIFU_STATUS_OFFSET = 0x0040;
@@ -268,7 +269,7 @@ public final class Protocol {
     /** Same entries, same order as {@code kLayoutTable} in sifucraft_protocol.h. */
     static final int[] LAYOUT_TABLE = {
         VERSION,
-        SNAPSHOT_GUI_AVAILABLE, MC_GUI_AVAILABLE, MC_GUI_OPEN,
+        SNAPSHOT_GUI_AVAILABLE, MC_GUI_AVAILABLE, MC_GUI_OPEN, MC_GUI_TEXT_INPUT,
         EVENT_GUI_MOUSE_MOTION, GUI_MOUSE_SIZE,
         EVENT_PLAYER_BLOCKED, PLAYER_BLOCKED_SIZE, HIT_PERFECT_WINDOW, BLOCKED_PERFECT, HIT_GUARD_BREAKER,
         Float.floatToRawIntBits(PLAYER_SIFU_HP_PER_MC_HP),

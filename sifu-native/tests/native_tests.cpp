@@ -282,6 +282,17 @@ void TestInventoryRouting() {
     router.SetGuiState(true, true, 0);
     router.SetGuiState(false, true, 0);
     Expect(!router.OnKey(input::MapKey("Escape"), "Escape", 1), "expired overlay cannot intercept Escape for invisible UI");
+    router.OnKey(input::MapKey("Escape"), "Escape", 0);
+    router.SetGuiState(true, true, 0, true);
+    events = {}; router.Drain(&events);
+    events = {};
+    router.OnKey(input::MapKey("E"), "E", 1);
+    router.OnAxis(input::KeyKind::MouseX, 1);
+    router.Drain(&events);
+    Expect(events.events.size() == 2 && events.events.front().gui_revision == 0 &&
+           events.events.back().type == EventType::GuiMouseMotion, "typing E in a focused search box preserves GUI routing and cursor motion");
+    router.OnKey(input::MapKey("E"), "E", 0);
+    Expect(router.OnKey(input::MapKey("Escape"), "Escape", 1), "Escape still closes a focused search inventory");
 }
 
 BOOL CALLBACK CountDevice(GUID*, const wchar_t*, const wchar_t*, void* context) {

@@ -27,7 +27,7 @@ namespace sifucraft::protocol {
 
 inline constexpr std::uint32_t kMagic = 0x52434653;  // "SFCR"
 // The name carries no version so that mismatched builds see each other and report INCOMPATIBLE.
-inline constexpr std::uint32_t kVersion = 17;
+inline constexpr std::uint32_t kVersion = 18;
 inline constexpr wchar_t kMappingName[] = L"Local\\SifuCraft.Bridge";
 inline constexpr std::uint32_t kMappingSize = 0x10000;
 
@@ -78,6 +78,7 @@ inline constexpr std::uint32_t kMcRequestAnchor = 1u << 6; // respawned; anchor_
 inline constexpr std::uint32_t kMcDead = 1u << 7;          // keep ownership/protection, publish no pose
 inline constexpr std::uint32_t kMcGuiAvailable = 1u << 8;
 inline constexpr std::uint32_t kMcGuiOpen = 1u << 9;
+inline constexpr std::uint32_t kMcGuiTextInput = 1u << 10;
 
 struct Vec3 {
     float x, y, z;
@@ -363,7 +364,7 @@ static_assert(kEnemyTableOffset + sizeof(EnemyTable) <= kMappingSize);
 // Hashed in this order by both sides; keep it identical to Protocol.LAYOUT_TABLE in Java.
 inline constexpr std::uint32_t kLayoutTable[] = {
     kVersion,
-    kSnapshotGuiAvailable, kMcGuiAvailable, kMcGuiOpen,
+    kSnapshotGuiAvailable, kMcGuiAvailable, kMcGuiOpen, kMcGuiTextInput,
     static_cast<std::uint32_t>(EventType::GuiMouseMotion), sizeof(GuiMousePayload),
     static_cast<std::uint32_t>(EventType::PlayerBlocked), sizeof(PlayerBlockedPayload), kHitPerfectWindow, kBlockedPerfect, kHitGuardBreaker,
     std::bit_cast<std::uint32_t>(kPlayerSifuHpPerMcHp),

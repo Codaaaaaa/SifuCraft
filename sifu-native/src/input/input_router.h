@@ -43,7 +43,7 @@ public:
     protocol::InputOwner owner() const;
     void SetOwner(protocol::InputOwner owner);
     bool TakeToggleRequest();
-    void SetGuiState(bool available, bool open, std::uint32_t acknowledged);
+    void SetGuiState(bool available, bool open, std::uint32_t acknowledged, bool text_input = false);
     void GuiInputDropped(std::uint32_t revision);
     void SetUseBinding(std::uint32_t binding);
     void ResetUse();
@@ -69,7 +69,7 @@ private:
     double mouse_dy_ = 0.0;
     double scroll_ = 0.0;
     bool toggle_requested_ = false;
-    bool gui_available_ = false, gui_open_ = false;
+    bool gui_available_ = false, gui_open_ = false, gui_text_input_ = false;
     std::uint32_t gui_revision_ = 0, gui_pending_ = 0;
     std::uint32_t use_binding_ = 0;
     double use_started_ = std::numeric_limits<double>::quiet_NaN();
