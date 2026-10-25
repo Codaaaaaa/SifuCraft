@@ -20,7 +20,7 @@ Sifu 与 Minecraft 作为两个独立进程运行：
 | P3 | Sifu 地形碰撞导入 Minecraft 物理 | 已通过 |
 | P4 | 方块放置/破坏的渲染与碰撞闭环 | 已通过 |
 | P5 | 敌人代理与双向伤害 | 已通过（武馆、第一关、跨图及 F8 实机验收） |
-| P6 | 核心物品系统与 GUI | S0–S4、开发取物已通过；下一步 S5 食物/金苹果 |
+| P6 | 核心物品系统与 GUI | S0–S5、开发取物已通过；下一步 S6 重锤/Wind Burst |
 
 ## 目录
 
@@ -105,7 +105,7 @@ stage 7 的 S3 使用 H6 读取命中请求：有缓存时读取内联行，否�
 
 S3 实机已验证普通命中转发和 F8 交还后的原生扣血。H7 拦截扣血；Sifu 自身的回血仍可能改变其生命。S5 已修正默认伤害资源解析，用户确认伤害、杂兵/Boss 的轻击与死亡、武馆及第一关来回切换均正常。抓取等未逐项覆盖的特殊行为保留后续回归。
 
-开发验收可用 `runClient '-Psifucraft.playerDamageTest=true'` 临时使用生存模式、普通难度并保留物品；退出时恢复原模式、生命、难度及规则。`-Psifucraft.playerHitSelfTest=true` 另对假 Sifu 的测试地图自动核对重复事件、无敌帧和过期事件。正式新角色采用生存和一次性基础物资，已有角色保持存档设置。
+承伤实验可用 `runClient '-Psifucraft.playerDamageTest=true'` 临时使用生存模式、普通难度、保留物品并关闭自然回血；退出时恢复原模式、生命、难度及规则。正常游玩和食物测试省略此参数，以遵循存档中的自然回血规则。`-Psifucraft.playerHitSelfTest=true` 另对假 Sifu 的测试地图自动核对重复事件、无敌帧和过期事件。正式新角色采用生存和一次性基础物资，已有角色保持存档设置。
 
 MC 死亡后等待约 1 秒自动重生，通过快照请求 Sifu 更新锚定纪元；确认新纪元并重新落地后恢复输入、位姿和伤害。等待期间保留 MC 所有权下的原生扣血保护，暂停旧位姿和命中转发；旧生命的异步伤害通过对象身份和纪元过滤。`--respawn-scenario` 配合 `-Psifucraft.respawnSelfTest=true` 可用假 Sifu 验证完整链路。
 
@@ -187,6 +187,17 @@ MC 界面语言随 Sifu 当前界面语言同步（包括简体/繁体中文）�
 图腾沿用原版致死保护：主手优先，其次副手，只消耗一枚；不可格挡命中仍能触发图腾。
 真实 MC 独立存档的原版基线、主副手/剑盾搭配、效果、无敌帧、桥接致死命中与动画检查通过。
 用户已确认取物及图腾保命、屏幕动画正常，Sifu 不进入死亡或变老；图腾世界粒子按 P7 视觉阶段推进。
+
+## 食物与金苹果（P6 S5，已实机验收通过）
+
+食物沿用原版右键长按使用：饥饿时可吃普通食物，松手会中断；金苹果和附魔金苹果满饥饿也能吃，支持副手。
+营养、饱和度、自然回血、再生/吸收/抗性等效果均由 MC 处理，敌人伤害先消耗吸收生命再扣血；HUD 与手部保留原版显示。
+正常开发启动可用 `tools/gradle.ps1 runClient -Psifucraft.overlay=true -Psifucraft.devItems=true`，从 E 目录领取食物；省略 `playerDamageTest`，不强改已有存档规则。
+
+独立对照：`runClient -Psifucraft.overlay=true -Psifucraft.foodSelfTest=true -Psifucraft.devWorldName=sifucraft-food-check-<名称>`，
+配合 fake 的 `--food-scenario --gui --hand-over --collision <网格> --pawn <X> <Y> <Z>`；自动用物和伤害仅在该独立存档中执行。
+真实 MC 的原版食物、金苹果效果、实际长按/中断、回血规则及桥接吸收扣伤对照已通过；用户已确认 Sifu 内动画、声音和 HUD 正常。
+食物碎屑和状态世界粒子随 P7 实现。
 
 ## Fabric Mod（Minecraft 26.3）
 

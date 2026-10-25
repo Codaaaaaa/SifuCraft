@@ -76,6 +76,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private InventoryCheck inventoryCheck;
     private DevItemCheck devItemCheck;
     private dev.sifucraft.combat.TotemCheck totemCheck;
+    private FoodCheck foodCheck;
     private int guiWireEvents;
     private final OverlayCapture overlay = new OverlayCapture();
     private final HostLanguage hostLanguage = new HostLanguage();
@@ -189,6 +190,11 @@ public final class SifuCraftClient implements ClientModInitializer {
             totemCheck = new dev.sifucraft.combat.TotemCheck();
             ServerTickEvents.END_SERVER_TICK.register(totemCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(totemCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.foodSelfTest")) {
+            foodCheck = new FoodCheck();
+            ServerTickEvents.END_SERVER_TICK.register(foodCheck::serverTick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(foodCheck::restore);
         }
         if (Boolean.getBoolean("sifucraft.playerDamageTest") || Boolean.getBoolean("sifucraft.playerHitSelfTest") ||
                 Boolean.getBoolean("sifucraft.respawnSelfTest")) {
@@ -312,6 +318,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (inventoryCheck != null) inventoryCheck.tick(minecraft, input, guiAvailable(frame));
         if (devItemCheck != null) devItemCheck.tick(minecraft, input, guiAvailable(frame));
         if (totemCheck != null) totemCheck.clientTick(minecraft);
+        if (foodCheck != null) foodCheck.tick(minecraft, input, guiAvailable(frame));
         if (now >= nextStatusMs) {
             nextStatusMs = now + STATUS_EVERY_MS;
             logStatus(frame);

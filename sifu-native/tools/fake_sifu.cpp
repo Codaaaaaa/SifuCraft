@@ -17,6 +17,7 @@
 //     --then: AT ms after that, move the pawn to (X, Y, Z) facing DEG and hand it over again
 //             (next anchor epoch): several test runs in one Minecraft session
 //     --combat-scenario: two static test targets; validate damage events and reply with fake HP
+//     --food-scenario: send one 5-HP hit after the real-client golden apple fixture is ready
 
 #include <windows.h>
 
@@ -164,6 +165,7 @@ int main(int argc, char** argv) {
     bool gui_test = false;
     bool shield_scenario = false;
     bool totem_scenario = false, totem_sent = false;
+    bool food_scenario = false, food_sent = false;
     bool gui_motion_sent = false;
     struct MouseMove {
         double dx = 0, dy = 0;
@@ -223,6 +225,8 @@ int main(int argc, char** argv) {
             with_enemies = combat_scenario = shield_scenario = true;
         } else if (std::strcmp(argv[i], "--totem-scenario") == 0) {
             with_enemies = combat_scenario = totem_scenario = true;
+        } else if (std::strcmp(argv[i], "--food-scenario") == 0) {
+            with_enemies = combat_scenario = food_scenario = true;
         } else if (std::strcmp(argv[i], "--player-hit-scenario") == 0) {
             with_enemies = combat_scenario = player_hit_scenario = true;
         } else if (std::strcmp(argv[i], "--respawn-scenario") == 0) {
@@ -437,6 +441,11 @@ int main(int argc, char** argv) {
             totem_sent = bridge.SendPlayerHit(hit);
             if (totem_sent) SC_LOG("[fake-totem] sent lethal hit: 270 Sifu / 30 Minecraft damage");
         }
+        if (food_scenario && !food_sent && handed_over_at && now - handed_over_at >= 45000u) {
+            protocol::PlayerHitPayload hit{101, 1, 45, protocol::kHitCanDefend, frame.world_generation, pawn.epoch, -1, 0};
+            food_sent = bridge.SendPlayerHit(hit);
+            if (food_sent) SC_LOG("[fake-food] sent absorption hit: 45 Sifu / 5 Minecraft damage");
+        }
         if (shield_scenario && handed_over_at && shield_sent == 2 && !shield_released && now - handed_over_at >= 54000u)
             shield_released = bridge.SendInput(protocol::EventType::MouseButton, 3, 0, 0);
         if (shield_scenario && handed_over_at && now - handed_over_at >= (shield_sent == 2 ? 55000u : 45000u + shield_sent * 1500u) && shield_sent < 3) {
@@ -525,6 +534,10 @@ int main(int argc, char** argv) {
     if (totem_scenario) {
         SC_LOG("[fake-totem] %s sent=%d", totem_sent ? "PASS" : "FAIL", totem_sent);
         if (!totem_sent) return 1;
+    }
+    if (food_scenario) {
+        SC_LOG("[fake-food] %s sent=%d", food_sent ? "PASS" : "FAIL", food_sent);
+        if (!food_sent) return 1;
     }
     if (!overlay_output.empty()) {
         SC_LOG("[overlay-test] %s frames=%u schema=%u layout=%016llX", overlay_saved ? "PASS" : "FAIL", overlay_frames,
