@@ -85,6 +85,9 @@ public final class EnemyProxy extends Mob {
         setDeltaMovement(Vec3.ZERO);
     }
 
+    /** Native snapshots own lifetime; MC distance/difficulty must not discard a live mirror. */
+    @Override public void checkDespawn() {}
+
     @Override public boolean isPickable() { return !isRemoved() && isAlive(); }
     @Override public float getSecondsToDisableBlocking() { return ShieldBlocks.secondsToDisable(this); }
     @Override public boolean isPushable() { return false; }
