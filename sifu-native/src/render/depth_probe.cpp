@@ -24,6 +24,7 @@ std::atomic<bool> parameters_capture{false};
 std::atomic<bool> world_capture{false};
 std::atomic<std::uint64_t> world_frames{0}, world_copies{0}, world_draws{0}, world_errors{0}, world_pixels{0}, world_no_depth{0};
 std::atomic<std::uint64_t> world_peak_pixels{0}, world_peak_no_depth{0};
+std::atomic<std::uint64_t> world_patches{0};
 struct CpuTime {
     std::atomic<std::uint64_t> samples{0}, total_us{0}, peak_us{0};
     void Record(std::chrono::steady_clock::time_point start) {
@@ -58,6 +59,7 @@ struct ParameterReadback {
     Com<ID3D11Device> device;
     std::uint64_t started = 0;
     bool diagnostic = true;
+    std::uint64_t discovery_log_ms = 0;
     void Reset() { buffers.clear(); sample = {}; device.reset(); started = 0; }
     void Begin(ID3D11Device* current_device, ID3D11DeviceContext* context, depth_observer::BoundParameters&& bound, bool write_files = true) {
         Reset();
@@ -142,16 +144,21 @@ struct ParameterReadback {
             b.bytes.assign(bytes, bytes + b.width); context->Unmap(b.staging.get(), 0); b.staging.reset();
         }
         if (ready) {
-            unsigned count = 0; VerifiedBinding candidate;
+            std::vector<ViewParameters> views;std::vector<VerifiedBinding> bindings;
             for (const auto& b : buffers) {
                 ViewParameters view;
                 if (ParseViewParameters(b.bytes, sample.identity.width, sample.identity.height, view)) {
-                    ++count; candidate = {sample.stage, b.slot, b.width};
+                    views.push_back(view);bindings.push_back({sample.stage,b.slot,b.width});
                 }
             }
-            *verified = count == 1 ? candidate : VerifiedBinding{};
+            const auto& vp=sample.viewport;
+            const int selected=SelectViewParameters(views,{vp.TopLeftX,vp.TopLeftY,vp.Width,vp.Height},sample.stage==DepthBinding::PS);
+            *verified=selected>=0?bindings[selected]:VerifiedBinding{};
             if (diagnostic) { if (!Save()) ++failures; }
-            else SC_LOG("[world-image] view discovery candidates=%u stage=%s slot=%u bytes=%u", count, DepthStageName(candidate.stage), candidate.slot, candidate.bytes);
+            else if(now>=discovery_log_ms){
+                discovery_log_ms=now+5000;
+                SC_LOG("[world-image] view discovery candidates=%zu stage=%s selected=%d slot=%u bytes=%u",views.size(),DepthStageName(verified->stage),selected,verified->slot,verified->bytes);
+            }
             Reset();
         }
     }
@@ -195,7 +202,7 @@ struct Probe {
     void CancelCapture() { staging.reset(); pending_device.reset(); pending_since = 0; }
     void ResetWorld() {
         world_scene.Reset(); world_renderer.Reset(); world_reader.Close(); world_frame = {}; scene_ms = world_retry_ms = 0; world_active = false;
-        world_pixels = world_no_depth = 0;
+        world_pixels = world_no_depth = world_patches = 0;
     }
     void Reset() { CancelCapture(); parameters.Reset(); copy.Reset(); verified = {}; parameter_identity = {}; ResetWorld(); }
     bool Save(const D3D11_MAPPED_SUBRESOURCE& mapped) {
@@ -318,6 +325,7 @@ void Tick(IDXGISwapChain* chain) {
             if (FAILED(probe.world_renderer.Prepare(probe.world_frame))) { ++world_errors; probe.world_frame = {}; }
             prepare_cpu.Record(started);
             world_pixels = probe.world_renderer.pixels(); world_no_depth = probe.world_renderer.missing_depth();
+            world_patches = probe.world_renderer.patches();
             world_peak_pixels = std::max(world_peak_pixels.load(), world_pixels.load());
             world_peak_no_depth = std::max(world_peak_no_depth.load(), world_no_depth.load());
             if (world_pixels.load() && world_capture.exchange(false)) {
@@ -428,9 +436,9 @@ std::string TakeStats() {
             static_cast<unsigned long long>(world_draws.load()), static_cast<unsigned long long>(world_pixels.load()),
             static_cast<unsigned long long>(world_no_depth.load()), static_cast<unsigned long long>(world_errors.load()),
             static_cast<unsigned long long>(world_peak_pixels.load()), static_cast<unsigned long long>(world_peak_no_depth.load())) +
-        FormatString(" | world_cpu prepare_n=%llu prepare_avg_us=%llu prepare_peak_us=%llu submit_n=%llu submit_avg_us=%llu submit_peak_us=%llu",
+        FormatString(" | world_cpu prepare_n=%llu prepare_avg_us=%llu prepare_peak_us=%llu submit_n=%llu submit_avg_us=%llu submit_peak_us=%llu patches=%llu",
             static_cast<unsigned long long>(prepare_cpu.samples.load()), static_cast<unsigned long long>(prepare_cpu.Average()),
             static_cast<unsigned long long>(prepare_cpu.peak_us.load()), static_cast<unsigned long long>(submit_cpu.samples.load()),
-            static_cast<unsigned long long>(submit_cpu.Average()), static_cast<unsigned long long>(submit_cpu.peak_us.load()));
+            static_cast<unsigned long long>(submit_cpu.Average()), static_cast<unsigned long long>(submit_cpu.peak_us.load()),static_cast<unsigned long long>(world_patches.load()));
 }
 }

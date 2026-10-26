@@ -22,7 +22,7 @@ Sifu 与 Minecraft 作为两个独立进程运行：
 | P5 | 敌人代理与双向伤害 | 已通过（武馆、第一关、跨图及 F8 实机验收） |
 | P6 | 核心物品系统、GUI 与原生交互 | 已通过（含重锤、鞘翅/烟花、开门视角及 F8 复验） |
 | P7 | 世界实体、粒子、Steve 与稳健性 | 已通过功能验收（含 F5、船体移动、墙体 AI 与跨图合并反馈；完整一关长测时长未独立记录） |
-| P8 | 完整方块状态、红石与机械 | 开发中：全状态索引、独立形状协议和原版模型已接通；11 种模型状态及 Native 碰撞属性回读通过，全目录/机械接触待验 |
+| P8 | 完整方块状态、红石与机械 | 开发中：通用模型/静态形状接入默认配置；11 状态显示、原版按钮/门/线路与普通/黏性活塞 100 次循环通过，全目录及 NPC 机械接触待验 |
 
 ## 目录
 
@@ -95,11 +95,12 @@ Minecraft 是方块的权威：在 Sifu 关卡所在的那片 Minecraft 世界�
 - 第一人称：Minecraft 掌控视角时，关闭 Sifu 为第三人称镜头做的近处淡出（`MPC_GameplayGeneric` 的 CamFade），交还时恢复；
 - Minecraft 窗口隐藏，stage 8 以上的背包通过 Sifu 内的 GUI 合成与输入使用；方块用数字键 1–9 或滚轮选择。
 
-## 通用方块模型与形状（P8，实验开关）
+## 通用方块模型与形状（P8，进行中）
 
-stage 10 配合 `-Psifucraft.blockStates=true -Psifucraft.blockShapes=true`，以及已有的
-`worldEffects=true`、`worldLayers=true` 和 Native 世界合成控制文件，可启用原版方块/BlockEntity 模型。
-两个新开关默认关闭。原版 chunk/NBT 是权威，section 索引由加载和修改重建，不用旧立方体索引覆盖存档。
+stage 10 配合已有的 `worldEffects=true`、`worldLayers=true` 和 Native 世界合成控制文件，
+默认启用原版方块/BlockEntity 模型，包括门、按钮、红石及活塞静止/移动/伸出状态。
+`blockStates`、`blockShapes` 默认 true，可显式 false 回到旧通路；Native 未确认形状时保留旧显示。
+原版 chunk/NBT 是权威，section 索引由加载和修改重建，不用旧立方体索引覆盖存档。
 
 独立协议 [sifucraft_shapes.h](protocol/sifucraft_shapes.h) 使用生产者会话命名、双槽完整快照与
 map/save/world 校验，schema 1 / layout `6755EE23BBDCCF75`。不受旧表 1536 格限制；超出形状载荷容量会报告并重试，保留逻辑状态。
@@ -108,7 +109,13 @@ Native 每帧最多生成 8 个形状 Actor、删除 16 个，首次完成碰撞
 
 显式 `-Psifucraft.blockModelSelfTest=true` 只允许 `sifucraft-block-model-check-*` 隔离存档，
 检查 11 种原版模型状态、配对深度/位置与逐例删除，结束恢复夹具并正常退出。
+`-Psifucraft.pistonStressSelfTest=true` 仅允许 `sifucraft-piston-check-*` 隔离存档，
+运行普通/黏性活塞各100次实际原版推出/回拉、按钮/红石线/灯和门双半块交互，逐轮等待实际Native碰撞回执，并检查移动BlockEntity进入原版渲染器；结束恢复夹具。
 这些证据尚不代表全红石目录、NPC 阻挡/导航、机械推挤或规模性能通过。
+
+世界合成按深度连续性合并平面几何，保留原始颜色分辨率；孔洞/深度断层保留精细路径，
+合并误差限制为0.05cm。大片水面不再每个像素重复生成两个三角形。编译策略绑定世界连接，
+F8/菜单的短暂图像停用不再触发整批区块重建。
 
 ## 敌人代理与攻击转发（P5 已通过）
 

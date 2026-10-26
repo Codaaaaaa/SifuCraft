@@ -1,6 +1,7 @@
 #include "render/world_compositor.h"
 #include "render/pipeline_state.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -13,6 +14,7 @@ namespace {
 constexpr char shader[] = R"hlsl(
 Texture2D<float> sceneDepth : register(t0);
 ByteAddressBuffer nativeView : register(t1);
+Texture2D<float4> sourceColor : register(t2);
 cbuffer World : register(b0) {
     row_major float4x4 inverseMC;
     float4 cameraScale;
@@ -36,17 +38,18 @@ bool validView() {
         all(origin.xy + size.xy <= bufferSize.xy) && all(abs(size.xy * size.zw - 1) < .0001) &&
         all(abs(bufferSize.xy * bufferSize.zw - 1) < .0001) && all(isfinite(outputScale())) && all(outputScale() > 0);
 }
-struct Pixel { float4 position : SV_Position; nointerpolation float4 color : COLOR0; };
-Pixel vertexMain(float3 source : SOURCE, uint color : COLOR, float4 surface : CORNERS, uint corner : SV_VertexID) {
-    const float2 corners[6] = {float2(-.5,-.5),float2(.5,-.5),float2(-.5,.5),
-                              float2(-.5,.5),float2(.5,-.5),float2(.5,.5)};
+struct Pixel { float4 position : SV_Position; float2 source : TEXCOORD0; };
+Pixel vertexMain(float4 source : SOURCE, float4 surface : CORNERS, uint corner : SV_VertexID) {
+    const float2 corners[6] = {float2(0,0),float2(1,0),float2(0,1),
+                              float2(0,1),float2(1,0),float2(1,1)};
     Pixel result;
-    result.position = float4(0,0,0,-1); result.color = 0;
+    result.position = float4(0,0,0,-1); result.source = 0;
     if (!validView()) return result;
     const uint indices[6] = {0,1,2,2,1,3};
     // Integer grid edges and shared depths produce bit-identical vertices on both
     // sides of a continuous surface; independent constant-depth splats leave cracks.
-    float2 ndc = (source.xy + .5 + corners[corner]) * 2 / imageTarget.xy - 1;
+    float2 sourceAt = source.xy + corners[corner] * source.zw;
+    float2 ndc = sourceAt * 2 / imageTarget.xy - 1;
     ndc.y *= allocation.z;
     float4 mc = mul(inverseMC, float4(ndc, surface[indices[corner]], 1));
     if (!all(isfinite(mc)) || abs(mc.w) < 1e-9) return result;
@@ -57,7 +60,7 @@ Pixel vertexMain(float3 source : SOURCE, uint color : COLOR, float4 surface : CO
     position.xy -= jitter() * position.w;
     position.xy *= outputScale();
     result.position = position;
-    result.color = float4(color & 255, (color >> 8) & 255, (color >> 16) & 255, color >> 24) / 255.0;
+    result.source = sourceAt;
     return result;
 }
 float linearDepth(float z) {
@@ -73,7 +76,8 @@ float4 pixelMain(Pixel pixel) : SV_Target {
     float distance = linearDepth(pixel.position.z);
     if (!isfinite(distance) || distance <= 0) discard;
     if (scene > 0 && distance > linearDepth(scene) + 1.0) discard;
-    return pixel.color;
+    if (any(pixel.source < 0) || any(pixel.source >= imageTarget.xy)) discard;
+    return sourceColor.Load(int3(int2(floor(pixel.source)),0));
 }
 )hlsl";
 bool InverseViewProjection(const world_image::FrameHeader& h, float* output) {
@@ -114,84 +118,132 @@ HRESULT Compile(const char* entry, const char* profile, Com<ID3DBlob>& result) {
 void WorldCompositor::ResetGpu() {
     instances_.reset(); constants_buffer_.reset(); depth_.reset(); raster_.reset(); blend_.reset(); layout_.reset();
     pixel_.reset(); vertex_.reset(); context_.reset(); device_.reset(); capacity_ = 0; upload_ = true;
+    color_view_.reset(); color_texture_.reset(); color_width_ = color_height_ = 0;
 }
-void WorldCompositor::Reset() { ResetGpu(); points_.clear(); source_indices_.clear(); source_distances_.clear(); prepared_id_ = 0; missing_depth_ = 0; constants_ = {}; }
+void WorldCompositor::Reset() { ResetGpu(); points_.clear(); source_corners_.clear(); source_distances_.clear(); source_color_.clear(); prepared_id_ = 0; pixel_count_ = missing_depth_ = 0; constants_ = {}; }
 HRESULT WorldCompositor::Prepare(const world_image::Frame& frame) {
     const auto& h = frame.header;
     if (h.frame_id == prepared_id_) return S_OK;
-    points_.clear(); prepared_id_ = 0; missing_depth_ = 0; upload_ = true;
-    if (!world_image::ValidFrame(h, h.captured_ms) || frame.pixels.size() != h.payload_bytes || !InverseViewProjection(h, constants_.inverse_mc))
-        return E_INVALIDARG;
-    std::copy(std::begin(h.camera_cm), std::end(h.camera_cm), constants_.camera_scale); constants_.camera_scale[3] = h.cm_per_block;
-    constants_.image_target[0] = float(h.width); constants_.image_target[1] = float(h.height);
-    const bool bottom_up = (h.flags & world_image::kBottomUp) != 0;
-    constants_.allocation[2] = bottom_up ? 1.f : -1.f;
-    constexpr auto invalid = std::numeric_limits<std::uint32_t>::max();
-    source_indices_.resize(std::size_t(h.width) * h.height); source_distances_.clear();
-    UINT min_x=h.width,min_y=h.height,max_x=0,max_y=0;
-    const auto plane = std::size_t(h.stride) * h.height;
-    for (UINT y = 0; y < h.height; ++y) for (UINT x = 0; x < h.width; ++x) {
-        const auto at = std::size_t(y) * h.stride + x * 4;
-        auto& index = source_indices_[std::size_t(y) * h.width + x]; index = invalid;
-        if (!frame.pixels[at + 3]) continue;
-        float z; std::memcpy(&z, frame.pixels.data() + plane + at, 4);
-        if (!std::isfinite(z) || z <= 0 || z > 1) { ++missing_depth_; continue; }
-        std::uint32_t color; std::memcpy(&color, frame.pixels.data() + at, 4);
-        const float ndc_x = 2 * (x + .5f) / h.width - 1;
-        const float ndc_y = bottom_up ? 2 * (y + .5f) / h.height - 1 : 1 - 2 * (y + .5f) / h.height;
-        const float ndc_z = (h.flags & world_image::kZeroToOne) ? z : 2 * z - 1;
-        const auto* m = constants_.inverse_mc;
-        const float rx=m[0]*ndc_x+m[1]*ndc_y+m[2]*ndc_z+m[3], ry=m[4]*ndc_x+m[5]*ndc_y+m[6]*ndc_z+m[7];
-        const float rz=m[8]*ndc_x+m[9]*ndc_y+m[10]*ndc_z+m[11], rw=m[12]*ndc_x+m[13]*ndc_y+m[14]*ndc_z+m[15];
-        const float distance=std::sqrt(rx*rx+ry*ry+rz*rz)/std::abs(rw);
-        index=static_cast<std::uint32_t>(points_.size());
-        points_.push_back({float(x),float(y),ndc_z,color,{ndc_z,ndc_z,ndc_z,ndc_z}});
-        source_distances_.push_back(std::isfinite(distance) ? distance : 0.f);
-        min_x=std::min(min_x,x);min_y=std::min(min_y,y);max_x=std::max(max_x,x);max_y=std::max(max_y,y);
+    points_.clear(); prepared_id_ = 0; pixel_count_ = missing_depth_ = 0; upload_ = true;
+    if (!world_image::ValidFrame(h,h.captured_ms) || frame.pixels.size()!=h.payload_bytes || !InverseViewProjection(h,constants_.inverse_mc)) return E_INVALIDARG;
+    std::copy(std::begin(h.camera_cm),std::end(h.camera_cm),constants_.camera_scale); constants_.camera_scale[3]=h.cm_per_block;
+    constants_.image_target[0]=float(h.width); constants_.image_target[1]=float(h.height);
+    const bool bottom_up=(h.flags&world_image::kBottomUp)!=0;
+    constants_.allocation[2]=bottom_up?1.f:-1.f;
+    const auto plane=std::size_t(h.stride)*h.height;
+    constexpr UINT tile=16;
+    const UINT columns=(h.width+tile-1)/tile,rows=(h.height+tile-1)/tile;
+    std::vector<UINT> occupied(std::size_t(columns)*rows);
+    auto depth=[&](int x,int y) {
+        if(x<0||y<0||x>=int(h.width)||y>=int(h.height))return 0.f;
+        const auto at=std::size_t(y)*h.stride+x*4;
+        if(!frame.pixels[at+3])return 0.f;
+        float z;std::memcpy(&z,frame.pixels.data()+plane+at,4);
+        if(!std::isfinite(z)||z<=0||z>1)return 0.f;
+        return (h.flags&world_image::kZeroToOne)?z:2*z-1;
+    };
+    // A separate validity check keeps legitimate negative NDC depths distinct from absent pixels.
+    auto valid=[&](int x,int y) {
+        if(x<0||y<0||x>=int(h.width)||y>=int(h.height))return false;
+        const auto at=std::size_t(y)*h.stride+x*4;
+        if(!frame.pixels[at+3])return false;
+        float z;std::memcpy(&z,frame.pixels.data()+plane+at,4);
+        return std::isfinite(z)&&z>0&&z<=1;
+    };
+    for(UINT y=0;y<h.height;++y)for(UINT x=0;x<h.width;++x){
+        const auto at=std::size_t(y)*h.stride+x*4;
+        if(!frame.pixels[at+3])continue;
+        if(!valid(x,y)){++missing_depth_;continue;}
+        ++pixel_count_;++occupied[std::size_t(y/tile)*columns+x/tile];
     }
-    // Process each occupied grid corner once. Only locally continuous depth samples
-    // share a corner; alpha holes and depth-separated surfaces retain separate edges.
-    const float span_x=std::min(.1f,16.f/(std::abs(h.projection[0])*h.width));
-    const float span_y=std::min(.1f,16.f/(std::abs(h.projection[5])*h.height));
-    const float span_diagonal=std::hypot(span_x,span_y);
-    auto at=[&](int x,int y){return x<0||y<0||x>=int(h.width)||y>=int(h.height) ? invalid : source_indices_[std::size_t(y)*h.width+x];};
-    // Corner slots follow source grid order; the shader flips the entire Y
-    // coordinate for top-down images, including each local corner offset.
-    const int corner_index[]={3,2,1,0};
-    if(!points_.empty())for(UINT y=min_y;y<=max_y+1;++y)for(UINT x=min_x;x<=max_x+1;++x){
-        const std::uint32_t ids[]={at(int(x)-1,int(y)-1),at(int(x),int(y)-1),at(int(x)-1,int(y)),at(int(x),int(y))};
-        if(ids[0]==invalid&&ids[1]==invalid&&ids[2]==invalid&&ids[3]==invalid)continue;
-        if(ids[0]!=invalid&&ids[1]!=invalid&&ids[2]!=invalid&&ids[3]!=invalid){
-            const float low=std::min({source_distances_[ids[0]],source_distances_[ids[1]],source_distances_[ids[2]],source_distances_[ids[3]]});
-            const float high=std::max({source_distances_[ids[0]],source_distances_[ids[1]],source_distances_[ids[2]],source_distances_[ids[3]]});
+    if(!pixel_count_){source_color_.clear();prepared_id_=h.frame_id;return S_OK;}
+    source_color_.assign(frame.pixels.begin(),frame.pixels.begin()+plane);
+    source_distances_.resize(std::size_t(h.width)*h.height);
+    source_corners_.resize(std::size_t(h.width+1)*(h.height+1));
+    if(!++corner_stamp_){for(auto& c:source_corners_)c.stamp=0;for(auto& d:source_distances_)d.stamp=0;++corner_stamp_;}
+    const auto* m=constants_.inverse_mc;
+    const float scale_x=2.f/h.width,scale_y=(bottom_up?2.f:-2.f)/h.height;
+    auto ray=[&](float x,float y,float z){
+        const float nx=x*scale_x-1,ny=y*scale_y+(bottom_up?-1.f:1.f);
+        return std::array<float,4>{m[0]*nx+m[1]*ny+m[2]*z+m[3],m[4]*nx+m[5]*ny+m[6]*z+m[7],
+            m[8]*nx+m[9]*ny+m[10]*z+m[11],m[12]*nx+m[13]*ny+m[14]*z+m[15]};
+    };
+    auto distance=[&](int x,int y){
+        auto& d=source_distances_[std::size_t(y)*h.width+x];
+        if(d.stamp!=corner_stamp_){const auto p=ray(x+.5f,y+.5f,depth(x,y));d.value=std::sqrt(p[0]*p[0]+p[1]*p[1]+p[2]*p[2])/std::abs(p[3]);if(!std::isfinite(d.value))d.value=0;d.stamp=corner_stamp_;}
+        return d.value;
+    };
+    const float span_x=std::min(.1f,16.f/(std::abs(h.projection[0])*h.width)),span_y=std::min(.1f,16.f/(std::abs(h.projection[5])*h.height));
+    const float diagonal=std::hypot(span_x,span_y);
+    // Cache one canonical result per source corner. Adjacent tiles and fine pixels share
+    // exactly the same endpoints; disconnected depths retain their own corner values.
+    auto corner=[&](int x,int y)->const Corner&{
+        auto& c=source_corners_[std::size_t(y)*(h.width+1)+x];
+        if(c.stamp==corner_stamp_)return c;
+        c.stamp=corner_stamp_;
+        const int xs[]={x-1,x,x-1,x},ys[]={y-1,y-1,y,y};
+        bool used[4];float ds[4]{},zs[4]{};int roots[]={0,1,2,3};
+        for(int i=0;i<4;++i){used[i]=valid(xs[i],ys[i]);if(used[i]){ds[i]=distance(xs[i],ys[i]);zs[i]=depth(xs[i],ys[i]);}}
+        if(used[0]&&used[1]&&used[2]&&used[3]){
+            const float low=std::min({ds[0],ds[1],ds[2],ds[3]}),high=std::max({ds[0],ds[1],ds[2],ds[3]});
             if(low>0&&high-low<=low*std::min(span_x,span_y)){
-                const float value=(points_[ids[0]].z+points_[ids[1]].z+points_[ids[2]].z+points_[ids[3]].z)*.25f;
-                for(int i=0;i<4;++i)points_[ids[i]].corners[corner_index[i]]=value;
-                continue;
+                const float z=(zs[0]+zs[1]+zs[2]+zs[3])*.25f;for(float& value:c.depths)value=z;return c;
             }
         }
-        int roots[]={0,1,2,3};
         auto root=[&](int i){while(roots[i]!=i)i=roots[i];return i;};
-        auto join=[&](int a,int b,float span){
-            if(ids[a]==invalid||ids[b]==invalid)return;
-            const float da=source_distances_[ids[a]],db=source_distances_[ids[b]];
-            if(da>0&&db>0&&std::abs(da-db)<=std::min(da,db)*span)roots[root(b)]=root(a);
-        };
-        join(0,1,span_x);join(0,2,span_y);join(0,3,span_diagonal);
-        join(1,2,span_diagonal);join(1,3,span_y);join(2,3,span_x);
+        auto join=[&](int a,int b,float span){if(used[a]&&used[b]&&ds[a]>0&&ds[b]>0&&std::abs(ds[a]-ds[b])<=std::min(ds[a],ds[b])*span)roots[root(b)]=root(a);};
+        join(0,1,span_x);join(0,2,span_y);join(0,3,diagonal);join(1,2,diagonal);join(1,3,span_y);join(2,3,span_x);
         float sums[4]{};int counts[4]{};
-        for(int i=0;i<4;++i)if(ids[i]!=invalid){const int r=root(i);sums[r]+=points_[ids[i]].z;++counts[r];}
-        for(int i=0;i<4;++i)if(ids[i]!=invalid){
-            const int r=root(i);float value=sums[r]/counts[r];
-            if(counts[r]==3){
-                if(ids[0]!=invalid&&ids[3]!=invalid&&root(0)==r&&root(3)==r)value=(points_[ids[0]].z+points_[ids[3]].z)*.5f;
-                else if(ids[1]!=invalid&&ids[2]!=invalid&&root(1)==r&&root(2)==r)value=(points_[ids[1]].z+points_[ids[2]].z)*.5f;
-            }
-            points_[ids[i]].corners[corner_index[i]]=value;
+        for(int i=0;i<4;++i)if(used[i]){const int r=root(i);sums[r]+=zs[i];++counts[r];}
+        for(int i=0;i<4;++i){c.depths[i]=0;if(!used[i])continue;const int r=root(i);float z=sums[r]/counts[r];
+            if(counts[r]==3){if(used[0]&&used[3]&&root(0)==r&&root(3)==r)z=(zs[0]+zs[3])*.5f;
+                else if(used[1]&&used[2]&&root(1)==r&&root(2)==r)z=(zs[1]+zs[2])*.5f;}
+            c.depths[i]=z;
         }
+        return c;
+    };
+    auto patch=[&](UINT x,UINT y,UINT w,UINT height){
+        return Point{float(x),float(y),float(w),float(height),{corner(x,y).depths[3],corner(x+w,y).depths[2],
+            corner(x,y+height).depths[1],corner(x+w,y+height).depths[0]}};
+    };
+    const float column_z=std::sqrt(m[2]*m[2]+m[6]*m[6]+m[10]*m[10]);
+    for(UINT ty=0;ty<rows;++ty)for(UINT tx=0;tx<columns;++tx){
+        const auto count=occupied[std::size_t(ty)*columns+tx];if(!count)continue;
+        UINT x=tx*tile,y=ty*tile,w=std::min(tile,h.width-x),height=std::min(tile,h.height-y);
+        if(count<w*height){
+            UINT x0=x+w,y0=y+height,x1=x,y1=y;
+            for(UINT iy=y;iy<y+height;++iy)for(UINT ix=x;ix<x+w;++ix)if(valid(ix,iy)){x0=std::min(x0,ix);y0=std::min(y0,iy);x1=std::max(x1,ix);y1=std::max(y1,iy);}
+            x=x0;y=y0;w=x1-x0+1;height=y1-y0+1;
+        }
+        bool merge=w>1&&height>1&&count==w*height;
+        Point p{};
+        if(merge){
+            p=patch(x,y,w,height);
+            // Device depth is affine over a planar surface. Bound the approximation in
+            // centimetres along the source rays, rather than using a fixed Z-buffer epsilon.
+            const float dx=(p.corners[1]-p.corners[0])/w,dy=(p.corners[2]-p.corners[0])/height;
+            const float corner_error=std::abs(p.corners[3]-(p.corners[0]+dx*w+dy*height));
+            float error=0,min_w=std::numeric_limits<float>::max(),max_w=0,max_ray=0,first_w=0;
+            for(int i=0;i<4;++i){const auto r=ray(float(x+(i&1)*w),float(y+(i>>1)*height),p.corners[i]);
+                if(!i)first_w=r[3];else if(first_w*r[3]<=0)merge=false;
+                min_w=std::min(min_w,std::abs(r[3]));max_w=std::max(max_w,std::abs(r[3]));max_ray=std::max(max_ray,std::sqrt(r[0]*r[0]+r[1]*r[1]+r[2]*r[2]));}
+            for(UINT iy=0;iy<height;++iy)for(UINT ix=0;ix<w;++ix){
+                float z;std::memcpy(&z,frame.pixels.data()+plane+std::size_t(y+iy)*h.stride+(x+ix)*4,4);
+                if(!(h.flags&world_image::kZeroToOne))z=2*z-1;
+                const float expected=p.corners[0]+dx*(ix+.5f)+dy*(iy+.5f);
+                error=std::max(error,std::abs(z-expected));
+            }
+            // Homogeneous coordinates are affine over the candidate rectangle; corner
+            // extrema plus the measured depth residual bound every interior denominator.
+            error+=corner_error;min_w-=std::abs(m[14])*error;max_w+=std::abs(m[14])*error;max_ray+=column_z*error;
+            merge=merge&&min_w>1e-8f&&error*(column_z*max_w+std::abs(m[14])*max_ray)*h.cm_per_block/(min_w*min_w)<=.05f;
+        }
+        if(merge)points_.push_back(p);
+        else for(UINT iy=y;iy<y+height;++iy)for(UINT ix=x;ix<x+w;++ix)if(valid(ix,iy))points_.push_back(patch(ix,iy,1,1));
     }
-    prepared_id_ = h.frame_id; return S_OK;
+    prepared_id_=h.frame_id;return S_OK;
 }
+
 HRESULT WorldCompositor::Initialize(ID3D11Device* device) {
     if (device_.get() == device && constants_buffer_) return S_OK;
     ResetGpu(); device->AddRef(); device_.reset(device);
@@ -201,10 +253,9 @@ HRESULT WorldCompositor::Initialize(ID3D11Device* device) {
     Com<ID3DBlob> code;
     if (FAILED(hr = Compile("vertexMain", "vs_5_0", code))) return hr;
     if (FAILED(hr = device->CreateVertexShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, vertex_.put()))) return hr;
-    const D3D11_INPUT_ELEMENT_DESC input[] = {{"SOURCE",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D11_INPUT_PER_INSTANCE_DATA,1},
-                                            {"COLOR",0,DXGI_FORMAT_R32_UINT,0,12,D3D11_INPUT_PER_INSTANCE_DATA,1},
+    const D3D11_INPUT_ELEMENT_DESC input[] = {{"SOURCE",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,0,D3D11_INPUT_PER_INSTANCE_DATA,1},
                                             {"CORNERS",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,16,D3D11_INPUT_PER_INSTANCE_DATA,1}};
-    if (FAILED(hr = device->CreateInputLayout(input, 3, code->GetBufferPointer(), code->GetBufferSize(), layout_.put()))) return hr;
+    if (FAILED(hr = device->CreateInputLayout(input, 2, code->GetBufferPointer(), code->GetBufferSize(), layout_.put()))) return hr;
     if (FAILED(hr = Compile("pixelMain", "ps_5_0", code))) return hr;
     if (FAILED(hr = device->CreatePixelShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, pixel_.put()))) return hr;
     D3D11_BLEND_DESC blend{}; auto& rt = blend.RenderTarget[0]; rt.BlendEnable = TRUE;
@@ -225,16 +276,28 @@ HRESULT WorldCompositor::Draw(ID3D11Device* device, ID3D11Texture2D* backbuffer,
     if (!prepared_id_ || points_.empty() || !scene.depth() || !scene.parameters()) return S_FALSE;
     auto hr = Initialize(device); if (FAILED(hr)) { ResetGpu(); return hr; }
     if (capacity_ < points_.size() || !instances_) {
-        instances_.reset(); capacity_ = 0;
-        D3D11_BUFFER_DESC desc{}; desc.ByteWidth = UINT(points_.size() * sizeof(Point)); desc.Usage = D3D11_USAGE_DYNAMIC;
+        UINT capacity=std::max(1024u,capacity_);while(capacity<points_.size())capacity*=2;
+        D3D11_BUFFER_DESC desc{}; desc.ByteWidth = capacity * sizeof(Point); desc.Usage = D3D11_USAGE_DYNAMIC;
         desc.BindFlags = D3D11_BIND_VERTEX_BUFFER; desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-        if (FAILED(hr = device->CreateBuffer(&desc, nullptr, instances_.put()))) return hr;
-        capacity_ = UINT(points_.size()); upload_ = true;
+        Com<ID3D11Buffer> buffer;
+        if (FAILED(hr = device->CreateBuffer(&desc, nullptr, buffer.put()))) return hr;
+        instances_=std::move(buffer);capacity_=capacity;upload_=true;
+    }
+    const UINT width=UINT(constants_.image_target[0]),height=UINT(constants_.image_target[1]);
+    if(!color_view_||color_width_!=width||color_height_!=height){
+        D3D11_TEXTURE2D_DESC d{};d.Width=width;d.Height=height;d.MipLevels=d.ArraySize=d.SampleDesc.Count=1;
+        d.Format=DXGI_FORMAT_R8G8B8A8_UNORM;d.Usage=D3D11_USAGE_DYNAMIC;d.BindFlags=D3D11_BIND_SHADER_RESOURCE;d.CPUAccessFlags=D3D11_CPU_ACCESS_WRITE;
+        Com<ID3D11Texture2D> texture;Com<ID3D11ShaderResourceView> view;
+        if(FAILED(hr=device->CreateTexture2D(&d,nullptr,texture.put()))||FAILED(hr=device->CreateShaderResourceView(texture.get(),nullptr,view.put())))return hr;
+        color_texture_=std::move(texture);color_view_=std::move(view);color_width_=width;color_height_=height;upload_=true;
     }
     if (upload_) {
         D3D11_MAPPED_SUBRESOURCE mapped{};
         if (FAILED(hr = context_->Map(instances_.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) return hr;
-        std::memcpy(mapped.pData, points_.data(), points_.size() * sizeof(Point)); context_->Unmap(instances_.get(), 0); upload_ = false;
+        std::memcpy(mapped.pData, points_.data(), points_.size() * sizeof(Point)); context_->Unmap(instances_.get(), 0);
+        if(FAILED(hr=context_->Map(color_texture_.get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped)))return hr;
+        for(UINT y=0;y<height;++y)std::memcpy(static_cast<std::uint8_t*>(mapped.pData)+std::size_t(y)*mapped.RowPitch,source_color_.data()+std::size_t(y)*width*4,width*4);
+        context_->Unmap(color_texture_.get(),0);upload_=false;
     }
     D3D11_TEXTURE2D_DESC desc{}; backbuffer->GetDesc(&desc);
     if (desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM &&
@@ -256,8 +319,8 @@ HRESULT WorldCompositor::Draw(ID3D11Device* device, ID3D11Texture2D* backbuffer,
     context_->IASetVertexBuffers(0, 1, &instance, &stride, &offset);
     context_->VSSetShader(vertex_.get(), nullptr, 0); context_->PSSetShader(pixel_.get(), nullptr, 0);
     auto* cb = constants_buffer_.get(); context_->VSSetConstantBuffers(0, 1, &cb); context_->PSSetConstantBuffers(0, 1, &cb);
-    ID3D11ShaderResourceView* views[] = {scene.depth(), scene.parameters()};
-    context_->VSSetShaderResources(0, 2, views); context_->PSSetShaderResources(0, 2, views);
+    ID3D11ShaderResourceView* views[] = {scene.depth(), scene.parameters(),color_view_.get()};
+    context_->VSSetShaderResources(0, 3, views); context_->PSSetShaderResources(0, 3, views);
     context_->DrawInstanced(6, UINT(points_.size()), 0, 0);
     return S_OK;
 }

@@ -4,6 +4,20 @@
 #include "generated/sifu_build.g.h"
 
 namespace sifucraft::render {
+int SelectViewParameters(std::span<const ViewParameters> views, std::array<float,4> raster, bool pixel_stage) {
+    if(views.empty())return -1;
+    int selected=-1;
+    if(pixel_stage&&raster[2]>0&&raster[3]>0) {
+        for(std::size_t i=0;i<views.size();++i){const auto& v=views[i];
+            if(v.x!=raster[0]||v.y!=raster[1]||v.width!=raster[2]||v.height!=raster[3])continue;
+            if(selected>=0&&views[selected]!=v)return -1;
+            selected=static_cast<int>(i);
+        }
+        if(selected>=0)return selected;
+    }
+    for(std::size_t i=1;i<views.size();++i)if(views[i]!=views[0])return -1;
+    return 0;
+}
 bool ParseViewParameters(std::span<const std::uint8_t> bytes, std::uint32_t depth_width,
                          std::uint32_t depth_height, ViewParameters& output) {
     namespace fields = gen::off::FViewUniformShaderParameters;

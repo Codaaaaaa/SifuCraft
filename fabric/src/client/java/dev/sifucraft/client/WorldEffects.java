@@ -12,7 +12,9 @@ public final class WorldEffects {
     private static long probeReadyMs, probeNextMs;
     private WorldEffects() {}
     public static boolean active() { return ENABLED && SifuCraftClient.worldEffectsAvailable(); }
+    static boolean configured() { return ENABLED; }
     public static void prepare(LevelRenderState state) {
+        if (Boolean.getBoolean("sifucraft.pistonStressSelfTest")) PistonStressCheck.observe(state);
         if (Boolean.getBoolean("sifucraft.worldCracksSelfTest")) WorldCracksCheck.observe(state);
         long probeNow = System.currentTimeMillis();
         if (Boolean.getBoolean("sifucraft.worldProbe") && DevWorld.LEVEL_ID.startsWith("sifucraft-world-effects-check-native-")) {

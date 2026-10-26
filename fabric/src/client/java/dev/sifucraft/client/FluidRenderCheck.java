@@ -74,7 +74,8 @@ final class FluidRenderCheck {
             prepare(mc); return;
         }
         require(now < deadline,"deadline case="+sample+" empty="+empty);
-        if (!prepared || !captured || now-at < 2000) return;
+        // Leave time for the Native diagnostic capture poll after the source sample.
+        if (!prepared || !captured || now-at < 4000) return;
         if (empty) { sample++; empty = false; } else empty = true;
         if (sample == CASES.size()) {
             done = true; mc.getSingleplayerServer().execute(() -> restore(mc.getSingleplayerServer()));

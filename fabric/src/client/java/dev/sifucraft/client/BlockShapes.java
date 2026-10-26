@@ -23,7 +23,7 @@ import org.slf4j.LoggerFactory;
 
 /** Builds full collision snapshots on the server thread; maps and acknowledgements stay client-side. */
 public final class BlockShapes implements AutoCloseable {
-    public static final boolean ENABLED = Boolean.getBoolean("sifucraft.blockShapes");
+    public static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("sifucraft.blockShapes","true"));
     record Export(byte[] payload, int sections, long revision, int world, String map, long save) {}
     private final AtomicBoolean building = new AtomicBoolean();
     private volatile Export pending;
@@ -47,8 +47,11 @@ public final class BlockShapes implements AutoCloseable {
     }
     public void update(Minecraft mc, McBridge bridge, MapPlacement placement) {
         var frame = bridge.latest(); var server = mc.getSingleplayerServer();
-        if (!ENABLED || !WorldBlocks.ENABLED || !SifuCraftClient.worldLayersActive() || !bridge.peerConnected() ||
-            frame == null || placement == null || server == null || WorldBlocks.index() == null) { close(); return; }
+        if (!ENABLED || !WorldBlocks.ENABLED || !SifuCraftClient.blockWorldAttached() || !bridge.peerConnected() ||
+            server == null || WorldBlocks.index() == null) { close(); return; }
+        // Re-anchoring and menus can temporarily withhold a presentation camera/placement.
+        // They do not discard a static world's negotiated geometry or recompile its chunks.
+        if (frame == null || placement == null) return;
         String wantedMap = placement.map();
         if (writer == null || mcSession != bridge.session() || sifuSession != bridge.peerSession()) {
             close(); writer = new ShapeWriter(bridge.session(),bridge.peerSession());

@@ -10,7 +10,7 @@ public final class WorldTerrain {
     public static boolean fluidsOnly() { return mode == 1; }
     public static boolean hideBackingFloor() { return mode != 0; }
     static void update(Minecraft mc) {
-        int wanted = !WorldEffects.active() ? 0 : SifuCraftClient.blockModelsActive() ? 2 : 1;
+        int wanted = !SifuCraftClient.blockWorldAttached() ? 0 : SifuCraftClient.blockModelsActive() ? 2 : 1;
         if (mode == wanted) return;
         mode = wanted;
         // Compiled chunks cache the selected geometry. Rebuild when connecting, disconnecting,

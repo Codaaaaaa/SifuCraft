@@ -11,9 +11,12 @@ struct ViewParameters {
     std::array<float, 3> camera_cm{};
     std::uint32_t x = 0, y = 0, width = 0, height = 0, buffer_width = 0, buffer_height = 0, frame = 0;
     float near_cm = 0;
+    bool operator==(const ViewParameters&) const = default;
 };
 // Validate an owned diagnostic readback against generated PDB fields and the
 // actual depth allocation. A generic 8 KB constant buffer is not sufficient.
 bool ParseViewParameters(std::span<const std::uint8_t> bytes, std::uint32_t depth_width,
                          std::uint32_t depth_height, ViewParameters& output);
+// PS samples have a live raster viewport; CS viewports may be stale and cannot disambiguate.
+int SelectViewParameters(std::span<const ViewParameters> views, std::array<float,4> raster = {}, bool pixel_stage = false);
 }

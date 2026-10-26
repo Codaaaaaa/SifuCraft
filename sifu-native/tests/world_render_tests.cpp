@@ -136,6 +136,19 @@ void MovingSurface(ID3D11Device* device, ID3D11DeviceContext* context) {
     unsigned top_down_holes=0;
     for(UINT y=0;y<height;++y)for(UINT x=0;x<width;++x)if(inside(x+.5f,y+.5f,.55f)&&pixels[(y*width+x)*4]<250)++top_down_holes;
     Check(top_down_holes==0,"top-down sources also share continuous surface edges under motion");
+    // Full-resolution texture variation must survive geometry coalescing, including alpha.
+    camera(0,0,0,0);
+    for(UINT y=0;y<height;++y)for(UINT x=0;x<width;++x){
+        const auto at=(std::size_t(y)*width+x)*4;frame.pixels[at]=16*(x%7);frame.pixels[at+1]=16*(y%7);frame.pixels[at+2]=0;frame.pixels[at+3]=128;
+        const float z=.04f;std::memcpy(frame.pixels.data()+width*height*4+at,&z,4);
+    }
+    ++h.frame_id;world.Prepare(frame);
+    Check(world.pixels()==width*height && world.patches()==((width+15)/16)*((height+15)/16),"flat dense surface coalesces geometry without reducing source resolution");
+    context->ClearRenderTargetView(rtv.get(),background);world.Draw(device,image.get(),scene);pixels=Read(device,context,image.get());
+    unsigned texture_errors=0;
+    for(UINT y=2;y<height-2;++y)for(UINT x=2;x<width-2;++x){const auto at=(y*width+x)*4;
+        if(std::abs(int(pixels[at])-int(16*(x%7)+25))>2||std::abs(int(pixels[at+1])-int(16*(y%7)+51))>2||std::abs(int(pixels[at+2])-76)>2)++texture_errors;}
+    Check(texture_errors==0,"coalesced translucent patches retain every source texel and blend only once");
 }
 int Benchmark(const char* path) {
     world_image::Frame frame;std::ifstream input(path,std::ios::binary);

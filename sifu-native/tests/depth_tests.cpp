@@ -37,6 +37,17 @@ bool ReadDepth(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture
 }
 int main() {
     {
+        ViewParameters main,small;main.width=1920;main.height=1080;main.buffer_width=small.buffer_width=1920;main.buffer_height=small.buffer_height=1080;
+        small.width=small.height=248;
+        std::array<ViewParameters,2> views{small,main};
+        Check(SelectViewParameters(views,{0,0,1920,1080},true)==1,"PS raster viewport selects the validated main view instead of a small secondary view");
+        Check(SelectViewParameters(views,{0,0,1920,1080},false)==-1,"stale CS raster viewport cannot resolve different views");
+        views[0]=main;
+        Check(SelectViewParameters(views)==0,"duplicate equivalent views are one unambiguous projection");
+        views[0].camera_cm[0]=1;
+        Check(SelectViewParameters(views,{0,0,1920,1080},true)==-1,"same viewport with different cameras remains ambiguous");
+    }
+    {
         namespace f = sifucraft::gen::off::FViewUniformShaderParameters;
         std::vector<std::uint8_t> bytes(f::FrameNumber + 4);
         auto put = [&](std::size_t offset, float value) { std::memcpy(bytes.data() + offset, &value, sizeof(value)); };

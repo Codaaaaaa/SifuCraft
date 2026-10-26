@@ -8,9 +8,9 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 
-/** Opt-in P8 derived index. Vanilla chunk/BlockEntity NBT remains the only saved world truth. */
+/** P8 derived index. Vanilla chunk/BlockEntity NBT remains the only saved world truth. */
 public final class WorldBlocks {
-    public static final boolean ENABLED = Boolean.getBoolean("sifucraft.blockStates");
+    public static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("sifucraft.blockStates","true"));
     private static volatile BlockSectionIndex index;
     private WorldBlocks() {}
     public static void open() { if (ENABLED) index = new BlockSectionIndex(); }
