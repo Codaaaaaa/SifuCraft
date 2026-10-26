@@ -23,7 +23,7 @@ public final class SceneBlockSupport {
         var previous=QUERY_SCENE.get();QUERY_SCENE.set(scene);
         try{return query.get();}finally{if(previous==null)QUERY_SCENE.remove();else QUERY_SCENE.set(previous);}
     }
-    private static SifuCollision.Active scene(BlockGetter level) {
+    static SifuCollision.Active scene(BlockGetter level) {
         if(!(level instanceof Level world) || world.dimension()!=Level.OVERWORLD)return null;
         var scoped=QUERY_SCENE.get();return scoped==null?SifuCollision.active():scoped;
     }
@@ -36,10 +36,13 @@ public final class SceneBlockSupport {
         return nativeShape.isEmpty()?vanilla:vanilla.isEmpty()?nativeShape:Shapes.or(vanilla,nativeShape);
     }
     public static boolean intersects(Level level,BlockPos pos,BlockState state) {
-        var current=scene(level);if(current==null)return false;
+        if(scene(level)==null)return false;
         var shape=Shapes.or(state.getShape(level,pos),state.getCollisionShape(level,pos));
-        if(shape.isEmpty())return false;
-        var worldShape=shape.move(pos.getX(),pos.getY(),pos.getZ());boolean[] overlaps={false};
+        return intersects(level,shape.move(pos.getX(),pos.getY(),pos.getZ()));
+    }
+    public static boolean intersects(Level level,VoxelShape worldShape) {
+        var current=scene(level);if(current==null||worldShape.isEmpty())return false;
+        boolean[] overlaps={false};
         current.forEachShape(worldShape.bounds(),(at,nativeShape)->{
             if(!overlaps[0]&&Shapes.joinIsNotEmpty(worldShape,nativeShape,BooleanOp.AND))overlaps[0]=true;
         });

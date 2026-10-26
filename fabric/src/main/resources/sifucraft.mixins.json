@@ -9,6 +9,7 @@
 		"EntityMixin",
 		"LevelMixin",
 		"PlayerAttackMixin",
+		"PistonStructureMixin",
 		"ShieldBlockingMixin",
 		"WindChargeCollisionMixin",
 		"WindChargeSceneHitMixin"
