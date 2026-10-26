@@ -108,7 +108,7 @@ public final class PistonMovePlans {
         if(failure!=null){retire();return new Attempt(failure,null);}
         if(pending!=null)return new Attempt(Status.BUSY,null);
         var entry=target(view,entity);if(entry==null)return new Attempt(Status.TARGET,null);
-        if(ordinal<=0||request==null||request.y!=0||request.x*source.movement().getStepX()+request.z*source.movement().getStepZ()<=0)
+        if(ordinal<=0||request==null||request.x*source.movement().getStepX()+request.y*source.movement().getStepY()+request.z*source.movement().getStepZ()<=0)
             return new Attempt(Status.REQUEST,null);
         if(ordinal<=ordinals.getOrDefault(source.capture(),0L))return new Attempt(Status.USED,null);
         if(ordinals.size()>=4096&&!ordinals.containsKey(source.capture())||budgets.size()>=4096)return new Attempt(Status.BUSY,null);

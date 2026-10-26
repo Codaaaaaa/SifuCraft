@@ -6,11 +6,11 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
-/** Horizontal, no-step preflight. Native capsule sweep remains the final authority. No entity changes. */
+/** Axis-aligned, no-step preflight. Native capsule sweep remains the final authority. No entity changes. */
 public record PistonCollisionPlan(PistonMotionLimit.State budget,Vec3 requested,Vec3 limited,Vec3 collided,AABB before,AABB after) {
     public static PistonCollisionPlan compute(Entity entity,Vec3 requested,PistonMotionLimit.State budget,SifuCollision.Active scene) {
-        if(!(entity.level() instanceof ServerLevel level)||!level.getServer().isSameThread()||scene==null||requested==null||requested.y!=0)
-            throw new IllegalArgumentException("horizontal server-thread piston plan required");
+        if(!(entity.level() instanceof ServerLevel level)||!level.getServer().isSameThread()||scene==null||requested==null)
+            throw new IllegalArgumentException("server-thread piston plan required");
         var box=entity.getBoundingBox();
         if(!valid(box))throw new IllegalArgumentException("invalid piston body");
         var limit=PistonMotionLimit.plan(budget,level.getGameTime(),requested);

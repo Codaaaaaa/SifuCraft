@@ -60,7 +60,8 @@ final class PistonPlanCases {
         }
         var proxy=new EnemyProxy(EnemyEntities.ENEMY_PROXY,level);var reference=new Reference(level);
         var initial=pos.relative(face.getOpposite());double x=initial.getX()+.5,y=initial.getY()+.05,z=initial.getZ()+.5;
-        switch(face){case EAST->x=initial.getX()+1.45;case WEST->x=initial.getX()-.45;case SOUTH->z=initial.getZ()+1.45;case NORTH->z=initial.getZ()-.45;default->throw new IllegalArgumentException("horizontal fixture");}
+        switch(face){case EAST->x=initial.getX()+1.45;case WEST->x=initial.getX()-.45;case SOUTH->z=initial.getZ()+1.45;case NORTH->z=initial.getZ()-.45;
+            case UP->y=initial.getY()+1.1;case DOWN->y=initial.getY()-.1-1.84;}
         if(geometry.equals("native-slab-clear"))y+=.55;
         var enemy=entry(new Vec3(x,y,z),scene,7,60);proxy.mirror(enemy,scene.placement());proxy.refreshDimensions();
         reference.setPos(proxy.position());reference.setBoundingBox(proxy.getBoundingBox());reference.setOnGround(false);
@@ -131,6 +132,8 @@ final class PistonPlanCases {
                 rows.add(run(level,base,face,extending,geometry,"take",scenes));
         for(var mode:List.of("stale","future","disconnect","session","save","world","geometry","health","spawn","frame-back","frame-forward","index","source","target-pose","cancel","foreign"))
             rows.add(run(level,base,Direction.EAST,true,"clear",mode,scenes));
+        for(var face:List.of(Direction.UP,Direction.DOWN))for(boolean extending:new boolean[]{false,true})
+            rows.add(run(level,base,face,extending,"clear","take",scenes));
         var a=scoped(scenes.make(null,Direction.EAST,"empty"));var b=scoped(scenes.make(base,Direction.EAST,"full"));var live=SifuCollision.active();
         SifuCollision.withQueryView(a,()->{
             try{SifuCollision.withQueryView(b,()->{throw new IllegalStateException("fixture");});}catch(IllegalStateException expected){/* nested view must restore */}

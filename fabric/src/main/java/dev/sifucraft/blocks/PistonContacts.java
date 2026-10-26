@@ -53,10 +53,13 @@ public final class PistonContacts {
         private final List<Contact> contacts=new ArrayList<>();
         private final PistonMovePlans planner;
         private final Consumer<PistonMovePlans.Attempt> onPlan;
+        private final Consumer<Move> preview;
         private final List<PistonMovePlans.Attempt> plans=new ArrayList<>();
         public Capture(ServerLevel level){this(level,null,null);}
         public Capture(ServerLevel level,PistonMovePlans planner){this(level,planner,null);}
-        public Capture(ServerLevel level,PistonMovePlans planner,Consumer<PistonMovePlans.Attempt> onPlan){this.level=level;this.planner=planner;this.onPlan=onPlan;}
+        public Capture(ServerLevel level,PistonMovePlans planner,Consumer<PistonMovePlans.Attempt> onPlan){this(level,planner,onPlan,null);}
+        private Capture(ServerLevel level,PistonMovePlans planner,Consumer<PistonMovePlans.Attempt> onPlan,Consumer<Move> preview){this.level=level;this.planner=planner;this.onPlan=onPlan;this.preview=preview;}
+        static Capture preview(ServerLevel level,Consumer<Move> move){return new Capture(level,null,null,move);}
         public List<Contact> contacts(){return List.copyOf(contacts);}
         public List<PistonMovePlans.Attempt> plans(){return List.copyOf(plans);}
         public void run(Runnable action){
@@ -81,6 +84,7 @@ public final class PistonContacts {
     public static void move(Entity entity,MoverType type,Vec3 movement){
         var active=ACTIVE.get();
         if(active==null||type!=MoverType.PISTON||entity.level()!=active.capture.level){entity.move(type,movement);return;}
+        if(active.capture.preview!=null){active.capture.preview.accept(new Move(active,entity,movement));return;}
         if(active.capture.contacts.size()>=4096)throw new IllegalStateException("piston contact observation capacity");
         var position=entity.position();var box=entity.getBoundingBox();
         if(active.capture.planner!=null){

@@ -10,6 +10,7 @@
 		"LevelMixin",
 		"PlayerAttackMixin",
 		"PistonContactsMixin",
+		"PistonAccess",
 		"PistonStructureMixin",
 		"ShieldBlockingMixin",
 		"WindChargeCollisionMixin",

@@ -172,6 +172,7 @@ final class PistonSceneCheck {
             eventCases(server,empty);
             rows.addAll(PistonContactCases.run(level,server.getPlayerList().getPlayers().getFirst().blockPosition().atY(201)));
             rows.addAll(PistonLimitCases.run(level,server.getPlayerList().getPlayers().getFirst().blockPosition().atY(201)));
+            rows.addAll(PistonPreviewCases.run(level,server.getPlayerList().getPlayers().getFirst().blockPosition().atY(201),empty));
             rows.addAll(PistonPlanCases.run(level,server.getPlayerList().getPlayers().getFirst().blockPosition().atY(201),(wall,face,kind)->{
                 if(kind.equals("empty"))return grid(server);
                 if(kind.equals("slab"))return grid(server,new Cell(wall,0,0,0,8,4,8));
