@@ -95,6 +95,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private final WorldLayerCapture worldLayers = new WorldLayerCapture();
     private final BlockShapes blockShapes = new BlockShapes();
     private BlockModelCheck blockModelCheck;
+    private FluidRenderCheck fluidRenderCheck;
     private final HostLanguage hostLanguage = new HostLanguage();
     private boolean crosshair;
     private CollisionLoader collision;
@@ -274,6 +275,10 @@ public final class SifuCraftClient implements ClientModInitializer {
             blockModelCheck = new BlockModelCheck();
             ServerLifecycleEvents.SERVER_STOPPING.register(blockModelCheck::restore);
         }
+        if (Boolean.getBoolean("sifucraft.fluidRenderSelfTest")) {
+            fluidRenderCheck = new FluidRenderCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(fluidRenderCheck::restore);
+        }
         if (Boolean.getBoolean("sifucraft.playerDamageTest") || Boolean.getBoolean("sifucraft.playerHitSelfTest") ||
                 Boolean.getBoolean("sifucraft.respawnSelfTest")) {
             PlayerHitCheck check = new PlayerHitCheck();
@@ -283,6 +288,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         }
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
             if (blockModelCheck != null) blockModelCheck.restoreClient(client);
+            if (fluidRenderCheck != null) fluidRenderCheck.restoreClient(client);
             if (worldStressCheck != null) worldStressCheck.restoreClient(client);
             if (avatarCheck != null) avatarCheck.restoreClient(client);
             if (worldAudioCheck != null) worldAudioCheck.close();
@@ -430,6 +436,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         placeIfNeeded(previous);
         publishCollision();
         blockShapes.update(minecraft, bridge, space.placement());
+        WorldTerrain.update(minecraft);
         publishBlocks(previous);
         enforceNoFlight();
         rescueFromFall(previous);
@@ -459,6 +466,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (interactionCheck != null) interactionCheck.tick(minecraft, input, guiAvailable(frame));
         if (worldEffectsCheck != null) worldEffectsCheck.tick(minecraft, input, guiAvailable(frame));
         if (blockModelCheck != null) blockModelCheck.tick(minecraft,guiAvailable(frame));
+        if (fluidRenderCheck != null) fluidRenderCheck.tick(minecraft,guiAvailable(frame));
         if (worldCracksCheck != null) worldCracksCheck.tick(minecraft, input, guiAvailable(frame));
         if (worldModelCheck != null) worldModelCheck.tick(minecraft, guiAvailable(frame));
         if (avatarCheck != null) avatarCheck.tick(minecraft, input, guiAvailable(frame));

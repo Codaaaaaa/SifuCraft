@@ -59,7 +59,9 @@ public final class BlockShapes implements AutoCloseable {
         if (world != frame.worldGeneration() || !map.equals(wantedMap) || saveKey != save) {
             world = frame.worldGeneration(); map = wantedMap; saveKey = save; ticket++; pending = null; latest = null; active = false;
         }
-        long now = WorldWriter.clockMillis(); active = writer.ready(world,map,saveKey,now);
+        // Native retains scoped collision actors across brief ACK delays. Keep the negotiated
+        // presentation until scope loss; caughtUp() still requires a fresh applied revision.
+        long now = WorldWriter.clockMillis(); active |= writer.ready(world,map,saveKey,now);
         Export out = pending;
         if (out != null && out.world == world && out.map.equals(map) && out.save == saveKey) latest = out;
         if (latest != null && (out == latest || now >= nextPublishMs) &&

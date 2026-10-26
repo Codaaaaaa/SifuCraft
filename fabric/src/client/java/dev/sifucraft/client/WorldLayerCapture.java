@@ -59,6 +59,8 @@ final class WorldLayerCapture implements AutoCloseable {
                 try (var mapped = newest.buffer.map(true, false)) {
                     int plane = OverlayProtocol.pixelBytes(newest.width, newest.height);
                     var data = MemorySegment.ofBuffer(mapped.data());
+                    if (Boolean.getBoolean("sifucraft.fluidRenderSelfTest"))
+                        FluidRenderCheck.inspect(data.asSlice(0,plane),data.asSlice(plane,plane),newest.width,newest.height,newest.camera);
                     if (Boolean.getBoolean("sifucraft.blockModelSelfTest"))
                         BlockModelCheck.inspect(data.asSlice(0,plane),data.asSlice(plane,plane),newest.width,newest.height,newest.camera);
                     if (Boolean.getBoolean("sifucraft.worldEffectsSelfTest"))

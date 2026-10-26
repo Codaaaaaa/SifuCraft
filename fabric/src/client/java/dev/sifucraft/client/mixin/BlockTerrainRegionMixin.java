@@ -1,7 +1,7 @@
 package dev.sifucraft.client.mixin;
 
 import dev.sifucraft.blocks.PlacedBlocks;
-import dev.sifucraft.client.BlockShapes;
+import dev.sifucraft.client.WorldTerrain;
 import net.minecraft.client.renderer.chunk.RenderSectionRegion;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Blocks;
@@ -16,6 +16,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class BlockTerrainRegionMixin {
     @Inject(method = "getBlockState", at = @At("HEAD"), cancellable = true)
     private void sifucraft$omitBackingFloor(BlockPos pos, CallbackInfoReturnable<BlockState> cir) {
-        if (BlockShapes.ENABLED && pos.getY() < PlacedBlocks.MIN_Y) cir.setReturnValue(Blocks.AIR.defaultBlockState());
+        if (WorldTerrain.hideBackingFloor() && pos.getY() < PlacedBlocks.MIN_Y) cir.setReturnValue(Blocks.AIR.defaultBlockState());
     }
 }
