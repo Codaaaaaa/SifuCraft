@@ -139,6 +139,17 @@ MEMBERS = {
     "UGameInstance": ["LocalPlayers"],
     "UPlayer": ["PlayerController"],
     "AActor": ["RootComponent"],
+    # P8 approved M1/M2: read-only qualification and swept-hit result layouts.
+    "UActorComponent": ["OwnerPrivate"],
+    "ABaseCharacter": ["m_OrderComponent"],
+    "UOrderComponent": ["m_OrderManager"],
+    "OrderManager": ["m_OrderList", "m_DelayedOrderCommand", "m_DelayedOrderCommandDuringPrediction"],
+    "UFightingMovementComponent": ["m_bIsRushing", "m_LocalResyncRequest", "m_LocalTimedoutResyncRequest", "m_ResyncRequestOnReplica"],
+    "USkeletalMeshComponent": ["AnimScriptInstance", "ParallelAnimationEvaluationTask", "ParallelBlendPhysicsCompletionTask"],
+    "UAnimInstance": ["MontageInstances", "RootMotionMontageInstance", "RootMotionBlendQueue", "ExtractedRootMotion"],
+    "FRootMotionMovementParams": ["bHasRootMotion"],
+    "FRootMotionSourceGroup": ["RootMotionSources", "PendingAddRootMotionSources"],
+    "FHitResult": ["Time", "Location"],
     "APawn": ["Controller"],
     "ACharacter": ["CharacterMovement", "Mesh", "CapsuleComponent"],
     "AController": ["Pawn", "IgnoreMoveInput", "IgnoreLookInput"],
@@ -169,8 +180,8 @@ MEMBERS = {
     "UStaticMeshComponent": ["StaticMesh"],
     "UStaticMesh": ["BodySetup"],
     "UInstancedStaticMeshComponent": ["PerInstanceSMData"],
-    "UMovementComponent": ["Velocity"],
-    "UCharacterMovementComponent": ["MovementMode", "WalkableFloorAngle", "WalkableFloorZ", "MaxStepHeight"],
+    "UMovementComponent": ["Velocity", "UpdatedComponent", "UpdatedPrimitive"],
+    "UCharacterMovementComponent": ["MovementMode", "WalkableFloorAngle", "WalkableFloorZ", "MaxStepHeight", "RootMotionParams", "CurrentRootMotion", "PendingLaunchVelocity"],
     "UCapsuleComponent": ["CapsuleHalfHeight", "CapsuleRadius"],
     "UEngine": ["GameViewport"],
     # Sifu
@@ -218,13 +229,15 @@ MEMBERS = {
 
 SIZES = ["InternationalizationStore", "FCulture", "FUObjectItem", "UObjectBase", "FName", "FNameEntryAllocator", "FTransform", "FKConvexElem", "FKBoxElem", "FKSphereElem",
          "FKSphylElem", "FKTaperedCapsuleElem", "FInstancedStaticMeshInstanceData", "FDamageInfos",
-         "FHitRequest", "FHitBox", "FHitboxDataRow", "FHitImpact", "FHitDescription", "FImpactResult", "GuardStackValue", "DataTableElement", "FGameplayTag", "FAnimNotifyEvent", "FRichCurveKey", "ComboAttackElement"]
+         "FHitRequest", "FHitBox", "FHitboxDataRow", "FHitImpact", "FHitDescription", "FImpactResult", "GuardStackValue", "DataTableElement", "FGameplayTag", "FAnimNotifyEvent", "FRichCurveKey", "ComboAttackElement", "FHitResult"]
 
 # type -> bitfield members whose bit position/width are emitted.
 BITFIELDS = {
     "FNameEntryHeader": ["bIsWide", "Len"],
     "APlayerController": ["bShowMouseCursor", "bCinematicMode"],
-    "AActor": ["bHidden"],
+    "AActor": ["bHidden", "bActorEnableCollision"],
+    "FBodyInstanceCore": ["bSimulatePhysics"],
+    "FHitResult": ["bBlockingHit", "bStartPenetrating"],
     "ULevel": ["bIsVisible"],
     "USceneComponent": ["bVisible", "bHiddenInGame"],
     "FBodyInstance": ["bOverrideWalkableSlopeOnInstance"],

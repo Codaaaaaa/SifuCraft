@@ -15,6 +15,7 @@
 #include "blocks/block_mirror.h"
 #include "bridge/sifu_bridge.h"
 #include "combat/enemies.h"
+#include "combat/motion_probe.h"
 #include "combat/damage.h"
 #include "combat/player_hits.h"
 #include "core/config.h"
@@ -467,6 +468,7 @@ public:
         const auto grid = builder_.Latest(generation);
         return grid && collision::HasFloorSupport(*grid, {feet.x, feet.y, feet.z});
     }
+    std::shared_ptr<const collision::VoxelGrid> MotionGrid(std::uint32_t generation) const { return builder_.Latest(generation); }
 
     void FlushCheck() {
         if (walk_check_.samples() == 0) return;
@@ -661,6 +663,7 @@ void Run(std::uintptr_t image_base) {
     probe::WaitForEngine(image_base);
     g_bridge.Start();
     const config::Settings settings = config::Load();
+    combat::motion::Configure(settings.npc_motion_probe);
     hooks::Configure(image_base, settings.stage);
     bool engine_hooked = false;
     Ownership ownership;
@@ -769,6 +772,20 @@ void Run(std::uintptr_t image_base) {
             }
         }
         g_bridge.Tick(frame, GetTickCount64());
+        if (settings.npc_motion_probe) {
+            combat::motion::Context motion;
+            const auto world_id = ue::IdentityOf(world);
+            motion.scope = {g_bridge.session(), g_bridge.peer_connected() ? g_bridge.peer_session() : 0,
+                world, generation, world_id.index, world_id.serial};
+            motion.pawn = player.pawn; motion.pawn_identity = ue::IdentityOf(player.pawn);
+            motion.updated_ms = GetTickCount64();
+            const auto& motion_peer = g_bridge.peer_state();
+            motion.enabled = g_bridge.peer_connected() && motion_peer.valid && world && player.pawn &&
+                motion_peer.sifu_session == g_bridge.session() && motion_peer.world_generation == generation &&
+                (motion_peer.flags & protocol::kMcReady) && !(motion_peer.flags & protocol::kMcGuiOpen);
+            motion.targets = enemies.targets(); motion.grid = collision_schedule.MotionGrid(generation);
+            combat::motion::UpdateContext(std::move(motion));
+        }
         if (settings.stage >= 10) {
             const auto shape_map = MapName(world_path);
             if (!g_bridge.peer_connected() || shape_frame.source_mc != g_bridge.peer_session() ||

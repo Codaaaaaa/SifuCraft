@@ -41,6 +41,7 @@ add_library(sifucraft_native SHARED
     src/core/config.cpp
     src/core/safe_memory.cpp
     src/combat/enemies.cpp
+    src/combat/motion_probe.cpp
     src/combat/damage.cpp
     src/combat/player_hits.cpp
     src/hooks/camera_fade.cpp
@@ -97,6 +98,8 @@ add_executable(sifucraft_hud_tests tests/hud_tests.cpp)
 add_executable(sifucraft_shape_tests tests/shape_tests.cpp src/bridge/shape_reader.cpp src/bridge/shared_mapping.cpp)
 add_test(NAME shape_tests COMMAND sifucraft_shape_tests)
 add_test(NAME hud_tests COMMAND sifucraft_hud_tests)
+add_executable(sifucraft_motion_tests tests/motion_tests.cpp)
+add_test(NAME motion_tests COMMAND sifucraft_motion_tests)
 
 # Re-runs the voxelization on shapes saved by the game and scores it against recorded walks.
 set(SIFUCRAFT_VOXEL_SOURCES
@@ -127,7 +130,7 @@ add_executable(sifucraft_native_tests
 add_dependencies(sifucraft_native_tests sifucraft_native)
 add_test(NAME native_tests COMMAND sifucraft_native_tests $<TARGET_FILE:sifucraft_native>)
 
-foreach(target sifucraft_native sifucraft_fake_sifu sifucraft_collision_replay sifucraft_native_tests sifucraft_overlay_tests sifucraft_world_tests sifucraft_world_render_tests sifucraft_render_tests sifucraft_depth_tests sifucraft_hud_tests sifucraft_shape_tests)
+foreach(target sifucraft_native sifucraft_fake_sifu sifucraft_collision_replay sifucraft_native_tests sifucraft_overlay_tests sifucraft_world_tests sifucraft_world_render_tests sifucraft_render_tests sifucraft_depth_tests sifucraft_hud_tests sifucraft_shape_tests sifucraft_motion_tests)
     set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     target_include_directories(${target} PRIVATE ${SIFUCRAFT_INCLUDE_DIRS})
     target_compile_definitions(${target} PRIVATE ${SIFUCRAFT_COMMON_DEFINITIONS})

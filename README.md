@@ -359,6 +359,16 @@ powershell -File tools/gradle.ps1 runStub --args="--duration 30" # 用 Gradle �
 
 ## 构建 sifu-native
 
+P8 的 NPC 水平扫掠仍为独立诊断，尚未连接普通活塞；普通启动默认关闭。
+显式创建游戏控制目录下的 `SifuCraft/npc-motion-probe` 后重启，才会启用资格观察。
+日志中的 `qualification` 提供目标 `id/spawn/serial`；当前只允许已核对的两个普通 grunt 类。
+用 `tools/npc-motion-probe.py observe --game-dir "<Sifu>/Sifu/Binaries/Win64" --target "id/spawn/serial"`
+观察指定目标，确认同线程原 Tick 后，可用同样参数的 `move --x 10` 请求一次水平扫掠。
+每次最多10cm/100ms，每进程最多4次、相隔至少1秒；命令、动画、身份、暂停或碰撞资格不符会拒绝。
+该工具只写诊断请求文件，不读写游戏内存；Native 在游戏线程重新验证并反馈实际位移。
+删除控制目录中的 `npc-motion-probe` 即停止接管；下次重启恢复完全关闭。
+这项诊断不代表真实活塞推挤、垂直承载、AI恢复或全目录验收已完成。
+
 需要 x64 MinGW-w64 GCC（例如 WinLibs）与 CMake ≥ 3.21。VS Code 中安装 CMake Tools 扩展后可直接选择 `mingw-release` preset。
 
 ```powershell

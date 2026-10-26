@@ -262,6 +262,48 @@ inline constexpr std::uint32_t PlayerController = 0x30;
 namespace AActor {
 inline constexpr std::uint32_t RootComponent = 0x190;
 }
+namespace UActorComponent {
+inline constexpr std::uint32_t OwnerPrivate = 0xB0;
+}
+namespace ABaseCharacter {
+inline constexpr std::uint32_t m_OrderComponent = 0x870;
+}
+namespace UOrderComponent {
+inline constexpr std::uint32_t m_OrderManager = 0x248;
+}
+namespace OrderManager {
+inline constexpr std::uint32_t m_OrderList = 0xA8;
+inline constexpr std::uint32_t m_DelayedOrderCommand = 0xB8;
+inline constexpr std::uint32_t m_DelayedOrderCommandDuringPrediction = 0x188;
+}
+namespace UFightingMovementComponent {
+inline constexpr std::uint32_t m_bIsRushing = 0x13D8;
+inline constexpr std::uint32_t m_LocalResyncRequest = 0x1458;
+inline constexpr std::uint32_t m_LocalTimedoutResyncRequest = 0x1468;
+inline constexpr std::uint32_t m_ResyncRequestOnReplica = 0x1478;
+}
+namespace USkeletalMeshComponent {
+inline constexpr std::uint32_t AnimScriptInstance = 0x6F0;
+inline constexpr std::uint32_t ParallelAnimationEvaluationTask = 0xBD0;
+inline constexpr std::uint32_t ParallelBlendPhysicsCompletionTask = 0xBD8;
+}
+namespace UAnimInstance {
+inline constexpr std::uint32_t MontageInstances = 0x78;
+inline constexpr std::uint32_t RootMotionMontageInstance = 0x2D8;
+inline constexpr std::uint32_t RootMotionBlendQueue = 0x2E0;
+inline constexpr std::uint32_t ExtractedRootMotion = 0x2F0;
+}
+namespace FRootMotionMovementParams {
+inline constexpr std::uint32_t bHasRootMotion = 0x0;
+}
+namespace FRootMotionSourceGroup {
+inline constexpr std::uint32_t RootMotionSources = 0x8;
+inline constexpr std::uint32_t PendingAddRootMotionSources = 0x18;
+}
+namespace FHitResult {
+inline constexpr std::uint32_t Time = 0x8;
+inline constexpr std::uint32_t Location = 0x10;
+}
 namespace APawn {
 inline constexpr std::uint32_t Controller = 0x2E8;
 }
@@ -390,12 +432,17 @@ inline constexpr std::uint32_t PerInstanceSMData = 0x528;
 }
 namespace UMovementComponent {
 inline constexpr std::uint32_t Velocity = 0xD4;
+inline constexpr std::uint32_t UpdatedComponent = 0xC0;
+inline constexpr std::uint32_t UpdatedPrimitive = 0xC8;
 }
 namespace UCharacterMovementComponent {
 inline constexpr std::uint32_t MovementMode = 0x178;
 inline constexpr std::uint32_t WalkableFloorAngle = 0x170;
 inline constexpr std::uint32_t WalkableFloorZ = 0x174;
 inline constexpr std::uint32_t MaxStepHeight = 0x164;
+inline constexpr std::uint32_t RootMotionParams = 0xB50;
+inline constexpr std::uint32_t CurrentRootMotion = 0xA50;
+inline constexpr std::uint32_t PendingLaunchVelocity = 0x3D4;
 }
 namespace UCapsuleComponent {
 inline constexpr std::uint32_t CapsuleHalfHeight = 0x4A8;
@@ -595,6 +642,7 @@ inline constexpr std::uint32_t FGameplayTag = 0x8;
 inline constexpr std::uint32_t FAnimNotifyEvent = 0xB8;
 inline constexpr std::uint32_t FRichCurveKey = 0x1C;
 inline constexpr std::uint32_t ComboAttackElement = 0x18;
+inline constexpr std::uint32_t FHitResult = 0x8C;
 }  // namespace size
 
 namespace bits {
@@ -618,6 +666,22 @@ namespace AActor {
 inline constexpr std::uint32_t bHidden_Offset = 0x60;
 inline constexpr std::uint32_t bHidden_Shift = 6;
 inline constexpr std::uint32_t bHidden_Width = 1;
+inline constexpr std::uint32_t bActorEnableCollision_Offset = 0xB2;
+inline constexpr std::uint32_t bActorEnableCollision_Shift = 4;
+inline constexpr std::uint32_t bActorEnableCollision_Width = 1;
+}
+namespace FBodyInstanceCore {
+inline constexpr std::uint32_t bSimulatePhysics_Offset = 0x10;
+inline constexpr std::uint32_t bSimulatePhysics_Shift = 0;
+inline constexpr std::uint32_t bSimulatePhysics_Width = 1;
+}
+namespace FHitResult {
+inline constexpr std::uint32_t bBlockingHit_Offset = 0x0;
+inline constexpr std::uint32_t bBlockingHit_Shift = 0;
+inline constexpr std::uint32_t bBlockingHit_Width = 1;
+inline constexpr std::uint32_t bStartPenetrating_Offset = 0x0;
+inline constexpr std::uint32_t bStartPenetrating_Shift = 1;
+inline constexpr std::uint32_t bStartPenetrating_Width = 1;
 }
 namespace ULevel {
 inline constexpr std::uint32_t bIsVisible_Offset = 0x204;

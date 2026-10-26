@@ -49,6 +49,8 @@ void SetPoseOverride(const PoseOverride& pose, const std::vector<std::uintptr_t>
 // H1, H5 and the reflected pose functions are all in place.
 bool PoseHooksReady();
 bool PoseActive();
+// H5 must already own this exact generated vtable/slot; no additional patch.
+bool MovementHookOwns(std::uintptr_t component);
 // Frames in a row on which Sifu itself moved the pawn after our pose write (0 when idle).
 std::uint32_t ConsecutiveDisplacements();
 

@@ -8,6 +8,7 @@
 
 #include "blocks/block_mirror.h"
 #include "combat/damage.h"
+#include "combat/motion_probe.h"
 #include "combat/shield_timing.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
@@ -237,7 +238,7 @@ void ResolvePoseCalls() {
 // ---- H5: UFightingMovementComponent::TickComponent ------------------------------------------
 // Only the local player's component is skipped, and only while Minecraft owns the pose: Sifu
 // then computes no movement, gravity or root motion for the player. Every other character
-// (enemies) ticks normally.
+// (enemies) ticks normally, except one explicitly armed P8 M1/M2 diagnostic lease.
 
 using TickComponentFn = void (*)(void* component, float delta_time, int tick_type, void* tick_function);
 
@@ -249,7 +250,10 @@ void MovementTickHook(void* component, float delta_time, int tick_type, void* ti
         g_pose_stats.movement_ticks_skipped.fetch_add(1, std::memory_order_relaxed);
         return;
     }
+    const auto address = reinterpret_cast<std::uintptr_t>(component);
+    if (combat::motion::SkipMovement(address)) return;
     g_movement_tick.original<TickComponentFn>()(component, delta_time, tick_type, tick_function);
+    combat::motion::AfterOriginalMovement(address);
 }
 
 // ---- H1: UGameEngine::Tick ------------------------------------------------------------------
@@ -292,6 +296,7 @@ void EngineTickHook(void* engine, float delta_seconds, bool idle_mode) {
     if (g_stage >= 5) ApplyPose();
     if (g_stage >= 6) blocks::ApplyOnGameThread(g_image_base);
     if (g_stage >= 7) combat::damage::ApplyOnGameThread(g_image_base);
+    if (g_stage >= 10) combat::motion::ApplyOnGameThread(g_image_base);
     g_engine_tick.original<EngineTickFn>()(engine, delta_seconds, idle_mode);
     interaction::AfterTick(g_image_base, g_stage);
     if (g_stage >= 8) ui::ApplyHudOnGameThread(g_image_base,
@@ -581,6 +586,11 @@ std::uint32_t ConsecutiveDisplacements() { return g_consecutive_displacements.lo
 
 bool PoseHooksReady() { return g_pose_calls_ready.load() && g_movement_tick.installed() && g_engine_tick.installed(); }
 bool PoseActive() { return g_pose_active.load(std::memory_order_relaxed); }
+bool MovementHookOwns(std::uintptr_t component) {
+    const auto table = mem::ReadPtr(component);
+    return g_movement_tick.installed() && table == g_image_base + gen::hook::MovementTick.vftable &&
+        mem::ReadPtr(table + gen::hook::MovementTick.slot) == reinterpret_cast<std::uintptr_t>(&MovementTickHook);
+}
 
 void SetPoseOverride(const PoseOverride& pose, const std::vector<std::uintptr_t>& impostors) {
     AcquireSRWLockExclusive(&g_pose_lock);

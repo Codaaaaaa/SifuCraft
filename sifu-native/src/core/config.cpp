@@ -32,6 +32,7 @@ Settings Load() {
     Settings settings;
     settings.no_hooks = Exists(root + L"\\no-hooks");
     settings.stage = settings.no_hooks ? 0 : ReadStage(root + L"\\stage");
+    settings.npc_motion_probe = settings.stage >= 10 && Exists(root + L"\\npc-motion-probe");
     SC_LOG("config: rollout stage %d%s", settings.stage, settings.no_hooks ? " (no-hooks file present)" : "");
     return settings;
 }
