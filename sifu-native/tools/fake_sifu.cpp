@@ -36,6 +36,7 @@
 #include "bridge/sifu_bridge.h"
 #include "bridge/overlay_reader.h"
 #include "bridge/world_reader.h"
+#include "bridge/shape_reader.h"
 #include "combat/damage_ledger.h"
 #include "combat/shield_ledger.h"
 #include "combat/impulse_ledger.h"
@@ -172,6 +173,7 @@ int main(int argc, char** argv) {
     bool gui_test = false;
     bool world_camera_scenario = false;
     bool world_audio_scenario = false;
+    bool shapes_test = false;
     bool shield_scenario = false;
     bool totem_scenario = false, totem_sent = false;
     bool food_scenario = false, food_sent = false;
@@ -193,6 +195,8 @@ int main(int argc, char** argv) {
             world_output = argv[++i];
         } else if (std::strcmp(argv[i], "--world-camera-scenario") == 0) {
             world_camera_scenario = true;
+        } else if (std::strcmp(argv[i], "--shapes") == 0) {
+            shapes_test = true;
         } else if (std::strcmp(argv[i], "--world-audio-scenario") == 0) {
             world_camera_scenario = world_audio_scenario = true;
         } else if (std::strcmp(argv[i], "--gui") == 0) {
@@ -306,6 +310,8 @@ int main(int argc, char** argv) {
     bool overlay_saved = false;
     world_image::Reader world_reader;
     world_image::Frame world_frame;
+    shape_data::Reader shape_reader;
+    shape_data::Frame shape_frame;
     unsigned world_frames = 0;
     bool world_saved = false;
     unsigned camera_samples[6]{}, camera_visible[6]{}, camera_errors = 0, native_hud_frames = 0;
@@ -354,6 +360,11 @@ int main(int argc, char** argv) {
             }
         }
         bridge.Tick(frame, now);
+        if (shapes_test && bridge.peer_connected()) {
+            if (shape_reader.Read(bridge.peer_session(),bridge.session(),frame.world_generation,pawn.map,now,&shape_frame))
+                SC_LOG("[shape-test] received revision=%llu sections=%zu",(unsigned long long)shape_frame.header.revision,shape_frame.parts.size());
+            if (shape_frame.header.revision) shape_reader.Acknowledge(shape_frame,true,now);
+        }
         if (interaction_scenario) {
             protocol::InteractionSnapshot candidate{};
             candidate.frame = now; candidate.revision = 7; candidate.world = frame.world_generation; candidate.epoch = frame.anchor_epoch;

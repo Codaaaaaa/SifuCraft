@@ -80,6 +80,7 @@ TYPE_ALIASES = {
 
 # type -> members. A member may live in a base class; its offset is then made absolute.
 MEMBERS = {
+    "UBoxComponent": ["BoxExtent"],
     "FViewUniformShaderParameters": ["WorldToClip", "ViewToClip", "ViewToClipNoAA", "InvDeviceZToWorldZTransform", "WorldCameraOrigin", "TemporalAAJitter", "ViewRectMin", "ViewSizeAndInvSize", "BufferSizeAndInvSize", "NearPlane", "FrameNumber"],
     "FSceneRenderTargets": ["SceneDepthZ"],
     "IPooledRenderTarget": ["RenderTargetItem"],

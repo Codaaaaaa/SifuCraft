@@ -3,6 +3,7 @@
 	"package": "dev.sifucraft.client.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
+    "BlockTerrainRegionMixin",
     "AvatarSkinMixin",
     "WorldReadbackMixin",
     "WorldCameraMixin",

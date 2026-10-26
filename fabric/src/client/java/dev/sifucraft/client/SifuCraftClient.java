@@ -93,6 +93,8 @@ public final class SifuCraftClient implements ClientModInitializer {
     private int guiWireEvents;
     private final OverlayCapture overlay = new OverlayCapture();
     private final WorldLayerCapture worldLayers = new WorldLayerCapture();
+    private final BlockShapes blockShapes = new BlockShapes();
+    private BlockModelCheck blockModelCheck;
     private final HostLanguage hostLanguage = new HostLanguage();
     private boolean crosshair;
     private CollisionLoader collision;
@@ -268,6 +270,10 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerTickEvents.END_SERVER_TICK.register(check::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
         }
+        if (Boolean.getBoolean("sifucraft.blockModelSelfTest")) {
+            blockModelCheck = new BlockModelCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(blockModelCheck::restore);
+        }
         if (Boolean.getBoolean("sifucraft.playerDamageTest") || Boolean.getBoolean("sifucraft.playerHitSelfTest") ||
                 Boolean.getBoolean("sifucraft.respawnSelfTest")) {
             PlayerHitCheck check = new PlayerHitCheck();
@@ -276,11 +282,13 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
         }
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            if (blockModelCheck != null) blockModelCheck.restoreClient(client);
             if (worldStressCheck != null) worldStressCheck.restoreClient(client);
             if (avatarCheck != null) avatarCheck.restoreClient(client);
             if (worldAudioCheck != null) worldAudioCheck.close();
             overlay.close();
             worldLayers.close();
+            blockShapes.close();
             collision.close();
             doors.close();
             bridge.close();
@@ -330,6 +338,8 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (instance != null) instance.worldLayers.projection(projection);
     }
     static boolean worldLayersActive() { return instance != null && instance.worldLayers.enabled() && WorldEffects.active(); }
+    public static boolean blockModelsActive() { return instance != null && instance.blockShapes.active(); }
+    static boolean blockCollisionCurrent() { return instance != null && instance.blockShapes.caughtUp(); }
     public static boolean worldEffectsAvailable() {
         var c = instance;
         return c != null && (overlayActive() || (c.worldLayers.enabled() && c.worldScope() != null));
@@ -419,6 +429,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         input.syncMouseMode();
         placeIfNeeded(previous);
         publishCollision();
+        blockShapes.update(minecraft, bridge, space.placement());
         publishBlocks(previous);
         enforceNoFlight();
         rescueFromFall(previous);
@@ -447,6 +458,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (elytraCheck != null) elytraCheck.tick(minecraft, input, guiAvailable(frame));
         if (interactionCheck != null) interactionCheck.tick(minecraft, input, guiAvailable(frame));
         if (worldEffectsCheck != null) worldEffectsCheck.tick(minecraft, input, guiAvailable(frame));
+        if (blockModelCheck != null) blockModelCheck.tick(minecraft,guiAvailable(frame));
         if (worldCracksCheck != null) worldCracksCheck.tick(minecraft, input, guiAvailable(frame));
         if (worldModelCheck != null) worldModelCheck.tick(minecraft, guiAvailable(frame));
         if (avatarCheck != null) avatarCheck.tick(minecraft, input, guiAvailable(frame));

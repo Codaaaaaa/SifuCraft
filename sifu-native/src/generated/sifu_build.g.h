@@ -25,6 +25,9 @@ inline constexpr std::uintptr_t DepthTextureVtable = 0x4B7E440;
 }  // namespace rva
 
 namespace off {
+namespace UBoxComponent {
+inline constexpr std::uint32_t BoxExtent = 0x4A8;
+}
 namespace FViewUniformShaderParameters {
 inline constexpr std::uint32_t WorldToClip = 0x40;
 inline constexpr std::uint32_t ViewToClip = 0x1C0;

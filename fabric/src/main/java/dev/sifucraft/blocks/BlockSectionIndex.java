@@ -83,4 +83,8 @@ public final class BlockSectionIndex {
     }
 
     public synchronized long revision() { return revision; }
+    /** Full reconnect snapshot, including sections whose last update was already acknowledged. */
+    public synchronized List<Snapshot> snapshots() {
+        return sections.keySet().stream().sorted().map(this::snapshot).toList();
+    }
 }

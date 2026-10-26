@@ -68,6 +68,7 @@ public final class P8OfflineTest {
                 !piston.setValue(BlockStateProperties.EXTENDED, true).isCollisionShapeFullBlock(world, pos),
                 "legacy full-shape filter removes the extended piston base");
         revisions();
+        dev.sifucraft.client.BlockShapesOfflineTest.run();
         Path report = Path.of(args.length == 0 ? "build/reports/p8/block-catalog.json" : args[0]);
         Files.createDirectories(report.toAbsolutePath().getParent()); RedstoneCatalog.write(report);
         System.out.println("P8 offline PASS: " + states + " installed state roundtrips, separate shapes, revisions/tombstones, 32768 blocks; catalog=" + report);

@@ -22,7 +22,7 @@ Sifu 与 Minecraft 作为两个独立进程运行：
 | P5 | 敌人代理与双向伤害 | 已通过（武馆、第一关、跨图及 F8 实机验收） |
 | P6 | 核心物品系统、GUI 与原生交互 | 已通过（含重锤、鞘翅/烟花、开门视角及 F8 复验） |
 | P7 | 世界实体、粒子、Steve 与稳健性 | 已通过功能验收（含 F5、船体移动、墙体 AI 与跨图合并反馈；完整一关长测时长未独立记录） |
-| P8 | 完整方块状态、红石与机械 | 开发中：组件目录、按钮/活塞原版轨迹与分区索引基础已验证；通用模型/Native 形状待接入 |
+| P8 | 完整方块状态、红石与机械 | 开发中：全状态索引、独立形状协议和原版模型已接通；11 种模型状态及 Native 碰撞属性回读通过，全目录/机械接触待验 |
 
 ## 目录
 
@@ -65,7 +65,7 @@ Sifu 的玩家由 Minecraft 驱动：键鼠输入转给 Minecraft，Minecraft �
 
 Esc 在背包打开时先关闭背包，其余时间交给 Sifu；F8 在 MC 已接管时交还控制，在 Sifu/过场保护下请求 MC 接管并等待安全交接。过场、菜单、脚本附着等保护仍保留；连续请求不会暗中把 MC 留在禁用状态。每次交给 Minecraft 都是一个新的锚定纪元（anchor epoch），Minecraft 从角色当前所在位置和朝向继续，不会把角色拉回之前的位置。
 
-逐步上线由 `SifuCraft\stage`（0–9，6 = P4 方块，7 = P5 敌人代理与 MC 攻击转发，8 = P6 GUI 合成，9 = 可选 P7 世界合成）控制，`SifuCraft\no-hooks` 只保留只读探针，`SifuCraft\disabled` 完全停用。
+逐步上线由 `SifuCraft\stage`（0–10，6 = P4 方块，7 = P5 敌人代理与 MC 攻击转发，8 = P6 GUI 合成，9 = 可选 P7 世界合成，10 = 可选 P8 方块形状）控制，`SifuCraft\no-hooks` 只保留只读探针，`SifuCraft\disabled` 完全停用。
 
 P5 的只读普查在 stage 0 也可运行：日志中的 `[combat-census]` 检查命中/生命组件与候选 Hook 槽位、反射参数、胶囊尺寸及难度生命倍率，并采样生命与池化状态变化。它不安装战斗 Hook、不调用伤害函数；`last-hit` 是最近一次命中的采样，不能用于统计每次伤害的执行次数。
 
@@ -94,6 +94,21 @@ Minecraft 是方块的权威：在 Sifu 关卡所在的那片 Minecraft 世界�
 - Sifu 侧在游戏线程上用反射调用（`ProcessEvent`）生成 `AStaticMeshActor`，每块带一个 `NavArea_Null` 导航修改器（关卡导航网格允许运行时修改）；每帧最多生成 8 个、销毁 16 个、导入 2 张贴图；只在 stage 6 启用；
 - 第一人称：Minecraft 掌控视角时，关闭 Sifu 为第三人称镜头做的近处淡出（`MPC_GameplayGeneric` 的 CamFade），交还时恢复；
 - Minecraft 窗口隐藏，stage 8 以上的背包通过 Sifu 内的 GUI 合成与输入使用；方块用数字键 1–9 或滚轮选择。
+
+## 通用方块模型与形状（P8，实验开关）
+
+stage 10 配合 `-Psifucraft.blockStates=true -Psifucraft.blockShapes=true`，以及已有的
+`worldEffects=true`、`worldLayers=true` 和 Native 世界合成控制文件，可启用原版方块/BlockEntity 模型。
+两个新开关默认关闭。原版 chunk/NBT 是权威，section 索引由加载和修改重建，不用旧立方体索引覆盖存档。
+
+独立协议 [sifucraft_shapes.h](protocol/sifucraft_shapes.h) 使用生产者会话命名、双槽完整快照与
+map/save/world 校验，schema 1 / layout `6755EE23BBDCCF75`。不受旧表 1536 格限制；超出形状载荷容量会报告并重试，保留逻辑状态。
+MC 的 collision、outline、support 分开，只有 collision AABB 生成自有碰撞盒；按钮和红石粉不会补成立方体。
+Native 每帧最多生成 8 个形状 Actor、删除 16 个，首次完成碰撞及旧模型清理才确认显示就绪，后续回报实际应用版本。
+
+显式 `-Psifucraft.blockModelSelfTest=true` 只允许 `sifucraft-block-model-check-*` 隔离存档，
+检查 11 种原版模型状态、配对深度/位置与逐例删除，结束恢复夹具并正常退出。
+这些证据尚不代表全红石目录、NPC 阻挡/导航、机械推挤或规模性能通过。
 
 ## 敌人代理与攻击转发（P5 已通过）
 

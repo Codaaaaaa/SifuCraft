@@ -48,6 +48,8 @@ loom {
 			property "sifucraft.avatarHoldMs", providers.gradleProperty("sifucraft.avatarHoldMs").getOrElse("650")
 			property "sifucraft.worldStressSelfTest", providers.gradleProperty("sifucraft.worldStressSelfTest").getOrElse("false")
 			property "sifucraft.blockStates", providers.gradleProperty("sifucraft.blockStates").getOrElse("false")
+			property "sifucraft.blockShapes", providers.gradleProperty("sifucraft.blockShapes").getOrElse("false")
+			property "sifucraft.blockModelSelfTest", providers.gradleProperty("sifucraft.blockModelSelfTest").getOrElse("false")
 			property "sifucraft.redstoneSelfTest", providers.gradleProperty("sifucraft.redstoneSelfTest").getOrElse("false")
 			property "sifucraft.worldFps", providers.gradleProperty("sifucraft.worldFps").getOrElse("30")
 			property "sifucraft.shieldSelfTest", providers.gradleProperty("sifucraft.shieldSelfTest").getOrElse("false")
@@ -146,3 +148,10 @@ tasks.register('p8OfflineTest', JavaExec) {
 	jvmArgs nativeAccess
 }
 tasks.named('check') { dependsOn tasks.named('p8OfflineTest') }
+tasks.register('shapeProtocolTest', JavaExec) {
+	group = 'verification'
+	classpath = sourceSets.protocolTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.bridge.ShapeWriterTest'
+	jvmArgs nativeAccess
+}
+tasks.named('check') { dependsOn tasks.named('shapeProtocolTest') }

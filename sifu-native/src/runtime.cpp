@@ -668,6 +668,8 @@ void Run(std::uintptr_t image_base) {
     DoorSchedule door_schedule;
     probe::CombatCensus combat_census;
     combat::Enemies enemies;
+    shape_data::Reader shape_reader;
+    shape_data::Frame shape_frame;
     std::vector<protocol::Event> damage_events;
     std::vector<combat::damage::Reply> damage_replies;
     std::deque<combat::damage::Reply> pending_damage_replies;
@@ -767,6 +769,13 @@ void Run(std::uintptr_t image_base) {
             }
         }
         g_bridge.Tick(frame, GetTickCount64());
+        if (settings.stage >= 10) {
+            const auto shape_map = MapName(world_path);
+            if (!g_bridge.peer_connected() || shape_frame.source_mc != g_bridge.peer_session() ||
+                shape_frame.header.world != generation || shape_map != shape_frame.header.map) shape_frame = {};
+            if (g_bridge.peer_connected()) shape_reader.Read(g_bridge.peer_session(),g_bridge.session(),generation,shape_map,GetTickCount64(),&shape_frame);
+            else shape_reader.Close();
+        }
         input::Router().SetUseBinding(settings.stage >= 8 && g_bridge.peer_connected() && g_bridge.peer_state().valid ? g_bridge.peer_state().use_binding : 0);
         if (settings.stage >= 7 && tick % 2 == 0) {
             enemies.Update(world, generation, player.pawn, GetTickCount64());
@@ -776,7 +785,9 @@ void Run(std::uintptr_t image_base) {
         // materials they are made of have streamed in.
         if (settings.stage >= 6 && world && (frame.flags & protocol::kSnapshotHasPawn) &&
             collision_schedule.GridBuilt(generation)) {
-            blocks::Update(world, MapName(world_path), g_bridge.blocks());
+            const auto* shapes = settings.stage >= 10 && shape_frame.header.revision ? &shape_frame : nullptr;
+            blocks::Update(world, MapName(world_path), g_bridge.blocks(),shapes);
+            if (shapes) shape_reader.Acknowledge(*shapes,blocks::ShapesReady(),GetTickCount64(),blocks::ShapesAppliedRevision());
         }
         if (settings.stage >= 4) {
             UpdateCameraOverride(ownership.epoch(), generation);

@@ -14,6 +14,7 @@ set(SIFUCRAFT_INCLUDE_DIRS src ${PROJECT_SOURCE_DIR}/protocol)
 
 # Bridge + logging, shared by the in-game module and the console tools.
 set(SIFUCRAFT_BRIDGE_SOURCES
+    src/bridge/shape_reader.cpp
     src/bridge/world_reader.cpp
     src/core/log.cpp
     src/bridge/shared_mapping.cpp
@@ -93,6 +94,8 @@ add_executable(sifucraft_depth_tests tests/depth_tests.cpp src/render/depth_copy
 target_link_libraries(sifucraft_depth_tests PRIVATE d3d11 d3dcompiler dxgi dxguid)
 add_test(NAME depth_tests COMMAND sifucraft_depth_tests)
 add_executable(sifucraft_hud_tests tests/hud_tests.cpp)
+add_executable(sifucraft_shape_tests tests/shape_tests.cpp src/bridge/shape_reader.cpp src/bridge/shared_mapping.cpp)
+add_test(NAME shape_tests COMMAND sifucraft_shape_tests)
 add_test(NAME hud_tests COMMAND sifucraft_hud_tests)
 
 # Re-runs the voxelization on shapes saved by the game and scores it against recorded walks.
@@ -124,7 +127,7 @@ add_executable(sifucraft_native_tests
 add_dependencies(sifucraft_native_tests sifucraft_native)
 add_test(NAME native_tests COMMAND sifucraft_native_tests $<TARGET_FILE:sifucraft_native>)
 
-foreach(target sifucraft_native sifucraft_fake_sifu sifucraft_collision_replay sifucraft_native_tests sifucraft_overlay_tests sifucraft_world_tests sifucraft_world_render_tests sifucraft_render_tests sifucraft_depth_tests sifucraft_hud_tests)
+foreach(target sifucraft_native sifucraft_fake_sifu sifucraft_collision_replay sifucraft_native_tests sifucraft_overlay_tests sifucraft_world_tests sifucraft_world_render_tests sifucraft_render_tests sifucraft_depth_tests sifucraft_hud_tests sifucraft_shape_tests)
     set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     target_include_directories(${target} PRIVATE ${SIFUCRAFT_INCLUDE_DIRS})
     target_compile_definitions(${target} PRIVATE ${SIFUCRAFT_COMMON_DEFINITIONS})
