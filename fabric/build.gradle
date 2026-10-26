@@ -170,6 +170,12 @@ tasks.register('worldMotionProtocolTest', JavaExec) {
     jvmArgs nativeAccess
 }
 tasks.named('check') { dependsOn tasks.named('worldMotionProtocolTest') }
+tasks.register('worldMotionRequestsTest', JavaExec) {
+    group = 'verification'
+    classpath = sourceSets.protocolTest.runtimeClasspath
+    mainClass = 'dev.sifucraft.bridge.WorldMotionRequestsTest'
+}
+tasks.named('check') { dependsOn tasks.named('worldMotionRequestsTest') }
 tasks.register('worldMotionInteropTest', JavaExec) {
     group = 'verification'
     classpath = sourceSets.protocolTest.runtimeClasspath

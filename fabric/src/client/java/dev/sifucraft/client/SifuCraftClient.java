@@ -94,6 +94,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private final OverlayCapture overlay = new OverlayCapture();
     private final WorldLayerCapture worldLayers = new WorldLayerCapture();
     private final BlockShapes blockShapes = new BlockShapes();
+    private final dev.sifucraft.bridge.WorldMotionRequests worldMotion=new dev.sifucraft.bridge.WorldMotionRequests();
     private BlockModelCheck blockModelCheck;
     private FluidRenderCheck fluidRenderCheck;
     private PistonStressCheck pistonStressCheck;
@@ -333,6 +334,8 @@ public final class SifuCraftClient implements ClientModInitializer {
             overlay.close();
             worldLayers.close();
             blockShapes.close();
+            dev.sifucraft.blocks.WorldMotionWorld.offer(null);
+            worldMotion.close();
             collision.close();
             doors.close();
             bridge.close();
@@ -492,6 +495,7 @@ public final class SifuCraftClient implements ClientModInitializer {
                 frame == null ? 0 : frame.anchorEpoch(), frame != null && guiAvailable(frame));
         if (bridge.peerConnected() && frame != null) hostLanguage.update(minecraft, frame.language());
         publishEnemies(frame);
+        publishWorldMotion(frame);
         publishPlayerSignals(frame);
         CombatHits.pump(bridge);
         dev.sifucraft.combat.ShieldBlocks.pump(bridge);
@@ -764,6 +768,21 @@ public final class SifuCraftClient implements ClientModInitializer {
         EnemyMirrors.offer(frame, bridge.enemies(), slots.placement(UnrealSpace.mapName(frame.worldPath())),
                 respawn.ready() && minecraft.player != null && minecraft.player.isAlive() && space.anchoredTo(frame));
     }
+
+    private void publishWorldMotion(SifuFrame frame) {
+        var server=minecraft.getSingleplayerServer();
+        if(!worldBlocksAvailable()||!bridge.peerConnected()||server==null||frame==null||!frame.hasPawn()||frame.worldGeneration()==0) {
+            dev.sifucraft.blocks.WorldMotionWorld.offer(null);worldMotion.attach(null);return;
+        }
+        var placement=slots.placement(UnrealSpace.mapName(frame.worldPath()));
+        long save=dev.sifucraft.bridge.ShapeProtocol.mapHash(server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize().toString());
+        var scope=new dev.sifucraft.bridge.WorldMotionRequests.Scope(bridge.session(),bridge.peerSession(),frame.worldGeneration(),save==0?1:save,
+            dev.sifucraft.bridge.ShapeProtocol.mapHash(placement.map()));
+        worldMotion.attach(scope);worldMotion.pump(dev.sifucraft.bridge.WorldWriter.clockMillis());
+        dev.sifucraft.blocks.WorldMotionWorld.offer(new dev.sifucraft.blocks.WorldMotionWorld.View(worldMotion,scope,placement,
+            bridge.enemies(),SifuCollision.active(),worldMotion.status(),blockShapes.caughtUp()));
+    }
+    private static boolean worldBlocksAvailable(){return dev.sifucraft.blocks.WorldBlocks.ENABLED&&BlockShapes.ENABLED;}
 
     private void publishPlayerSignals(SifuFrame frame) {
         if(playerSignalCheck!=null)return;
