@@ -57,6 +57,7 @@ loom {
 			property "sifucraft.signalSelfTest", providers.gradleProperty("sifucraft.signalSelfTest").getOrElse("false")
 			property "sifucraft.signalNativeTest", providers.gradleProperty("sifucraft.signalNativeTest").getOrElse("false")
 			property "sifucraft.playerSignalSelfTest", providers.gradleProperty("sifucraft.playerSignalSelfTest").getOrElse("false")
+			property "sifucraft.sensorSelfTest", providers.gradleProperty("sifucraft.sensorSelfTest").getOrElse("false")
 			property "sifucraft.worldFps", providers.gradleProperty("sifucraft.worldFps").getOrElse("30")
 			property "sifucraft.shieldSelfTest", providers.gradleProperty("sifucraft.shieldSelfTest").getOrElse("false")
 			property "sifucraft.shieldTestSupplies", providers.gradleProperty("sifucraft.shieldTestSupplies").getOrElse("false")

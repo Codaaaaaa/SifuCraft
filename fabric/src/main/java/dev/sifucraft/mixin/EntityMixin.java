@@ -29,6 +29,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  */
 @Mixin(Entity.class)
 public abstract class EntityMixin {
+    @Inject(method="applyMovementEmissionAndPlaySound",at=@At("HEAD"),cancellable=true)
+    private void sifucraft$ignoreInactivePlayerFootsteps(Entity.MovementEmission emission,Vec3 motion,
+            net.minecraft.core.BlockPos pos,net.minecraft.world.level.block.state.BlockState state,CallbackInfo ci) {
+        if(dev.sifucraft.blocks.PlayerSignalContacts.ignores((Entity)(Object)this))ci.cancel();
+    }
     @Inject(method="isIgnoringBlockTriggers",at=@At("HEAD"),cancellable=true)
     private void sifucraft$ignoreInactivePlayerSignals(CallbackInfoReturnable<Boolean> cir) {
         if(dev.sifucraft.blocks.PlayerSignalContacts.ignores((Entity)(Object)this))cir.setReturnValue(true);

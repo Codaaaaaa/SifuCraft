@@ -21,6 +21,8 @@ import net.minecraft.world.phys.Vec3;
 
 /** An invisible target whose position, dimensions and life belong to Sifu. No independent AI. */
 public final class EnemyProxy extends Mob {
+    private final dev.sifucraft.blocks.SignalSteps signalSteps=new dev.sifucraft.blocks.SignalSteps();
+    public void updateSignals(){dev.sifucraft.blocks.RedstoneContacts.touch(this);signalSteps.update(this);}
     private boolean capturingDamage;
     private float capturedDamage;
     private static final EntityDataAccessor<Integer> SIFU_ID = SynchedEntityData.defineId(EnemyProxy.class, EntityDataSerializers.INT);

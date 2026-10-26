@@ -99,6 +99,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private PistonStressCheck pistonStressCheck;
     private SignalCheck signalCheck;
     private PlayerSignalCheck playerSignalCheck;
+    private SensorCheck sensorCheck;
     private final HostLanguage hostLanguage = new HostLanguage();
     private boolean crosshair;
     private CollisionLoader collision;
@@ -286,6 +287,11 @@ public final class SifuCraftClient implements ClientModInitializer {
             playerSignalCheck=new PlayerSignalCheck();
             ServerTickEvents.END_SERVER_TICK.register(playerSignalCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(playerSignalCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.sensorSelfTest")){
+            sensorCheck=new SensorCheck();
+            ServerTickEvents.END_SERVER_TICK.register(sensorCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(sensorCheck::restore);
         }
         if (Boolean.getBoolean("sifucraft.blockModelSelfTest")) {
             blockModelCheck = new BlockModelCheck();
@@ -504,6 +510,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (pistonStressCheck != null) pistonStressCheck.clientTick(minecraft,guiAvailable(frame));
         if (signalCheck != null) signalCheck.clientTick(minecraft,guiAvailable(frame));
         if (playerSignalCheck != null) playerSignalCheck.clientTick(minecraft,guiAvailable(frame),frame);
+        if (sensorCheck != null) sensorCheck.clientTick(minecraft,guiAvailable(frame));
         if (worldCracksCheck != null) worldCracksCheck.tick(minecraft, input, guiAvailable(frame));
         if (worldModelCheck != null) worldModelCheck.tick(minecraft, guiAvailable(frame));
         if (avatarCheck != null) avatarCheck.tick(minecraft, input, guiAvailable(frame));

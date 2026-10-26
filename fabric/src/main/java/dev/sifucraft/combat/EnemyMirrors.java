@@ -105,7 +105,7 @@ public final class EnemyMirrors {
         }
         // Update all mirrored positions before counting contacts (weighted plates see one
         // coherent enemy snapshot rather than a mixture of old and new positions).
-        for(var proxy:proxies.values())dev.sifucraft.blocks.RedstoneContacts.touch(proxy);
+        for(var proxy:proxies.values())proxy.updateSignals();
         if (now >= nextStatsMs) {
             nextStatsMs = now + 10000;
             LOG.info("[combat] proxies={} world={} spawned={} removed={} failures={}", proxies.size(), world,

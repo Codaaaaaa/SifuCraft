@@ -47,7 +47,7 @@ public final class PlayerSignalContacts {
         body.place(view.placement.mcX(pos.x()),view.placement.mcY(pos.z()-frame.capsuleHalfHeight()),
             view.placement.mcZ(pos.y()),player.getBbWidth(),height);
         if(create&&!server.overworld().addFreshEntity(body)){removeBody();return;}
-        RedstoneContacts.touchBody(body);
+        body.updateSignals();
     }
     private static void removeBody(){if(body!=null)body.discard();body=null;}
     // A stalled/disconnected Native source must release its body, not reactivate the old MC pose.
