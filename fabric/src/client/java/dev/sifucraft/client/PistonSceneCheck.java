@@ -172,6 +172,16 @@ final class PistonSceneCheck {
             eventCases(server,empty);
             rows.addAll(PistonContactCases.run(level,server.getPlayerList().getPlayers().getFirst().blockPosition().atY(201)));
             rows.addAll(PistonLimitCases.run(level,server.getPlayerList().getPlayers().getFirst().blockPosition().atY(201)));
+            rows.addAll(PistonPlanCases.run(level,server.getPlayerList().getPlayers().getFirst().blockPosition().atY(201),(wall,face,kind)->{
+                if(kind.equals("empty"))return grid(server);
+                if(kind.equals("slab"))return grid(server,new Cell(wall,0,0,0,8,4,8));
+                if(kind.equals("thin")){
+                    int low=face.getAxisDirection()==Direction.AxisDirection.POSITIVE?1:6;
+                    return face.getAxis()==Direction.Axis.X?grid(server,new Cell(wall,low,0,0,low+1,8,8),new Cell(wall.above(),low,0,0,low+1,8,8)):
+                        grid(server,new Cell(wall,0,0,low,8,8,low+1),new Cell(wall.above(),0,0,low,8,8,low+1));
+                }
+                return grid(server,full(wall),full(wall.above()));
+            }));
             write(server,"p8-piston-scene.json",Map.of("result","PASS","native_guard",WorldBlocks.ENABLED,"cases",rows,"blocked_attempts",blockedAttempts,"actual_native_motion",false));
             restore(server);LoggerFactory.getLogger("sifucraft").info("[piston-scene-test] PASS {} cases, {} blocked events; actual vanilla resolver/events; guard={}",rows.size(),blockedAttempts,WorldBlocks.ENABLED);
             if(needNative){restoredAt=System.currentTimeMillis();finished=true;}else Minecraft.getInstance().execute(()->Minecraft.getInstance().stop());

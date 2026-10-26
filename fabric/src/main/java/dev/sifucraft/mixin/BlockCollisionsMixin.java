@@ -46,7 +46,7 @@ public abstract class BlockCollisionsMixin<T> {
         if (sifucraft$shapes == null) {
             sifucraft$shapes = new ArrayList<>();
             sifucraft$positions = new ArrayList<>();
-            SifuCollision.Active active = SifuCollision.active();
+            SifuCollision.Active active = SifuCollision.queryView();
             if (active != null && !onlySuffocatingBlocks && collisionGetter instanceof Level level
                     && level.dimension() == Level.OVERWORLD) {
                 active.forEachShape(box, (at, shape) -> {

@@ -3,6 +3,7 @@ package dev.sifucraft.collision;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
+import java.util.function.Supplier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
@@ -25,11 +26,19 @@ public final class SifuCollision {
     private static final double FACE_NUDGE = 1.0E-4; // off a cell face, into the block in front of it
 
     private static volatile Active active;
+    private static final ThreadLocal<Active> query = new ThreadLocal<>();
 
     private SifuCollision() {}
 
     public static Active active() {
         return active;
+    }
+
+    /** Movement queries can pin one immutable geometry view without replacing the live world. */
+    public static Active queryView() { var scoped=query.get();return scoped==null?active:scoped; }
+    public static <T> T withQueryView(Active scene,Supplier<T> action) {
+        java.util.Objects.requireNonNull(scene);var previous=query.get();query.set(scene);
+        try{return action.get();}finally{if(previous==null)query.remove();else query.set(previous);}
     }
 
     public static void set(Active value) {

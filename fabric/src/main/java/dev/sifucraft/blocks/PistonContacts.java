@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Consumer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
@@ -26,10 +27,23 @@ public final class PistonContacts {
                          float progress,float nextProgress,Phase phase){}
     public record Contact(Source source,UUID entity,EnemyFrame.Key enemy,AABB before,Vec3 requested,
                           Vec3 actual,Vec3 velocity){}
-    private record Active(Capture capture,Source source){}
+    private record Active(Capture capture,Source source,PistonMovingBlockEntity piston){}
     private static final ThreadLocal<Capture> CAPTURE=new ThreadLocal<>();
     private static final ThreadLocal<Active> ACTIVE=new ThreadLocal<>();
     public static boolean observing(){return CAPTURE.get()!=null;}
+    /** Only the actual redirected vanilla move call can create this proposal capability. */
+    public static final class Move {
+        private final Active active;
+        final Entity entity;
+        final Vec3 requested;
+        final long ordinal;
+        private Move(Active active,Entity entity,Vec3 requested){
+            this.active=active;this.entity=entity;this.requested=requested;ordinal=active.capture.contacts.size()+1L;
+        }
+        boolean live(){return ACTIVE.get()==active&&CAPTURE.get()==active.capture;}
+        Source source(){return active.source;}
+        PistonMovingBlockEntity piston(){return active.piston;}
+    }
 
     /** Diagnostics only: this scope has no bridge/save identity and is not a wire credential. */
     public static final class Capture {
@@ -37,8 +51,14 @@ public final class PistonContacts {
         private final ServerLevel level;
         private final IdentityHashMap<PistonMovingBlockEntity,Long> actions=new IdentityHashMap<>();
         private final List<Contact> contacts=new ArrayList<>();
-        public Capture(ServerLevel level){this.level=level;}
+        private final PistonMovePlans planner;
+        private final Consumer<PistonMovePlans.Attempt> onPlan;
+        private final List<PistonMovePlans.Attempt> plans=new ArrayList<>();
+        public Capture(ServerLevel level){this(level,null,null);}
+        public Capture(ServerLevel level,PistonMovePlans planner){this(level,planner,null);}
+        public Capture(ServerLevel level,PistonMovePlans planner,Consumer<PistonMovePlans.Attempt> onPlan){this.level=level;this.planner=planner;this.onPlan=onPlan;}
         public List<Contact> contacts(){return List.copyOf(contacts);}
+        public List<PistonMovePlans.Attempt> plans(){return List.copyOf(plans);}
         public void run(Runnable action){
             if(!level.getServer().isSameThread())throw new IllegalStateException("piston capture requires server thread");
             var previous=CAPTURE.get();var active=ACTIVE.get();CAPTURE.set(this);ACTIVE.remove();
@@ -54,7 +74,7 @@ public final class PistonContacts {
         var index=WorldBlocks.index();var section=index==null?null:index.snapshot(SectionPos.of(pos).asLong());
         var source=new Source(capture.id,id,level.dimension().identifier().toString(),pos.immutable(),BlockStateKey.encode(piston.getMovedState()),
             section==null?0:section.revision(),level.getGameTime(),piston.getMovementDirection(),piston.isExtending(),piston.isSourcePiston(),piston.getProgress(1),next,phase);
-        var previous=ACTIVE.get();ACTIVE.set(new Active(capture,source));
+        var previous=ACTIVE.get();ACTIVE.set(new Active(capture,source,piston));
         try{action.run();}finally{if(previous==null)ACTIVE.remove();else ACTIVE.set(previous);}
     }
 
@@ -63,6 +83,10 @@ public final class PistonContacts {
         if(active==null||type!=MoverType.PISTON||entity.level()!=active.capture.level){entity.move(type,movement);return;}
         if(active.capture.contacts.size()>=4096)throw new IllegalStateException("piston contact observation capacity");
         var position=entity.position();var box=entity.getBoundingBox();
+        if(active.capture.planner!=null){
+            var attempt=active.capture.planner.propose(new Move(active,entity,movement));active.capture.plans.add(attempt);
+            if(active.capture.onPlan!=null)active.capture.onPlan.accept(attempt);
+        }
         entity.move(type,movement); // preserve vanilla, including its per-tick cap and noPhysics branch
         var key=entity instanceof EnemyProxy proxy?proxy.sifuKey():null;
         active.capture.contacts.add(new Contact(active.source,entity.getUUID(),key,box,movement,entity.position().subtract(position),entity.getDeltaMovement()));
