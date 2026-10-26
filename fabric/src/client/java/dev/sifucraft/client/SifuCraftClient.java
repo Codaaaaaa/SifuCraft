@@ -200,6 +200,8 @@ public final class SifuCraftClient implements ClientModInitializer {
                 message -> LOG.info("[blocks] {}", message)));
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> PlacedBlocks.close());
         ServerTickEvents.END_SERVER_TICK.register(server -> PlacedBlocks.saveIfDirty());
+        var sceneSupportUpdates=new dev.sifucraft.blocks.SceneBlockSupport.Updates();
+        ServerTickEvents.END_SERVER_TICK.register(sceneSupportUpdates::tick);
         ServerLifecycleEvents.SERVER_STARTING.register(server -> NewPlayerSetup.reset());
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> NewPlayerSetup.joined(handler.player));
         if (Boolean.getBoolean("sifucraft.inventorySelfTest")) {
@@ -284,6 +286,11 @@ public final class SifuCraftClient implements ClientModInitializer {
             pistonStressCheck = new PistonStressCheck();
             ServerTickEvents.END_SERVER_TICK.register(pistonStressCheck::serverTick);
             ServerLifecycleEvents.SERVER_STOPPING.register(pistonStressCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.sceneSupportSelfTest")) {
+            var check=new BlockSupportCheck();
+            ServerTickEvents.END_SERVER_TICK.register(check::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
         }
         if (Boolean.getBoolean("sifucraft.playerDamageTest") || Boolean.getBoolean("sifucraft.playerHitSelfTest") ||
                 Boolean.getBoolean("sifucraft.respawnSelfTest")) {
@@ -703,9 +710,10 @@ public final class SifuCraftClient implements ClientModInitializer {
         }
         var dynamic = doors.grid();
         if (dynamic != null && !dynamic.map().equals(grid.map())) dynamic = null;
-        if (current != null && current.grid() == grid && current.doors() == dynamic) return;
+        long session=bridge.peerSession();int world=bridge.collisionManifest().worldGeneration();
+        if (current != null && current.grid() == grid && current.doors() == dynamic && current.matchesScope(session,world)) return;
         MapPlacement placement = slots.placement(grid.map());
-        SifuCollision.set(new SifuCollision.Active(grid, placement, dynamic));
+        SifuCollision.set(new SifuCollision.Active(grid, placement, dynamic,session,world));
         LOG.info("[collision] in force: {} ({} blocks) at Minecraft origin ({}, {}, {})", grid.map(), grid.blockCount(),
                 placement.originX(), placement.originY(), placement.originZ());
     }

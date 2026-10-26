@@ -52,6 +52,7 @@ loom {
 			property "sifucraft.blockModelSelfTest", providers.gradleProperty("sifucraft.blockModelSelfTest").getOrElse("false")
 			property "sifucraft.fluidRenderSelfTest", providers.gradleProperty("sifucraft.fluidRenderSelfTest").getOrElse("false")
 			property "sifucraft.pistonStressSelfTest", providers.gradleProperty("sifucraft.pistonStressSelfTest").getOrElse("false")
+			property "sifucraft.sceneSupportSelfTest", providers.gradleProperty("sifucraft.sceneSupportSelfTest").getOrElse("false")
 			property "sifucraft.redstoneSelfTest", providers.gradleProperty("sifucraft.redstoneSelfTest").getOrElse("false")
 			property "sifucraft.worldFps", providers.gradleProperty("sifucraft.worldFps").getOrElse("30")
 			property "sifucraft.shieldSelfTest", providers.gradleProperty("sifucraft.shieldSelfTest").getOrElse("false")

@@ -5,6 +5,7 @@
 	"mixins": [
 		"BlockCollisionsMixin",
 		"BlockItemMixin",
+		"BlockSupportMixin",
 		"EntityMixin",
 		"LevelMixin",
 		"PlayerAttackMixin",

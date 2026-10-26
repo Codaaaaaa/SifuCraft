@@ -41,16 +41,24 @@ public final class SifuCollision {
         private final CollisionGrid grid;
         private final CollisionGrid doors;
         private final MapPlacement placement;
+        private final long sourceSession;
+        private final int sourceWorld;
         private final Map<long[], VoxelShape> shapes = new ConcurrentHashMap<>(); // keyed by the grid's own arrays
 
         public Active(CollisionGrid grid, MapPlacement placement) {
             this(grid, placement, null);
         }
         public Active(CollisionGrid grid, MapPlacement placement, CollisionGrid doors) {
+            this(grid,placement,doors,0,0);
+        }
+        public Active(CollisionGrid grid, MapPlacement placement, CollisionGrid doors, long session, int world) {
             this.grid = grid;
             this.placement = placement;
             this.doors = doors;
+            sourceSession=session;sourceWorld=world;
         }
+        public boolean matchesScope(long session,int world) { return sourceSession==session&&sourceWorld==world; }
+        public boolean sameScope(Active other) { return matchesScope(other.sourceSession,other.sourceWorld)&&placement.equals(other.placement); }
         public CollisionGrid doors() { return doors; }
 
         public CollisionGrid grid() {
@@ -59,6 +67,15 @@ public final class SifuCollision {
 
         public MapPlacement placement() {
             return placement;
+        }
+
+        /** Native geometry local to one Minecraft block; support queries never create blocks. */
+        public VoxelShape shapeAt(BlockPos pos) {
+            int x=pos.getX()-placement.originX(), y=pos.getZ()-placement.originZ(), z=pos.getY()-placement.originY();
+            long[] fixed=grid.block(x,y,z), moving=doors==null?null:doors.block(x,y,z);
+            var a=fixed==null?Shapes.empty():shapes.computeIfAbsent(fixed,SifuCollision::shapeOf);
+            var b=moving==null?Shapes.empty():shapes.computeIfAbsent(moving,SifuCollision::shapeOf);
+            return a.isEmpty()?b:b.isEmpty()?a:Shapes.or(a,b);
         }
 
         /** Calls {@code sink} with every Minecraft block position whose Sifu shape may touch {@code box}. */
