@@ -163,3 +163,17 @@ tasks.register('shapeProtocolTest', JavaExec) {
 	jvmArgs nativeAccess
 }
 tasks.named('check') { dependsOn tasks.named('shapeProtocolTest') }
+tasks.register('worldMotionProtocolTest', JavaExec) {
+    group = 'verification'
+    classpath = sourceSets.protocolTest.runtimeClasspath
+    mainClass = 'dev.sifucraft.bridge.WorldMotionProtocolTest'
+    jvmArgs nativeAccess
+}
+tasks.named('check') { dependsOn tasks.named('worldMotionProtocolTest') }
+tasks.register('worldMotionInteropTest', JavaExec) {
+    group = 'verification'
+    classpath = sourceSets.protocolTest.runtimeClasspath
+    mainClass = 'dev.sifucraft.bridge.WorldMotionInteropTest'
+    args providers.gradleProperty('motionEcho').getOrElse('')
+    jvmArgs nativeAccess
+}

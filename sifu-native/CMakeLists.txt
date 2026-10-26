@@ -14,6 +14,7 @@ set(SIFUCRAFT_INCLUDE_DIRS src ${PROJECT_SOURCE_DIR}/protocol)
 
 # Bridge + logging, shared by the in-game module and the console tools.
 set(SIFUCRAFT_BRIDGE_SOURCES
+    src/bridge/world_motion_mailbox.cpp
     src/bridge/shape_reader.cpp
     src/bridge/world_reader.cpp
     src/core/log.cpp
@@ -101,6 +102,8 @@ add_test(NAME shape_tests COMMAND sifucraft_shape_tests)
 add_test(NAME hud_tests COMMAND sifucraft_hud_tests)
 add_executable(sifucraft_motion_tests tests/motion_tests.cpp)
 add_test(NAME motion_tests COMMAND sifucraft_motion_tests)
+add_executable(sifucraft_world_motion_tests tests/world_motion_tests.cpp src/bridge/world_motion_mailbox.cpp src/bridge/shared_mapping.cpp)
+add_test(NAME world_motion_tests COMMAND sifucraft_world_motion_tests "${PROJECT_SOURCE_DIR}/protocol/fixtures/world_motion_command.hex" "${PROJECT_SOURCE_DIR}/protocol/fixtures/world_motion_reply.hex")
 
 # Re-runs the voxelization on shapes saved by the game and scores it against recorded walks.
 set(SIFUCRAFT_VOXEL_SOURCES
@@ -131,7 +134,7 @@ add_executable(sifucraft_native_tests
 add_dependencies(sifucraft_native_tests sifucraft_native)
 add_test(NAME native_tests COMMAND sifucraft_native_tests $<TARGET_FILE:sifucraft_native>)
 
-foreach(target sifucraft_native sifucraft_fake_sifu sifucraft_collision_replay sifucraft_native_tests sifucraft_overlay_tests sifucraft_world_tests sifucraft_world_render_tests sifucraft_render_tests sifucraft_depth_tests sifucraft_hud_tests sifucraft_shape_tests sifucraft_motion_tests)
+foreach(target sifucraft_native sifucraft_fake_sifu sifucraft_collision_replay sifucraft_native_tests sifucraft_overlay_tests sifucraft_world_tests sifucraft_world_render_tests sifucraft_render_tests sifucraft_depth_tests sifucraft_hud_tests sifucraft_shape_tests sifucraft_motion_tests sifucraft_world_motion_tests)
     set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     target_include_directories(${target} PRIVATE ${SIFUCRAFT_INCLUDE_DIRS})
     target_compile_definitions(${target} PRIVATE ${SIFUCRAFT_COMMON_DEFINITIONS})

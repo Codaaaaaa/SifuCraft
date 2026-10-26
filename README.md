@@ -395,6 +395,12 @@ M3/M4 的100ms配置短租约已在单个空闲普通NPC上验证：三个原 Ti
 AI/行为树各跳过25次，移动Tick正常执行；到期后全部恢复、5秒位置/HP不变，
 两个Hook卸载后用户确认移动和攻击正常。该结果只覆盖短租约与恢复，不代表活塞或流体运动已完成。
 
+P8/P9 的世界运动通道已有独立 v1 ABI、双向可靠队列和执行去重账本，
+双方会话、世界、存档、来源和目标激活与输入 epoch 分开。
+黄金字节和独立 C++/Java 共享内存测试覆盖满槽背压、损坏/冲突/过期编号、完成回执重放及玩家生命周期；
+该基础尚未连接生产 NPC 执行或流体模拟。`worldMotionInteropTest` 需先构建 Native 测试工具，再传
+`-PmotionEcho=<repo>/build/mingw-release/sifu-native/sifucraft_world_motion_tests.exe`；不连接正在运行的游戏。
+
 需要 x64 MinGW-w64 GCC（例如 WinLibs）与 CMake ≥ 3.21。VS Code 中安装 CMake Tools 扩展后可直接选择 `mingw-release` preset。
 
 ```powershell
