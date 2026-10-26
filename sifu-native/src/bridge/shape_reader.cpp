@@ -26,7 +26,8 @@ bool Decode(const FrameHeader& h, const std::uint8_t* p, std::size_t size, Frame
         boxes += s.boxes;
         part.boxes.resize(s.boxes); if (s.boxes) std::memcpy(part.boxes.data(),p+at,s.boxes*sizeof(Box));
         if (Hash(p+at,s.boxes*sizeof(Box)) != s.hash) return false;
-        for (const auto& box : part.boxes) if (!ValidBox(box)) return false;
+        std::set<std::uint64_t> sources;
+        for (const auto& box : part.boxes) if (!ValidBox(box)||!sources.insert(box.source_key).second) return false;
         at += s.boxes*sizeof(Box); candidate.parts.push_back(std::move(part));
     }
     if (at != size) return false;

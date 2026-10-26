@@ -15,9 +15,9 @@ public final class ShapeWriterTest {
         try (var arena = Arena.ofConfined()) {
             MemorySegment memory = arena.allocate(MAPPING_BYTES,8);
             var writer = new ShapeWriter(memory,11,22);
-            byte[] box = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN).putFloat(0).putFloat(25).putFloat(0)
-                    .putFloat(100).putFloat(75).putFloat(50).array();
-            byte[] payload = ByteBuffer.allocate(56).order(ByteOrder.LITTLE_ENDIAN).putInt(-16).putInt(32).putInt(0)
+            byte[] box = ByteBuffer.allocate(BOX_BYTES).order(ByteOrder.LITTLE_ENDIAN).putFloat(0).putFloat(25).putFloat(0)
+                    .putFloat(100).putFloat(75).putFloat(50).putLong(1).array();
+            byte[] payload = ByteBuffer.allocate(SECTION_BYTES+BOX_BYTES).order(ByteOrder.LITTLE_ENDIAN).putInt(-16).putInt(32).putInt(0)
                     .putInt(1).putLong(7).putLong(hash(box)).put(box).array();
             check(writer.publish(payload,1,3,1000,9,"fixture",77),"publish full shape snapshot");
             long first = HEADER_BYTES;

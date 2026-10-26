@@ -98,6 +98,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private BlockModelCheck blockModelCheck;
     private FluidRenderCheck fluidRenderCheck;
     private PistonStressCheck pistonStressCheck;
+    private ShapeUpdateCheck shapeUpdateCheck;
     private SignalCheck signalCheck;
     private PlayerSignalCheck playerSignalCheck;
     private SensorCheck sensorCheck;
@@ -313,6 +314,11 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerTickEvents.END_SERVER_TICK.register(pistonStressCheck::serverTick);
             ServerLifecycleEvents.SERVER_STOPPING.register(pistonStressCheck::restore);
         }
+        if(Boolean.getBoolean("sifucraft.shapeUpdateSelfTest")){
+            shapeUpdateCheck=new ShapeUpdateCheck();
+            ServerTickEvents.END_SERVER_TICK.register(shapeUpdateCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(shapeUpdateCheck::restore);
+        }
         if (Boolean.getBoolean("sifucraft.sceneSupportSelfTest")) {
             var check=new BlockSupportCheck();
             ServerTickEvents.END_SERVER_TICK.register(check::tick);
@@ -518,6 +524,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (blockModelCheck != null) blockModelCheck.tick(minecraft,guiAvailable(frame));
         if (fluidRenderCheck != null) fluidRenderCheck.tick(minecraft,guiAvailable(frame));
         if (pistonStressCheck != null) pistonStressCheck.clientTick(minecraft,guiAvailable(frame));
+        if(shapeUpdateCheck!=null)shapeUpdateCheck.clientTick(minecraft,guiAvailable(frame));
         if (signalCheck != null) signalCheck.clientTick(minecraft,guiAvailable(frame));
         if (playerSignalCheck != null) playerSignalCheck.clientTick(minecraft,guiAvailable(frame),frame);
         if (sensorCheck != null) sensorCheck.clientTick(minecraft,guiAvailable(frame));

@@ -17,7 +17,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.storage.LevelResource;
 import org.slf4j.LoggerFactory;
 
@@ -30,7 +29,7 @@ public final class BlockShapes implements AutoCloseable {
     private Export latest;
     private ShapeWriter writer;
     private long mcSession, sifuSession, revision, nextNs, saveKey;
-    private volatile long lastIndex = -1, lastTicket = -1;
+    private volatile long lastIndex = -1, lastTicket = -1,lastMotion=-1;
     private volatile long ticket;
     private int world;
     private String map = "";
@@ -42,7 +41,7 @@ public final class BlockShapes implements AutoCloseable {
     public boolean caughtUp() {
         var index = WorldBlocks.index();
         return active && writer != null && latest != null && index != null && !building.get() &&
-            lastIndex == index.revision() && lastTicket == ticket && pending == null &&
+            lastIndex == index.revision() && lastTicket == ticket && lastMotion==dev.sifucraft.blocks.ShapeChanges.revision() && pending == null &&
             writer.appliedRevision(world,map,saveKey,WorldWriter.clockMillis()) >= latest.revision;
     }
     public void update(Minecraft mc, McBridge bridge, MapPlacement placement) {
@@ -84,12 +83,11 @@ public final class BlockShapes implements AutoCloseable {
         server.execute(() -> {
             try {
                 if (index != WorldBlocks.index()) return;
-                var snapshots = index.snapshots();
-                boolean moving = snapshots.stream().anyMatch(s -> s.states().values().stream().anyMatch(state -> state.is(Blocks.MOVING_PISTON)));
                 long changed = index.revision();
-                if (changed == lastIndex && targetTicket == lastTicket && !moving) return;
-                Export export = export(snapshots,server.overworld(),placement,++revision,generation,targetMap,targetSave);
-                lastIndex = changed; lastTicket = targetTicket;
+                long motion=dev.sifucraft.blocks.ShapeChanges.revision();
+                if (changed == lastIndex && targetTicket == lastTicket && motion==lastMotion) return;
+                Export export = export(index.snapshots(),server.overworld(),placement,++revision,generation,targetMap,targetSave);
+                lastIndex = changed; lastTicket = targetTicket;lastMotion=motion;
                 if (targetTicket == ticket) pending = export;
             } catch (RuntimeException e) {
                 long time = System.nanoTime(); failures++;
@@ -117,18 +115,21 @@ public final class BlockShapes implements AutoCloseable {
                 short local = entry.getKey(); int bx = SectionPos.sectionRelativeX(local), by = SectionPos.sectionRelativeY(local), bz = SectionPos.sectionRelativeZ(local);
                 var pos = new BlockPos(x+bx,y+by,z+bz);
                 if (pos.getY() < PlacedBlocks.MIN_Y) continue;
+                int piece=0;
                 for (var box : entry.getValue().getCollisionShape(level,pos).toAabbs()) {
                     if (++total > ShapeProtocol.MAX_BOXES) throw new IllegalArgumentException("shape capacity exceeded; full state retained for retry");
-                    var b = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN);
+                    if(++piece>ShapeProtocol.MAX_PIECES)throw new IllegalArgumentException("shape piece capacity");
+                    var b = ByteBuffer.allocate(ShapeProtocol.BOX_BYTES).order(ByteOrder.LITTLE_ENDIAN);
                     b.putFloat((float)((bx+box.minX)*100)).putFloat((float)((bz+box.minZ)*100)).putFloat((float)((by+box.minY)*100));
                     b.putFloat((float)((bx+box.maxX)*100)).putFloat((float)((bz+box.maxZ)*100)).putFloat((float)((by+box.maxY)*100));
+                    b.putLong(((long)(local&0xfff)<<32)|piece);
                     boxes.writeBytes(b.array());
                 }
             }
             if (boxes.size() == 0) continue;
             if (++count > ShapeProtocol.MAX_SECTIONS) throw new IllegalArgumentException("shape section capacity exceeded");
             byte[] data = boxes.toByteArray(); var header = ByteBuffer.allocate(32).order(ByteOrder.LITTLE_ENDIAN);
-            header.putInt(x-placement.originX()).putInt(z-placement.originZ()).putInt(y-placement.originY()).putInt(data.length/24)
+            header.putInt(x-placement.originX()).putInt(z-placement.originZ()).putInt(y-placement.originY()).putInt(data.length/ShapeProtocol.BOX_BYTES)
                     .putLong(snapshot.revision()).putLong(ShapeProtocol.hash(data));
             if (payload.size()+header.capacity()+data.length > ShapeProtocol.PAYLOAD_BYTES) throw new IllegalArgumentException("shape payload capacity exceeded");
             payload.writeBytes(header.array()); payload.writeBytes(data);

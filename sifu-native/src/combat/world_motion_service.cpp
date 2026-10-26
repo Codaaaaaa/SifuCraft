@@ -124,8 +124,9 @@ void ApplyOnGameThread(std::uintptr_t base) {
     const auto& scope=g_current.actors.scope;
     const bool ready=g_current.enabled&&g_current.actors.enabled&&g_current.save&&g_current.map&&blocks::ShapesReady()&&
         g_current.actors.updated_ms<=now&&now-g_current.actors.updated_ms<=200;
-    g_flags.store(flags);g_ready.store(ready);
-    const Environment env{scope.native_session,scope.peer_session,g_current.save,g_current.map,blocks::ShapesAppliedRevision(),++g_frame,scope.generation,flags,ready};
+    const bool settled=blocks::ShapesSettled();
+    g_flags.store(flags);g_ready.store(ready&&settled);
+    const Environment env{scope.native_session,scope.peer_session,g_current.save,g_current.map,blocks::ShapesAppliedRevision(),++g_frame,scope.generation,flags,ready,settled};
     g_engine.Update(env,now);
     if(g_wrong_thread.load())g_engine.CallbackThreadLost();
     if(g_engine.phase()!=Engine::Phase::Free&&!g_backend.Identity())g_engine.Lost();

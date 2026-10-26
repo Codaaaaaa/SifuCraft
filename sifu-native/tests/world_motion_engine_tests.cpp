@@ -108,5 +108,13 @@ void Capacity(){
     c.Empty();
     auto command=c.CommandFor(Op::Damage);Require(c.engine.Submit(command,c.now),"draining receipts resumes admission");c.Pop(Status::Unsupported);
 }
+void GeometryBarrier(){
+    Case c;c.Acquire();c.env.settled=false;c.Tick();Require(c.engine.Skip(c.now),"pending new geometry retains the bounded existing lease");
+    c.Send(c.CommandFor(Op::Step));c.Pop(Status::Busy);Require(c.backend.moves==0,"partial collision revision cannot authorize a new move");
+    c.env.settled=true;c.Tick();c.Send(c.CommandFor(Op::Step));c.Pop(Status::Applied);
+    c.Send(c.CommandFor(Op::Release));c.Pop(Status::Stale);Require(c.engine.Skip(c.now),"pre-commit revision cannot authorize release");
+    c.env.revision++;c.env.settled=false;c.Tick();c.Send(c.CommandFor(Op::Release));c.Pop(Status::Stale);
+    c.env.settled=true;c.Tick();c.Send(c.CommandFor(Op::Release));c.Empty();c.Restore();c.Pop(Status::Released);
 }
-int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();std::printf("world motion arbiter PASS %u assertions\n",checks);}
+}
+int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();GeometryBarrier();std::printf("world motion arbiter PASS %u assertions\n",checks);}

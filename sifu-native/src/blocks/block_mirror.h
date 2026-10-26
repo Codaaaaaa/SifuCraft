@@ -23,6 +23,7 @@ namespace sifucraft::blocks {
 void Update(std::uintptr_t world, const std::string& map, const bridge::BlockList& table,
             const shape_data::Frame* shapes = nullptr);
 bool ShapesReady();
+bool ShapesSettled(); // exact latest desired revision, with no partially applied box queue
 std::uint64_t ShapesAppliedRevision();
 
 // Game thread (engine tick, stage 6).

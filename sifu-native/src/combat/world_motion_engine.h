@@ -10,7 +10,7 @@ namespace sifucraft::world_motion {
 struct Environment {
     std::uint64_t native=0,peer=0,save=0,map=0,revision=0,frame=0;
     std::uint32_t world=0,flags=0;
-    bool ready=false;
+    bool ready=false,settled=true;
 };
 struct Body {
     std::int32_t serial=0;
@@ -77,6 +77,7 @@ public:
         if(command.op==Op::Damage||(command.flags&kPlayer)) {Finish(command,Status::Unsupported,now);return true;}
         if(command.op==Op::Reserve) {
             if(phase_!=Phase::Free) {Finish(command,Status::Busy,now);return true;}
+            if(!env_.settled){Finish(command,Status::Busy,now);return true;}
             if(command.shape_revision!=env_.revision||now-command.issued_ms>=command.duration_ms) {Finish(command,Status::Stale,now);return true;}
             Body body;
             if(!backend_.Bind(command,&body)||!Expected(command,body)) {
@@ -90,10 +91,11 @@ public:
         if(command.op==Op::Cancel||command.op==Op::Release) {
             if(release_) {Finish(command,Status::Busy,now);return true;}
             // Release waits until the exact post-commit collision revision is present.
-            if(command.op==Op::Release&&(command.shape_revision!=env_.revision||command.shape_revision<release_revision_)) {Finish(command,Status::Stale,now);return true;}
+            if(command.op==Op::Release&&(!env_.settled||command.shape_revision!=env_.revision||command.shape_revision<release_revision_)) {Finish(command,Status::Stale,now);return true;}
             release_=command;BeginRelease(command.op==Op::Cancel?Status::Cancelled:Status::Released);return true;
         }
         if(phase_!=Phase::Owned) {Finish(command,Status::Busy,now);return true;}
+        if(!env_.settled){Finish(command,Status::Busy,now);return true;}
         Body current;
         if(now>=deadline_||!backend_.Check(&current)||!SameBody(current,body_)) {
             BeginRelease(now>=deadline_?Status::TimedOut:Status::TargetLost);Finish(command,reason_,now);return true;

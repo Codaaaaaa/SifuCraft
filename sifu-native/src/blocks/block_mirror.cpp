@@ -190,7 +190,7 @@ struct Stats {
     std::atomic<std::uint64_t> failed{0};
     std::atomic<std::uint64_t> shown{0};
     std::atomic<std::uint64_t> nav_modifiers{0};
-    std::atomic<std::uint64_t> shapes{0}, shapes_created{0}, shapes_removed{0};
+    std::atomic<std::uint64_t> shapes{0}, shapes_created{0}, shapes_removed{0},shapes_updated{0};
 };
 Stats g_stats;
 
@@ -248,7 +248,8 @@ struct ShapeCalls {
 ShapeCalls g_shape_calls;
 std::uint64_t g_shape_retry_at = 0;
 int g_shape_logged = 0;
-using ShapeKey = std::array<std::int32_t,4>;
+int g_shape_update_logged=0;
+using ShapeKey = std::array<std::int64_t,4>;
 struct OwnedObject {
     std::uintptr_t pointer = 0;
     mutable ue::ObjectIdentity identity;
@@ -851,12 +852,42 @@ ShapeShown SpawnShape(const ShapeWanted& wanted) {
     return shown;
 }
 
+bool UpdateShape(ShapeShown& shown,const ShapeWanted& wanted) {
+    if(!OwnedShape(shown))return false;
+    const auto root=mem::ReadPtr(shown.actor.pointer+off::AActor::RootComponent);
+    ue::Affine transform;
+    if(!ue::IsLive(root)||ue::OuterOf(root)!=shown.actor.pointer||ue::AttachParentOf(shown.component.pointer)!=root||!ue::ReadComponentToWorld(root,&transform))return false;
+    // These roots are created with an identity linear transform by this module.
+    // A foreign attachment/rotation/scale cannot authorize an unrelated relative move.
+    for(int i=0;i<3;++i)for(int j=0;j<3;++j)if(!std::isfinite(transform.m[i][j])||std::fabs(transform.m[i][j]-(i==j?1.f:0.f))>0.0001f)return false;
+    const auto& box=wanted.box;auto& calls=g_shape_calls;
+    const ue::FVector center{wanted.key[0]*100.f+(box.min[0]+box.max[0])*.5f,
+        wanted.key[1]*100.f+(box.min[1]+box.max[1])*.5f,wanted.key[2]*100.f+(box.min[2]+box.max[2])*.5f};
+    const ue::FVector extent{(box.max[0]-box.min[0])*.5f,(box.max[1]-box.min[1])*.5f,(box.max[2]-box.min[2])*.5f};
+    const ue::FVector relative{center.x-transform.t.x,center.y-transform.t.y,center.z-transform.t.z};
+    if(!std::isfinite(relative.x)||!std::isfinite(relative.y)||!std::isfinite(relative.z))return false;
+    Clear(calls.extent);Put(calls.extent_value,extent);Invoke(calls.extent,shown.component.pointer);
+    if(!OwnedShape(shown))return false;
+    Clear(calls.move);Put(calls.location,relative);g_params[calls.teleport]=1;Invoke(calls.move,shown.component.pointer);
+    ue::FVector actual{},size{};
+    if(!OwnedShape(shown)||!ue::ReadWorldLocation(shown.component.pointer,&actual)||
+        !mem::Read(shown.component.pointer+off::UBoxComponent::BoxExtent,&size))return false;
+    const auto close=[](float a,float b){return std::isfinite(a)&&std::fabs(a-b)<.1f;};
+    if(!close(actual.x,center.x)||!close(actual.y,center.y)||!close(actual.z,center.z)||
+       !close(size.x,extent.x)||!close(size.y,extent.y)||!close(size.z,extent.z))return false;
+    shown.box=box;g_stats.shapes_updated.fetch_add(1);
+    if(g_shape_update_logged++<12)SC_LOG("[block-shapes] update PASS source=%016llX actor=%d/%d component=%d/%d world=(%.2f,%.2f,%.2f) extent=(%.2f,%.2f,%.2f)",
+        box.source_key,shown.actor.identity.index,shown.actor.identity.serial,shown.component.identity.index,shown.component.identity.serial,
+        actual.x,actual.y,actual.z,size.x,size.y,size.z);
+    return true;
+}
+
 void PlanShapes(const std::shared_ptr<const shape_data::Frame>& frame) {
     g_shape_mode = static_cast<bool>(frame);
     g_shape_spawns.clear(); g_shape_destroys.clear();
     std::map<ShapeKey,shape_data::Box> wanted;
     if (frame) for (const auto& part : frame->parts) for (std::size_t i = 0; i < part.boxes.size(); ++i) {
-        ShapeKey key{part.section.x,part.section.y,part.section.z,static_cast<int>(i)};
+        ShapeKey key{part.section.x,part.section.y,part.section.z,static_cast<std::int64_t>(part.boxes[i].source_key)};
         wanted.emplace(key,part.boxes[i]);
         auto old = g_shape_actors.find(key);
         if (old == g_shape_actors.end() || !OwnedShape(old->second) || std::memcmp(&old->second.box,&part.boxes[i],sizeof(shape_data::Box)))
@@ -956,7 +987,7 @@ void ApplyOnGameThread(std::uintptr_t image_base) {
         g_shape_actors.clear(); g_shape_spawns.clear(); g_shape_destroys.clear();
         g_shape_applied.store(0,std::memory_order_release);
         g_shape_presentation_scope.store(0,std::memory_order_release);
-        g_shape_logged = 0; g_shape_retry_at = 0;
+        g_shape_logged = 0;g_shape_update_logged=0; g_shape_retry_at = 0;
         g_to_spawn.clear();
         g_to_destroy.clear();
         g_materials.clear();
@@ -1009,6 +1040,7 @@ void ApplyOnGameThread(std::uintptr_t image_base) {
     if (g_shape_mode && g_actors.empty() && GetTickCount64() >= g_shape_retry_at) for (int n = 0; n < kSpawnsPerFrame && !g_shape_spawns.empty(); ++n) {
         const auto wanted = g_shape_spawns.back();
         auto old = g_shape_actors.find(wanted.key);
+        if(old!=g_shape_actors.end()&&UpdateShape(old->second,wanted)){g_shape_spawns.pop_back();continue;}
         if (old != g_shape_actors.end() && frame_destroys >= kDestroysPerFrame) break;
         // Build a replacement before removing this object's previous valid collision.
         ShapeShown shown = SpawnShape(wanted);
@@ -1028,10 +1060,13 @@ bool ShapesReady() {
     const auto wanted = g_shape_requested_scope.load(std::memory_order_acquire);
     return wanted && wanted == g_shape_presentation_scope.load(std::memory_order_acquire);
 }
+bool ShapesSettled(){
+    return ShapesReady()&&g_shape_requested.load(std::memory_order_acquire)==g_shape_applied.load(std::memory_order_acquire);
+}
 std::uint64_t ShapesAppliedRevision() { return g_shape_revision_done.load(std::memory_order_acquire); }
 
 std::string TakeStats() {
-    return FormatString("shown=%llu spawned=%llu destroyed=%llu failed=%llu nav_modifiers=%llu shapes_ready=%d shape_boxes=%llu shape_created=%llu shape_removed=%llu",
+    return FormatString("shown=%llu spawned=%llu destroyed=%llu failed=%llu nav_modifiers=%llu shapes_ready=%d shape_boxes=%llu shape_created=%llu shape_removed=%llu shape_updated=%llu",
                         static_cast<unsigned long long>(g_stats.shown.load()),
                         static_cast<unsigned long long>(g_stats.spawned.exchange(0)),
                         static_cast<unsigned long long>(g_stats.destroyed.exchange(0)),
@@ -1039,7 +1074,8 @@ std::string TakeStats() {
                         static_cast<unsigned long long>(g_stats.nav_modifiers.exchange(0)),ShapesReady(),
                         static_cast<unsigned long long>(g_stats.shapes.load()),
                         static_cast<unsigned long long>(g_stats.shapes_created.exchange(0)),
-                        static_cast<unsigned long long>(g_stats.shapes_removed.exchange(0)));
+                        static_cast<unsigned long long>(g_stats.shapes_removed.exchange(0)),
+                        static_cast<unsigned long long>(g_stats.shapes_updated.exchange(0)));
 }
 
 }  // namespace sifucraft::blocks
