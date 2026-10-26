@@ -1,6 +1,7 @@
 package dev.sifucraft.mixin;
 
 import dev.sifucraft.blocks.PlacedBlocks;
+import dev.sifucraft.blocks.WorldBlocks;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
@@ -19,6 +20,7 @@ public abstract class LevelMixin {
         Level self = (Level) (Object) this;
         if (!cir.getReturnValueZ() || self.isClientSide() || self.dimension() != Level.OVERWORLD) return;
         BlockState now = self.getBlockState(pos);
+        if (WorldBlocks.ENABLED) WorldBlocks.changed(pos, now);
         PlacedBlocks.changed(pos, now, now.isCollisionShapeFullBlock(self, pos));
     }
 }

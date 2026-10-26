@@ -263,6 +263,11 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerTickEvents.END_SERVER_TICK.register(worldStressCheck::serverTick);
             ServerLifecycleEvents.SERVER_STOPPING.register(worldStressCheck::restore);
         }
+        if (Boolean.getBoolean("sifucraft.redstoneSelfTest")) {
+            var check = new RedstoneCheck();
+            ServerTickEvents.END_SERVER_TICK.register(check::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
+        }
         if (Boolean.getBoolean("sifucraft.playerDamageTest") || Boolean.getBoolean("sifucraft.playerHitSelfTest") ||
                 Boolean.getBoolean("sifucraft.respawnSelfTest")) {
             PlayerHitCheck check = new PlayerHitCheck();

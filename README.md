@@ -22,6 +22,7 @@ Sifu 与 Minecraft 作为两个独立进程运行：
 | P5 | 敌人代理与双向伤害 | 已通过（武馆、第一关、跨图及 F8 实机验收） |
 | P6 | 核心物品系统、GUI 与原生交互 | 已通过（含重锤、鞘翅/烟花、开门视角及 F8 复验） |
 | P7 | 世界实体、粒子、Steve 与稳健性 | 已通过功能验收（含 F5、船体移动、墙体 AI 与跨图合并反馈；完整一关长测时长未独立记录） |
+| P8 | 完整方块状态、红石与机械 | 开发中：组件目录、按钮/活塞原版轨迹与分区索引基础已验证；通用模型/Native 形状待接入 |
 
 ## 目录
 
@@ -35,7 +36,7 @@ tools/         部署、卸载、启动与 bridge 测试脚本；tools/collision
 
 ## 共享内存 Bridge（P1）
 
-两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v19）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
+两个进程通过命名共享内存 `Local\SifuCraft.Bridge`（64 KB，协议 v20）通信，布局定义在 [protocol/sifucraft_protocol.h](protocol/sifucraft_protocol.h)，Java 镜像为 `fabric/src/main/java/dev/sifucraft/bridge/Protocol.java`：
 
 - 每个字段只有一个写入方；双方各自写自己的 `EndpointStatus`（pid、session、心跳），心跳 2 秒不前进即判定断连；
 - 高频位姿走 seqlock 快照（Sifu → MC 的 `SifuSnapshot`，MC → Sifu 的 `McSnapshot`）；
