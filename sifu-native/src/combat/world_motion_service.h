@@ -1,0 +1,15 @@
+#pragma once
+#include "bridge/world_motion_mailbox.h"
+#include "combat/motion_probe.h"
+namespace sifucraft::world_motion {
+struct Context {
+    combat::motion::Context actors;
+    std::uint64_t save=0,map=0;
+    bool enabled=false;
+};
+// Runtime owns the mapping; H1 owns all actor bindings, leases and engine operations.
+void Exchange(Context context,Mailbox& mailbox);
+void ApplyOnGameThread(std::uintptr_t base);
+bool Skip(std::uintptr_t component,combat::motion::Part part);
+void AfterOriginal(std::uintptr_t component,combat::motion::Part part);
+}

@@ -9,6 +9,7 @@
 #include "blocks/block_mirror.h"
 #include "combat/damage.h"
 #include "combat/motion_probe.h"
+#include "combat/world_motion_service.h"
 #include "combat/shield_timing.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
@@ -251,9 +252,11 @@ void MovementTickHook(void* component, float delta_time, int tick_type, void* ti
         return;
     }
     const auto address = reinterpret_cast<std::uintptr_t>(component);
+    if (world_motion::Skip(address,combat::motion::Part::Movement)) return;
     if (combat::motion::SkipMovement(address)) return;
     g_movement_tick.original<TickComponentFn>()(component, delta_time, tick_type, tick_function);
     combat::motion::AfterOriginalMovement(address);
+    world_motion::AfterOriginal(address,combat::motion::Part::Movement);
 }
 
 // ---- H1: UGameEngine::Tick ------------------------------------------------------------------
@@ -297,6 +300,7 @@ void EngineTickHook(void* engine, float delta_seconds, bool idle_mode) {
     if (g_stage >= 6) blocks::ApplyOnGameThread(g_image_base);
     if (g_stage >= 7) combat::damage::ApplyOnGameThread(g_image_base);
     if (g_stage >= 10) combat::motion::ApplyOnGameThread(g_image_base);
+    if (g_stage >= 10) world_motion::ApplyOnGameThread(g_image_base);
     g_engine_tick.original<EngineTickFn>()(engine, delta_seconds, idle_mode);
     interaction::AfterTick(g_image_base, g_stage);
     if (g_stage >= 8) ui::ApplyHudOnGameThread(g_image_base,

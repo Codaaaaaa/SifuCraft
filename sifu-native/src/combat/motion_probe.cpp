@@ -86,9 +86,9 @@ bool CurrentTarget(const Context& c,const Target& target) {
         return t.actor==target.actor && t.id==target.id && t.spawn==target.spawn && t.identity.serial==target.serial;
     });
 }
-const char* WorldSafe(const Context& c,std::uint64_t now) {
-    if(!g_enabled.load() || !c.enabled || !c.scope.valid() || !c.grid || c.updated_ms>now || now-c.updated_ms>200) return "context";
-    if(mem::ReadPtr(g_base+gen::rva::GWorld)!=c.scope.world ||
+const char* WorldSafeImpl(std::uintptr_t base,const Context& c,std::uint64_t now) {
+    if(!c.enabled || !c.scope.valid() || !c.grid || c.updated_ms>now || now-c.updated_ms>200) return "context";
+    if(mem::ReadPtr(base+gen::rva::GWorld)!=c.scope.world ||
        ue::IdentityOf(c.scope.world)!=ue::ObjectIdentity{c.scope.world_index,c.scope.world_serial}) return "world";
     const auto player=probe::FindPlayerObjects(c.scope.world);
     if(player.pawn!=c.pawn || ue::IdentityOf(c.pawn)!=c.pawn_identity || !ue::IsLive(player.controller)) return "player";
@@ -109,8 +109,11 @@ const char* WorldSafe(const Context& c,std::uint64_t now) {
        ue::AttachParentOf(mem::ReadPtr(c.pawn+off::AActor::RootComponent))) return "script";
     return nullptr;
 }
-struct Sample { std::uintptr_t root=0, health=0; ue::FVector position{},velocity{}; ue::FRotator rotation{}; float hp=0,radius=0,half=0; int mode=-1; };
-const char* Inspect(const Context& c,const Target& t,Sample* s,bool geometry) {
+const char* WorldSafe(const Context& c,std::uint64_t now) {
+    return g_enabled.load()?WorldSafeImpl(g_base,c,now):"disabled";
+}
+using Sample=BodySample;
+const char* Inspect(const Context& c,const Target& t,Sample* s,bool geometry,bool ground=true) {
     if(!Same(t) || !CurrentTarget(c,t) || t.actor==c.pawn || !ue::IsLive(t.actor) || !ue::IsLive(t.movement)) return "identity";
     const auto cls=ue::ClassName(t.actor);
     if(cls!="BP_AICharacter_Grunt_M_HD1_Fighter_21_C" && cls!="BP_AICharacter_Grunt_M_HD1_Fighter_11_C") return "class-not-allowed";
@@ -177,7 +180,7 @@ const char* Inspect(const Context& c,const Target& t,Sample* s,bool geometry) {
     s->half=mem::ReadOr<float>(s->root+off::UCapsuleComponent::CapsuleHalfHeight,NAN)*scale;
     if(!std::isfinite(s->radius) || !std::isfinite(s->half) || s->radius<10 || s->radius>100 || s->half<s->radius || s->half>200) return "capsule";
     const float feet=s->position.z-s->half;
-    if(!c.grid || !collision::HasFloorSupport(*c.grid,{s->position.x,s->position.y,feet})) return "ground";
+    if(ground&&(!c.grid || !collision::HasFloorSupport(*c.grid,{s->position.x,s->position.y,feet}))) return "ground";
     // Exclude uncertain start overlaps conservatively. A 1/8-cell grid cannot
     // prove root capsule clearance; the actual engine sweep remains authoritative.
     if(geometry) for(int x=collision::CellIndex(s->position.x-s->radius);x<=collision::CellIndex(s->position.x+s->radius);++x)
@@ -190,7 +193,7 @@ const char* Inspect(const Context& c,const Target& t,Sample* s,bool geometry) {
 Component Token(std::uintptr_t pointer) {
     const auto id=ue::IdentityOf(pointer);return {pointer,id.index,id.serial};
 }
-const char* InspectPeers(const Context& c,const Target& t,Peers* peers,bool idle) {
+const char* InspectPeers(std::uintptr_t base,const Context& c,const Target& t,Peers* peers,bool idle) {
     if(!Same(t)||!CurrentTarget(c,t))return "ai-target";
     const auto ai=mem::ReadPtr(t.actor+off::AFightingCharacter::m_AIComponent);
     const auto controller=mem::ReadPtr(t.actor+off::APawn::Controller);
@@ -208,7 +211,7 @@ const char* InspectPeers(const Context& c,const Target& t,Peers* peers,bool idle
     if(cached&&cached!=bt)return "behavior-cache-mismatch";
     if(mem::ReadPtr(ue::OuterOf(controller)+off::ULevel::OwningWorld)!=c.scope.world)return "ai-world";
     *peers={Token(ai),Token(bt)};
-    if(!peers->valid()||!ai_gate::Matches(g_base,*peers))return "ai-identity-or-slot";
+    if(!peers->valid()||!ai_gate::Matches(base,*peers))return "ai-identity-or-slot";
     if(idle) {
         namespace bits=gen::bits::UBehaviorTreeComponent;
         std::uint8_t running=0,paused=0;
@@ -221,7 +224,7 @@ const char* InspectPeers(const Context& c,const Target& t,Peers* peers,bool idle
 }
 
 bool SamePeers() {
-    Peers peers;return !InspectPeers(g_current,g_target,&peers,false)&&peers==g_peers;
+    Peers peers;return !InspectPeers(g_base,g_current,g_target,&peers,false)&&peers==g_peers;
 }
 void DisarmAi() {
     g_ai_watch.store(0);g_tree_watch.store(0);
@@ -282,7 +285,7 @@ bool HoldSafe(std::uint64_t now) {
     if(!reason&&!g_ai_enabled.load())reason="ai-disabled";
     if(!reason&&g_wrong_threads.load())reason="callback-thread";
     if(!reason)reason=Inspect(g_current,g_target,&sample,false);
-    if(!reason)reason=InspectPeers(g_current,g_target,&peers,true);
+    if(!reason)reason=InspectPeers(g_base,g_current,g_target,&peers,true);
     if(!reason&&peers!=g_peers)reason="ai-components-changed";
     if(!reason&&(sample.hp!=g_hold_hp||Distance(sample.position,g_last_position)>1))reason="hp-or-displacement";
     if(!reason&&now>=g_lease.deadline())reason="deadline";
@@ -360,6 +363,37 @@ void Move(const Command& cmd,const Context& c,const Target& target,const Sample&
 }
 }
 
+const char* CheckWorld(std::uintptr_t base,const Context& c,std::uint64_t now) { return WorldSafeImpl(base,c,now); }
+const char* CheckBody(const Context& c,const Target& t,BodySample* s,bool geometry,bool ground) { return Inspect(c,t,s,geometry,ground); }
+const char* CheckPeers(std::uintptr_t base,const Context& c,const Target& t,Peers* p,bool idle) { return InspectPeers(base,c,t,p,idle); }
+bool SweepBody(const Context& c,const Target& t,const BodySample& before,const ue::FVector& delta,SweepResult* result) {
+    *result={};
+    const float length=Distance(delta,{});
+    if(!Finite(delta)||length<=0||length>10.0001f||!Same(t)||!ResolveMove())return false;
+    std::array<std::uint8_t,512> bytes{};
+    const ue::FVector wanted{before.position.x+delta.x,before.position.y+delta.y,before.position.z+delta.z};
+    if(!g_params.Encode(bytes,wanted,before.rotation))return false;
+    result->invoked=true;
+    g_move.Invoke(t.actor,bytes.data());
+    const auto hit=bytes.data()+g_params.offset[SweepParams::Hit];
+    namespace bits=gen::bits::FHitResult;
+    result->returned=bytes[g_params.offset[SweepParams::Return]]!=0;
+    result->blocking=(hit[bits::bBlockingHit_Offset]>>bits::bBlockingHit_Shift)&1;
+    result->penetrating=(hit[bits::bStartPenetrating_Offset]>>bits::bStartPenetrating_Shift)&1;
+    // Inspect may reject a new overlap/command. Always retain the actual read-back
+    // when identity survived; never report the requested endpoint as an observation.
+    auto& after=result->body;after=before;
+    const bool pose=Same(t)&&ue::ReadWorldTransform(before.root,&after.position,&after.rotation)&&Finite(after.position);
+    probe::HealthSample health;
+    const bool hp=Same(t)&&probe::ReadHealthSample(before.health,&health)&&std::isfinite(health.health);
+    if(hp)after.hp=health.health;
+    if(!pose||!hp)return false;
+    if(Distance(after.position,before.position)>length+0.1f||after.hp!=before.hp||
+       std::fabs(after.rotation.pitch-before.rotation.pitch)>0.01f||
+       std::fabs(after.rotation.yaw-before.rotation.yaw)>0.01f||
+       std::fabs(after.rotation.roll-before.rotation.roll)>0.01f)return false;
+    return CurrentTarget(c,t);
+}
 void Configure(bool enabled,bool ai_enabled) {
     g_motion_startup=enabled;g_ai_startup=ai_enabled;
     g_motion_enabled.store(enabled);g_ai_enabled.store(ai_enabled);
@@ -459,7 +493,7 @@ void ApplyOnGameThread(std::uintptr_t base) {
             Target target{t.actor,movement,t.id,t.spawn,t.identity.serial,id.index,id.serial}; Sample sample;
             const auto reason=Inspect(c,target,&sample,true);
             SC_LOG("[npc-motion] qualification target=%u/%u/%d class=%s reason=%s mode=%d loc=(%.2f,%.2f,%.2f)",t.id,t.spawn,t.identity.serial,ue::ClassName(t.actor).c_str(),reason?reason:"eligible",sample.mode,sample.position.x,sample.position.y,sample.position.z);
-            if(g_ai_enabled.load()) {Peers peers;const auto ai_reason=InspectPeers(c,target,&peers,true);
+            if(g_ai_enabled.load()) {Peers peers;const auto ai_reason=InspectPeers(g_base,c,target,&peers,true);
                 SC_LOG("[npc-ai] qualification target=%u/%u/%d reason=%s ai=%d/%d tree=%d/%d",t.id,t.spawn,t.identity.serial,ai_reason?ai_reason:"eligible",peers.ai.index,peers.ai.serial,peers.behavior.index,peers.behavior.serial);}
         }
     }
@@ -477,7 +511,7 @@ void ApplyOnGameThread(std::uintptr_t base) {
     const auto reason=Inspect(c,target,&sample,true);
     if(reason) { SC_LOG("[npc-motion] refused request id=%llu reason=%s",command.id,reason); return; }
     if(command.action>=2) {
-        Peers peers;const auto ai_reason=InspectPeers(c,target,&peers,true);
+        Peers peers;const auto ai_reason=InspectPeers(g_base,c,target,&peers,true);
         if(ai_reason) {SC_LOG("[npc-ai] refused request id=%llu reason=%s",command.id,ai_reason);return;}
         if(command.action==3) {Hold(command,c,target,sample,now);return;}
         if(g_lease.state()!=State::NativeFree) {SC_LOG("[npc-ai] refused observe while leased");return;}

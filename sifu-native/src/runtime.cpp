@@ -16,6 +16,7 @@
 #include "bridge/sifu_bridge.h"
 #include "combat/enemies.h"
 #include "combat/motion_probe.h"
+#include "combat/world_motion_service.h"
 #include "combat/damage.h"
 #include "combat/player_hits.h"
 #include "core/config.h"
@@ -673,6 +674,7 @@ void Run(std::uintptr_t image_base) {
     combat::Enemies enemies;
     shape_data::Reader shape_reader;
     shape_data::Frame shape_frame;
+    world_motion::Mailbox world_mailbox;
     std::vector<protocol::Event> damage_events;
     std::vector<combat::damage::Reply> damage_replies;
     std::deque<combat::damage::Reply> pending_damage_replies;
@@ -805,6 +807,26 @@ void Run(std::uintptr_t image_base) {
             const auto* shapes = settings.stage >= 10 && shape_frame.header.revision ? &shape_frame : nullptr;
             blocks::Update(world, MapName(world_path), g_bridge.blocks(),shapes);
             if (shapes) shape_reader.Acknowledge(*shapes,blocks::ShapesReady(),GetTickCount64(),blocks::ShapesAppliedRevision());
+        }
+        if(settings.stage>=10) {
+            world_motion::Context context;
+            const auto world_id=ue::IdentityOf(world);
+            context.actors.scope={g_bridge.session(),g_bridge.peer_connected()?g_bridge.peer_session():0,
+                world,generation,world_id.index,world_id.serial};
+            context.actors.pawn=player.pawn;context.actors.pawn_identity=ue::IdentityOf(player.pawn);
+            context.actors.updated_ms=GetTickCount64();
+            const auto& peer=g_bridge.peer_state();
+            context.actors.enabled=g_bridge.peer_connected()&&peer.valid&&world&&player.pawn&&
+                peer.sifu_session==g_bridge.session()&&peer.world_generation==generation&&
+                (peer.flags&protocol::kMcReady)&&!(peer.flags&protocol::kMcGuiOpen);
+            context.actors.targets=enemies.targets();context.actors.grid=collision_schedule.MotionGrid(generation);
+            context.enabled=!settings.npc_motion_probe&&!settings.npc_ai_probe;
+            if(shape_frame.source_mc==context.actors.scope.peer_session&&shape_frame.header.world==generation&&
+               shape_frame.header.revision&&MapName(world_path)==shape_frame.header.map) {
+                context.save=shape_frame.header.save_key;
+                context.map=shape_data::Hash(shape_frame.header.map,std::strlen(shape_frame.header.map));
+            }
+            world_motion::Exchange(std::move(context),world_mailbox);
         }
         if (settings.stage >= 4) {
             UpdateCameraOverride(ownership.epoch(), generation);

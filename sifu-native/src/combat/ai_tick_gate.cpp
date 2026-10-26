@@ -1,6 +1,7 @@
 #include "combat/ai_tick_gate.h"
 #include <atomic>
 #include "combat/motion_probe.h"
+#include "combat/world_motion_service.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "hooks/hook_pair.h"
@@ -14,15 +15,19 @@ hooks::VtableHook g_ai,g_tree;
 std::atomic<Tick> g_ai_original{nullptr},g_tree_original{nullptr};
 void AiTick(void* component,float dt,int type,void* tick) {
     const auto address=reinterpret_cast<std::uintptr_t>(component);
+    if(world_motion::Skip(address,motion::Part::AI))return;
     if(motion::SkipDecision(address,motion::Part::AI))return;
     g_ai_original.load(std::memory_order_acquire)(component,dt,type,tick);
     motion::AfterOriginalDecision(address,motion::Part::AI);
+    world_motion::AfterOriginal(address,motion::Part::AI);
 }
 void TreeTick(void* component,float dt,int type,void* tick) {
     const auto address=reinterpret_cast<std::uintptr_t>(component);
+    if(world_motion::Skip(address,motion::Part::Behavior))return;
     if(motion::SkipDecision(address,motion::Part::Behavior))return;
     g_tree_original.load(std::memory_order_acquire)(component,dt,type,tick);
     motion::AfterOriginalDecision(address,motion::Part::Behavior);
+    world_motion::AfterOriginal(address,motion::Part::Behavior);
 }
 bool Match(std::uintptr_t base,std::uint64_t component,const gen::hook::Target& target,const hooks::VtableHook& hook,Tick replacement) {
     const auto table=mem::ReadPtr(component);
