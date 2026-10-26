@@ -44,6 +44,12 @@ final class Win32 {
             downcall("UnmapViewOfFile", FunctionDescriptor.of(JAVA_INT, ADDRESS), false);
     private static final MethodHandle CLOSE_HANDLE =
             downcall("CloseHandle", FunctionDescriptor.of(JAVA_INT, ADDRESS), false);
+    private static final MethodHandle TICK_COUNT = downcall("GetTickCount64", FunctionDescriptor.of(JAVA_LONG), false);
+
+    static long tickCount64() {
+        try { return (long)TICK_COUNT.invokeExact(); }
+        catch (Throwable t) { throw new IllegalStateException("GetTickCount64 failed", t); }
+    }
 
     private static MethodHandle downcall(String name, FunctionDescriptor descriptor, boolean captureLastError) {
         MemorySegment symbol = KERNEL32.find(name).orElseThrow(() -> new UnsatisfiedLinkError(name));

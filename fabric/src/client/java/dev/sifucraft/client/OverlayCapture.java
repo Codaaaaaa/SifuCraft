@@ -36,27 +36,30 @@ final class OverlayCapture implements AutoCloseable {
 
     boolean enabled() { return enabled; }
 
-    void render(net.minecraft.client.Minecraft minecraft, Scope scope) {
+    void render(net.minecraft.client.Minecraft minecraft, Scope scope, Scope worldScope) {
         try {
             reap(scope);
-            if (!enabled || scope == null) {
+            Scope transport = scope != null ? scope : worldScope;
+            if (!enabled || transport == null) {
                 closeWriter();
                 statsStartNs = 0;
                 return;
             }
+            // Keep viewport feedback alive in Sifu view without publishing hands or GUI.
+            if (writer == null || writerScope.mcSession() != transport.mcSession() || writerScope.sifuSession() != transport.sifuSession()) {
+                closeWriter();
+                writer = new OverlayWriter(transport.mcSession(), transport.sifuSession());
+                writerScope = transport;
+                LOG.info("[overlay] transport ready: schema={} layout={} fps_limit={}", OverlayProtocol.VERSION,
+                        Long.toUnsignedString(OverlayProtocol.LAYOUT_HASH, 16), FPS);
+            }
+            if (scope == null) { statsStartNs = 0; return; }
             long now = System.nanoTime();
             if (statsStartNs == 0) {
                 statsStartNs = now; nextLogNs = now + 10_000_000_000L;
                 statsRendered = rendered; statsCaptured = captured; statsPublished = published;
             }
             rendered++;
-            if (writer == null || writerScope.mcSession() != scope.mcSession() || writerScope.sifuSession() != scope.sifuSession()) {
-                closeWriter();
-                writer = new OverlayWriter(scope.mcSession(), scope.sifuSession());
-                writerScope = scope;
-                LOG.info("[overlay] transport ready: schema={} layout={} fps_limit={}", OverlayProtocol.VERSION,
-                        Long.toUnsignedString(OverlayProtocol.LAYOUT_HASH, 16), FPS);
-            }
             // Ship only readbacks of the exact session/world/anchor that is still active now.
             Transfer completed = null;
             for (Transfer transfer : transfers) {
@@ -66,6 +69,10 @@ final class OverlayCapture implements AutoCloseable {
             if (completed != null) {
                 try (var mapped = completed.buffer.map(true, false)) {
                     var pixels = MemorySegment.ofBuffer(mapped.data());
+                    if (Boolean.getBoolean("sifucraft.worldEffectsSelfTest")) {
+                        if (SifuCraftClient.worldLayersActive()) WorldEffectsCheck.inspectHud(pixels, completed.width, completed.height);
+                        else WorldEffectsCheck.inspect(pixels, completed.width, completed.height);
+                    }
                     if (writer.publish(pixels, completed.width, completed.height, completed.frame,
                             scope.world(), scope.epoch(), true, completed.left, completed.top, completed.right,
                             completed.bottom, completed.guiScale)) published++;

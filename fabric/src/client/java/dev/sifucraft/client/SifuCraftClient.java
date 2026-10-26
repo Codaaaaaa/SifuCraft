@@ -81,11 +81,18 @@ public final class SifuCraftClient implements ClientModInitializer {
     private WindChargeCheck windChargeCheck;
     private ElytraCheck elytraCheck;
     private NativeInteractionCheck interactionCheck;
+    private WorldEffectsCheck worldEffectsCheck;
+    private WorldCracksCheck worldCracksCheck;
+    private WorldModelCheck worldModelCheck;
+    private WorldAudioCheck worldAudioCheck;
+    private AvatarCheck avatarCheck;
+    private WorldStressCheck worldStressCheck;
     private final NativeUse nativeUse = new NativeUse();
     public static void beginUseGesture() { if (instance != null) instance.nativeUse.press(); }
     public static boolean handleNativeUse() { return instance != null && instance.nativeUse.handle(instance.bridge, instance.minecraft); }
     private int guiWireEvents;
     private final OverlayCapture overlay = new OverlayCapture();
+    private final WorldLayerCapture worldLayers = new WorldLayerCapture();
     private final HostLanguage hostLanguage = new HostLanguage();
     private boolean crosshair;
     private CollisionLoader collision;
@@ -233,6 +240,29 @@ public final class SifuCraftClient implements ClientModInitializer {
             interactionCheck = new NativeInteractionCheck();
             ServerLifecycleEvents.SERVER_STOPPING.register(interactionCheck::restore);
         }
+        if (Boolean.getBoolean("sifucraft.worldEffectsSelfTest")) {
+            worldEffectsCheck = new WorldEffectsCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(worldEffectsCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.worldCracksSelfTest")) {
+            worldCracksCheck = new WorldCracksCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(worldCracksCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.worldModelSelfTest")) {
+            worldModelCheck = new WorldModelCheck();
+            ServerTickEvents.END_SERVER_TICK.register(worldModelCheck::serverTick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(worldModelCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.worldAudioSelfTest")) worldAudioCheck = new WorldAudioCheck(minecraft);
+        if (Boolean.getBoolean("sifucraft.avatarSelfTest")) {
+            avatarCheck = new AvatarCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(avatarCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.worldStressSelfTest")) {
+            worldStressCheck = new WorldStressCheck();
+            ServerTickEvents.END_SERVER_TICK.register(worldStressCheck::serverTick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(worldStressCheck::restore);
+        }
         if (Boolean.getBoolean("sifucraft.playerDamageTest") || Boolean.getBoolean("sifucraft.playerHitSelfTest") ||
                 Boolean.getBoolean("sifucraft.respawnSelfTest")) {
             PlayerHitCheck check = new PlayerHitCheck();
@@ -241,7 +271,11 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
         }
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            if (worldStressCheck != null) worldStressCheck.restoreClient(client);
+            if (avatarCheck != null) avatarCheck.restoreClient(client);
+            if (worldAudioCheck != null) worldAudioCheck.close();
             overlay.close();
+            worldLayers.close();
             collision.close();
             doors.close();
             bridge.close();
@@ -275,7 +309,33 @@ public final class SifuCraftClient implements ClientModInitializer {
 
     public static void captureOverlay() {
         SifuCraftClient client = instance;
-        if (client != null && client.overlay.enabled()) client.overlay.render(client.minecraft, client.overlayScope());
+        if (client != null && client.overlay.enabled()) {
+            var scope = client.overlayScope();
+            var world = client.worldScope();
+            client.worldLayers.updateScope(world);
+            client.overlay.render(client.minecraft, scope, world);
+        }
+    }
+    public static void captureWorld(net.minecraft.client.renderer.state.level.CameraRenderState camera) {
+        var client = instance;
+        if (client != null && client.bridge.latest() != null)
+            client.worldLayers.finish(client.minecraft, client.worldScope(), camera, client.space, client.bridge.latest().frame());
+    }
+    public static void worldProjection(org.joml.Matrix4fc projection) {
+        if (instance != null) instance.worldLayers.projection(projection);
+    }
+    static boolean worldLayersActive() { return instance != null && instance.worldLayers.enabled() && WorldEffects.active(); }
+    public static boolean worldEffectsAvailable() {
+        var c = instance;
+        return c != null && (overlayActive() || (c.worldLayers.enabled() && c.worldScope() != null));
+    }
+    public static dev.sifucraft.bridge.WorldView nativeWorldView() {
+        var c = instance;
+        if (c == null || !c.worldLayers.enabled() || !WorldEffects.active() || c.worldScope() == null) return null;
+        var frame = c.bridge.latest();
+        if (frame.minecraftOwnsInput()) return null;
+        return dev.sifucraft.bridge.WorldView.from(frame, c.space.placement(),
+                c.minecraft.getWindow().getWidth(), c.minecraft.getWindow().getHeight());
     }
 
     public static void beginGuiFrame() { if (instance != null) instance.crosshair = false; }
@@ -316,6 +376,14 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (!bridge.peerConnected() || frame == null || !frame.minecraftOwnsInput() ||
                 minecraft.level == null || minecraft.player == null || !minecraft.player.isAlive() ||
                 (minecraft.gui.screen() != null && !mirroredScreenActive()) || minecraft.gui.overlay() != null ||
+                !respawn.ready() || !space.anchoredTo(frame)) return null;
+        return new OverlayCapture.Scope(bridge.session(), bridge.peerSession(), frame.worldGeneration(), frame.anchorEpoch());
+    }
+    private OverlayCapture.Scope worldScope() {
+        SifuFrame frame = bridge.latest();
+        if (!bridge.peerConnected() || frame == null || !frame.hasPawn() || !frame.hasCamera() ||
+                minecraft.level == null || minecraft.player == null || !minecraft.player.isAlive() ||
+                minecraft.gui.screen() != null && !mirroredScreenActive() || minecraft.gui.overlay() != null ||
                 !respawn.ready() || !space.anchoredTo(frame)) return null;
         return new OverlayCapture.Scope(bridge.session(), bridge.peerSession(), frame.worldGeneration(), frame.anchorEpoch());
     }
@@ -373,6 +441,12 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (windChargeCheck != null) windChargeCheck.tick(minecraft, input, guiAvailable(frame));
         if (elytraCheck != null) elytraCheck.tick(minecraft, input, guiAvailable(frame));
         if (interactionCheck != null) interactionCheck.tick(minecraft, input, guiAvailable(frame));
+        if (worldEffectsCheck != null) worldEffectsCheck.tick(minecraft, input, guiAvailable(frame));
+        if (worldCracksCheck != null) worldCracksCheck.tick(minecraft, input, guiAvailable(frame));
+        if (worldModelCheck != null) worldModelCheck.tick(minecraft, guiAvailable(frame));
+        if (avatarCheck != null) avatarCheck.tick(minecraft, input, guiAvailable(frame));
+        if (worldStressCheck != null) worldStressCheck.tick(minecraft, guiAvailable(frame));
+        if (worldAudioCheck != null) worldAudioCheck.tick(frame, worldScope() != null);
         if (now >= nextStatusMs) {
             nextStatusMs = now + STATUS_EVERY_MS;
             logStatus(frame);

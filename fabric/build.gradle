@@ -6,6 +6,7 @@ plugins {
 def nativeAccess = '--enable-native-access=ALL-UNNAMED'
 
 loom {
+	log4jConfigs.setFrom(file("config/log4j2.xml"))
 	// main: bridge + common code; client: Minecraft client integration.
 	splitEnvironmentSourceSets()
 
@@ -32,6 +33,21 @@ loom {
 			property "sifucraft.survivalDifficultySelfTest", providers.gradleProperty("sifucraft.survivalDifficultySelfTest").getOrElse("false")
 			property "sifucraft.elytraSelfTest", providers.gradleProperty("sifucraft.elytraSelfTest").getOrElse("false")
 			property "sifucraft.nativeInteractionSelfTest", providers.gradleProperty("sifucraft.nativeInteractionSelfTest").getOrElse("false")
+			property "sifucraft.worldEffects", providers.gradleProperty("sifucraft.worldEffects").getOrElse("false")
+			property "sifucraft.worldEffectsSelfTest", providers.gradleProperty("sifucraft.worldEffectsSelfTest").getOrElse("false")
+			property "sifucraft.worldLayers", providers.gradleProperty("sifucraft.worldLayers").getOrElse("false")
+			property "sifucraft.worldParticleMatrix", providers.gradleProperty("sifucraft.worldParticleMatrix").getOrElse("false")
+			property "sifucraft.worldTestVisibleHud", providers.gradleProperty("sifucraft.worldTestVisibleHud").getOrElse("false")
+			property "sifucraft.worldProbe", providers.gradleProperty("sifucraft.worldProbe").getOrElse("false")
+			property "sifucraft.worldCracksSelfTest", providers.gradleProperty("sifucraft.worldCracksSelfTest").getOrElse("false")
+			property "sifucraft.worldCracksHoldMs", providers.gradleProperty("sifucraft.worldCracksHoldMs").getOrElse("400")
+			property "sifucraft.worldModelSelfTest", providers.gradleProperty("sifucraft.worldModelSelfTest").getOrElse("false")
+			property "sifucraft.worldModelHoldMs", providers.gradleProperty("sifucraft.worldModelHoldMs").getOrElse("500")
+			property "sifucraft.worldAudioSelfTest", providers.gradleProperty("sifucraft.worldAudioSelfTest").getOrElse("false")
+			property "sifucraft.avatarSelfTest", providers.gradleProperty("sifucraft.avatarSelfTest").getOrElse("false")
+			property "sifucraft.avatarHoldMs", providers.gradleProperty("sifucraft.avatarHoldMs").getOrElse("650")
+			property "sifucraft.worldStressSelfTest", providers.gradleProperty("sifucraft.worldStressSelfTest").getOrElse("false")
+			property "sifucraft.worldFps", providers.gradleProperty("sifucraft.worldFps").getOrElse("30")
 			property "sifucraft.shieldSelfTest", providers.gradleProperty("sifucraft.shieldSelfTest").getOrElse("false")
 			property "sifucraft.shieldTestSupplies", providers.gradleProperty("sifucraft.shieldTestSupplies").getOrElse("false")
 			property "sifucraft.hideWindow", providers.gradleProperty("sifucraft.hideWindow").getOrElse("true")
@@ -55,6 +71,10 @@ sourceSets {
 	protocolTest {
 		compileClasspath += sourceSets.main.output
 		runtimeClasspath += sourceSets.main.output
+	}
+	offlineTest {
+		compileClasspath += sourceSets.client.compileClasspath + sourceSets.main.output + sourceSets.client.output
+		runtimeClasspath += sourceSets.client.runtimeClasspath + sourceSets.main.output + sourceSets.client.output
 	}
 }
 
@@ -99,3 +119,19 @@ tasks.register('protocolTest', JavaExec) {
 	mainClass = 'dev.sifucraft.bridge.EnemyFrameTest'
 }
 tasks.named('check') { dependsOn tasks.named('protocolTest') }
+tasks.register('worldProtocolTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks the independent world color/depth/camera mailbox ABI.'
+	classpath = sourceSets.protocolTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.bridge.WorldWriterTest'
+}
+tasks.named('check') { dependsOn tasks.named('worldProtocolTest') }
+
+tasks.register('p7OfflineTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks camera rays and save recovery without starting a game, window or server.'
+	classpath = sourceSets.offlineTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.client.P7OfflineTest'
+	jvmArgs nativeAccess
+}
+tasks.named('check') { dependsOn tasks.named('p7OfflineTest') }

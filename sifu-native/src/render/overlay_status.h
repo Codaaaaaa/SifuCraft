@@ -8,7 +8,13 @@ struct Scope {
     std::uint32_t world = 0, epoch = 0;
     std::uint64_t updated_ms = 0;
     bool enabled = false;
+    bool world_enabled = false;
 };
+// World rendering survives an input handover; a world frame never proves that a HUD was shown.
+inline Scope WorldScope(Scope scope) {
+    scope.enabled = scope.world_enabled;
+    return scope;
+}
 inline bool SameScope(const Scope& a, const Scope& b) {
     return a.mc_session == b.mc_session && a.sifu_session == b.sifu_session && a.world == b.world && a.epoch == b.epoch;
 }

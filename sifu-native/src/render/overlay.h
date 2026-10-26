@@ -5,7 +5,7 @@
 
 namespace sifucraft::render {
 // Worker thread: guarded pointer discovery, CAS install/self-test, context publication.
-void Maintain(std::uintptr_t image_base, const Scope& scope);
+void Maintain(std::uintptr_t image_base, const Scope& scope, int stage);
 std::string TakeStats();
 // Latest successful Present of a composited frame; never acquires the GPU resource lock.
 Presentation LastPresentation();

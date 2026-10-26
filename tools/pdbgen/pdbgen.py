@@ -20,10 +20,12 @@ from pathlib import Path
 EXE_NAME = "Sifu-Win64-Shipping.exe"
 
 # Global variables whose RVA the native module reads.
-SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData", "GD3D11RHI", "GDynamicRHI", "InternationalizationStore", "LevelStreamingManager", "InteractionKey"]
+SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData", "GD3D11RHI", "GDynamicRHI", "InternationalizationStore", "LevelStreamingManager", "InteractionKey", "SceneRenderTargets", "DepthTextureVtable"]
+SIZED_SYMBOLS = {"DepthTextureVtable": ("TD3D11Texture2D<FD3D11BaseTexture2D>::`vftable'", 88)}
 SYMBOL_MATCHES = {"InternationalizationStore": ("*FInternationalization*Singleton", "::Singleton"),
                   "LevelStreamingManager": ("FSCLevelStreamingManager::s_Instance", "::s_Instance"),
-                  "InteractionKey": ("EKeys::Q", "::Q")}
+                  "InteractionKey": ("EKeys::Q", "::Q"),
+                  "SceneRenderTargets": ("SceneRenderTargetsSingleton", "SceneRenderTargetsSingleton")}
 
 # Vtable hook plan: name -> (class whose vftable is patched, class that introduces the virtual,
 # method, implementation the slot must hold). Checked against the exe file here and against live
@@ -57,6 +59,7 @@ CALL_SLOTS = {"UObject": ["ProcessEvent"]}
 
 # Short C++ namespaces for PDB template types used by native inspection.
 TYPE_ALIASES = {
+    "D3D11Texture2D": "TD3D11Texture2D<FD3D11BaseTexture2D>",
     "InternationalizationStore": "TLazySingleton<FInternationalization>",
     "FloatRangeBound": "TRangeBound<float>",
     "ScriptDelegate": "TScriptDelegate<FWeakObjectPtr>",
@@ -77,6 +80,13 @@ TYPE_ALIASES = {
 
 # type -> members. A member may live in a base class; its offset is then made absolute.
 MEMBERS = {
+    "FViewUniformShaderParameters": ["WorldToClip", "ViewToClip", "ViewToClipNoAA", "InvDeviceZToWorldZTransform", "WorldCameraOrigin", "TemporalAAJitter", "ViewRectMin", "ViewSizeAndInvSize", "BufferSizeAndInvSize", "NearPlane", "FrameNumber"],
+    "FSceneRenderTargets": ["SceneDepthZ"],
+    "IPooledRenderTarget": ["RenderTargetItem"],
+    "FSceneRenderTargetItem": ["TargetableTexture", "ShaderResourceTexture"],
+    "D3D11Texture2D": ["Resource", "ShaderResourceView"],
+    "FRHITexture2D": ["SizeX", "SizeY"],
+    "FRHITexture": ["NumSamples", "Format"],
     "AFightingPlayerController": ["m_CurrentInteractionObjectComponent"],
     "UInteractionObjectComponent": ["m_DetectionComponent", "m_VisualComponent", "m_bIsUsable", "m_bUseCustomWalkInteractionDist", "m_fCustomWalkInteractionDist"],
     "FSCLevelStreamingManager": ["m_World", "m_bStreamingVolumesEnabled"],
@@ -87,7 +97,7 @@ MEMBERS = {
     "UUserWidget": ["WidgetTree"],
     "UPanelSlot": ["Parent", "Content"],
     "ScriptDelegate": ["Object", "FunctionName"],
-    "FD3D11DynamicRHI": ["Viewports"],
+    "FD3D11DynamicRHI": ["Viewports", "Direct3DDeviceIMContext", "Direct3DDevice"],
     "FD3D11Viewport": ["WindowHandle", "SwapChain", "PixelColorSpace"],
     # CoreUObject
     "UObjectBase": ["ObjectFlags", "InternalIndex", "ClassPrivate", "NamePrivate", "OuterPrivate"],
@@ -594,7 +604,10 @@ def main() -> int:
                 errors.append(f"hook {name}: {e}")
         for name in SYMBOLS:
             try:
-                rvas[name] = pdb.unique_rva(*SYMBOL_MATCHES[name]) if name in SYMBOL_MATCHES else pdb.rva(name)
+                if name in SIZED_SYMBOLS:
+                    rvas[name] = pdb.sized_rva(*SIZED_SYMBOLS[name])
+                else:
+                    rvas[name] = pdb.unique_rva(*SYMBOL_MATCHES[name]) if name in SYMBOL_MATCHES else pdb.rva(name)
             except LookupError as e:
                 errors.append(str(e))
         for type_name, fields in MEMBERS.items():

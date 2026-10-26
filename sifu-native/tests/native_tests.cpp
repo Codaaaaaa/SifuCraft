@@ -23,6 +23,7 @@
 #include "collision/voxels.h"
 #include "collision/walk_check.h"
 #include "core/build_guard.h"
+#include "core/log.h"
 #include "core/safe_memory.h"
 #include "generated/sifu_build.g.h"
 #include "hooks/vtable_hook.h"
@@ -122,6 +123,38 @@ void TestGuardedReads() {
 
     VirtualFree(reserved, 0, MEM_RELEASE);
     VirtualFree(guarded, 0, MEM_RELEASE);
+}
+
+void TestBoundedLogs() {
+    wchar_t temporary[MAX_PATH]{}; GetTempPathW(MAX_PATH, temporary);
+    const auto path = std::wstring(temporary) + L"sifucraft-log-test-" + std::to_wstring(GetCurrentProcessId()) + L".txt";
+    auto read = [](const std::wstring& name) {
+        std::string result; HANDLE file = CreateFileW(name.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return result;
+        const DWORD size = GetFileSize(file, nullptr); result.resize(size);
+        DWORD count = 0; ReadFile(file, result.data(), size, &count, nullptr); result.resize(count); CloseHandle(file); return result;
+    };
+    {
+        sifucraft::TextFile file;
+        Expect(file.Open(path, 256, 2), "open a bounded log");
+        for (char c : {'A', 'B', 'C', 'D'}) file.Write(std::string(256, c));
+        Expect(read(path) == std::string(256, 'D') && read(path + L".1") == std::string(256, 'C') &&
+            read(path + L".2") == std::string(256, 'B'), "rotation keeps the newest bounded parts in order");
+        HANDLE reader = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        Expect(reader != INVALID_HANDLE_VALUE, "hold a reader that denies log renaming");
+        file.Write(std::string(256, 'E'));
+        Expect(read(path) == std::string(256, 'D'), "failed rotation preserves evidence and cannot grow beyond the cap");
+        CloseHandle(reader);
+    }
+    {
+        sifucraft::TextFile file; file.Open(path, 256, 2); file.Write(std::string(1024, 'F'));
+        Expect(read(path).size() == 256, "one oversized message also obeys the file limit");
+        file.TryWrite("exit");
+        Expect(read(path) == "exit", "final nonblocking writer also rotates a full log");
+    }
+    DeleteFileW(path.c_str()); DeleteFileW((path + L".1").c_str()); DeleteFileW((path + L".2").c_str());
 }
 
 void TestBuildGuard() {
@@ -1070,6 +1103,7 @@ void TestDoorViewHandover() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    TestBoundedLogs();
     TestInventoryRouting();
     {
         using namespace sifucraft;

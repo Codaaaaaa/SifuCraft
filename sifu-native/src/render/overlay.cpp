@@ -13,6 +13,8 @@
 #include "generated/sifu_build.g.h"
 #include "hooks/vtable_hook.h"
 #include "render/compositor.h"
+#include "render/depth_probe.h"
+#include "render/depth_observer.h"
 
 namespace sifucraft::render {
 namespace {
@@ -130,20 +132,22 @@ Presentation Paint(IDXGISwapChain* chain) {
     Scope scope;
     AcquireSRWLockShared(&scope_lock); scope = current; ReleaseSRWLockShared(&scope_lock);
     const auto now = GetTickCount64();
-    if (!scope.enabled || !Recent(scope.updated_ms, now)) { received_ms = 0; return {}; }
+    if ((!scope.enabled && !scope.world_enabled) || !Recent(scope.updated_ms, now)) { received_ms = 0; return {}; }
     if (!SameScope(scope, previous_scope)) {
         received_ms = 0; previous_scope = scope;
     }
     const bool fresh = reader.Read(scope.mc_session, scope.sifu_session, scope.world, scope.epoch, &latest);
-    if (fresh) { received_ms = now; ++uploads; }
+    if (fresh && scope.enabled) { received_ms = now; ++uploads; }
     Com<ID3D11Texture2D> backbuffer;
     HRESULT hr = chain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(backbuffer.put()));
     if (FAILED(hr)) return {};
     D3D11_TEXTURE2D_DESC desc{}; backbuffer->GetDesc(&desc);
     reader.SetViewport(desc.Width, desc.Height);
-    if (!Recent(received_ms, now)) { ++expired; return {}; }
     Com<ID3D11Device> device;
     if (FAILED(chain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(device.put())))) return {};
+    depth_probe::DrawWorld(device.get(), backbuffer.get(), WorldScope(scope), now);
+    if (!scope.enabled) { received_ms = 0; return {}; }
+    if (!Recent(received_ms, now)) { ++expired; return {}; }
     hr = compositor.Draw(device.get(), backbuffer.get(), latest, fresh);
     if (FAILED(hr)) {
         ++failures;
@@ -170,12 +174,15 @@ HRESULT WINAPI PresentHook(IDXGISwapChain* chain, UINT interval, UINT flags) {
     if (!exiting.load() && drawing.load() && chain == target.load() && !(flags & DXGI_PRESENT_TEST) &&
         TryAcquireSRWLockExclusive(&render_lock)) {
         attempted = true;
-        try { candidate = Paint(chain); }
+        try { depth_probe::Tick(chain); candidate = Paint(chain); }
         catch (...) { ++failures; received_ms = 0; }
         ReleaseSRWLockExclusive(&render_lock);
     }
     const auto forward = original.load();
     const HRESULT hr = forward ? forward(chain, interval, flags) : DXGI_ERROR_INVALID_CALL;
+    // Context-state isolation (and Present itself) may restore D3D11's own COM
+    // dispatch table. Observe the NEXT game frame, after all our state swaps.
+    if (attempted && !exiting.load() && drawing.load() && !depth_observer::Rearm()) ++failures;
     if (attempted) {
         // Occluded and failed Presents do not prove that the user has a replacement HUD.
         if (hr == S_OK && candidate.image_ms) candidate.presented_ms = GetTickCount64();
@@ -211,14 +218,25 @@ IDXGISwapChain* FindSwapChain(std::uintptr_t base) {
 }
 }
 
-void Maintain(std::uintptr_t image_base, const Scope& scope) {
+void Maintain(std::uintptr_t image_base, const Scope& scope, int stage) {
     AcquireSRWLockExclusive(&scope_lock); current = scope; ReleaseSRWLockExclusive(&scope_lock);
+    depth_probe::UpdateScope(WorldScope(scope));
     static std::uint64_t retry = 0;
     if (scope.updated_ms < retry || exiting.load()) return;
     retry = scope.updated_ms + 1000;
     const auto root = log::RootDirectory();
+    const auto depth_request = root + L"\\depth-capture";
+    const auto world_request = root + L"\\world-capture";
+    if (GetFileAttributesW(world_request.c_str()) != INVALID_FILE_ATTRIBUTES && DeleteFileW(world_request.c_str())) depth_probe::RequestWorldCapture();
+    const bool depth_capture = GetFileAttributesW(depth_request.c_str()) != INVALID_FILE_ATTRIBUTES && DeleteFileW(depth_request.c_str());
+    depth_probe::Configure(image_base, GetFileAttributesW((root + L"\\depth-probe").c_str()) != INVALID_FILE_ATTRIBUTES, depth_capture,
+        stage >= 9 && GetFileAttributesW((root + L"\\depth-bind-probe").c_str()) != INVALID_FILE_ATTRIBUTES,
+        stage >= 9 && GetFileAttributesW((root + L"\\world-render").c_str()) != INVALID_FILE_ATTRIBUTES, WorldScope(scope));
     const auto off = root + L"\\overlay-off";
     if (GetFileAttributesW(off.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        depth_probe::Stop();
+        // Keep H8 alive until its thread restores H9/H10 and releases retained depth references.
+        if (depth_observer::Installed()) return;
         drawing = false;
         if (hook.installed() && hook.Uninstall()) {
             // The DLL stays mapped; any late caller that loaded the old slot simply forwards.
@@ -262,7 +280,7 @@ std::string TakeStats() {
     return FormatString("H8=%s presents=%llu uploads=%llu draws=%llu stale=%llu failures=%llu", hook.installed() ? "on" : "off",
         static_cast<unsigned long long>(presents.load()), static_cast<unsigned long long>(uploads.load()),
         static_cast<unsigned long long>(draws.load()), static_cast<unsigned long long>(expired.load()),
-        static_cast<unsigned long long>(failures.load()));
+        static_cast<unsigned long long>(failures.load())) + " | depth " + depth_probe::TakeStats();
 }
 Presentation LastPresentation() {
     if (exiting.load() || !drawing.load()) return {};
@@ -270,5 +288,5 @@ Presentation LastPresentation() {
     AcquireSRWLockShared(&presentation_lock); shown = presented; ReleaseSRWLockShared(&presentation_lock);
     return shown;
 }
-void OnProcessExit() { exiting = true; drawing = false; }
+void OnProcessExit() { exiting = true; drawing = false; depth_observer::OnProcessExit(); }
 }

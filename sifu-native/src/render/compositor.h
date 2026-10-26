@@ -7,7 +7,7 @@
 namespace sifucraft::render {
 
 // All methods run on the immediate context's thread. Owns no backbuffer/RTV between draws.
-// A separate D3D11.1 context-state object isolates every pipeline stage from the host game.
+// PipelineState preserves host bindings without enabling D3D11 context-state emulation.
 class Compositor {
 public:
     HRESULT Draw(ID3D11Device* device, ID3D11Texture2D* backbuffer, const overlay::Frame& frame, bool upload);
@@ -17,7 +17,6 @@ private:
     HRESULT Upload(const overlay::Frame& frame);
     Com<ID3D11Device> device_;
     Com<ID3D11DeviceContext1> context_;
-    Com<ID3DDeviceContextState> state_;
     Com<ID3D11VertexShader> vertex_;
     Com<ID3D11PixelShader> normal_, invert_;
     Com<ID3D11BlendState> blend_, inverse_blend_;

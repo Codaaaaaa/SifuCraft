@@ -14,12 +14,20 @@ set(SIFUCRAFT_INCLUDE_DIRS src ${PROJECT_SOURCE_DIR}/protocol)
 
 # Bridge + logging, shared by the in-game module and the console tools.
 set(SIFUCRAFT_BRIDGE_SOURCES
+    src/bridge/world_reader.cpp
     src/core/log.cpp
     src/bridge/shared_mapping.cpp
     src/bridge/sifu_bridge.cpp
 )
 
 add_library(sifucraft_native SHARED
+    src/render/pipeline_state.cpp
+    src/render/world_scene.cpp
+    src/render/world_compositor.cpp
+    src/render/depth_copy.cpp
+    src/render/depth_probe.cpp
+    src/render/depth_observer.cpp
+    src/render/view_parameters.cpp
     src/dllmain.cpp
     src/runtime.cpp
     src/render/overlay.cpp
@@ -71,9 +79,19 @@ set_target_properties(sifucraft_native PROPERTIES OUTPUT_NAME dsound PREFIX "")
 add_executable(sifucraft_fake_sifu tools/fake_sifu.cpp src/bridge/overlay_reader.cpp ${SIFUCRAFT_BRIDGE_SOURCES})
 add_executable(sifucraft_overlay_tests tests/overlay_tests.cpp src/bridge/overlay_reader.cpp src/bridge/shared_mapping.cpp)
 add_test(NAME overlay_tests COMMAND sifucraft_overlay_tests)
-add_executable(sifucraft_render_tests tests/render_tests.cpp src/render/compositor.cpp)
+add_executable(sifucraft_world_tests tests/world_tests.cpp src/bridge/world_reader.cpp src/bridge/shared_mapping.cpp)
+add_test(NAME world_tests COMMAND sifucraft_world_tests)
+add_executable(sifucraft_world_render_tests tests/world_render_tests.cpp src/render/world_scene.cpp src/render/world_compositor.cpp src/render/depth_copy.cpp src/render/compositor.cpp src/render/pipeline_state.cpp)
+target_link_libraries(sifucraft_world_render_tests PRIVATE d3d11 d3dcompiler dxgi dxguid)
+add_test(NAME world_render_tests COMMAND sifucraft_world_render_tests)
+add_executable(sifucraft_render_tests tests/render_tests.cpp src/render/compositor.cpp src/render/pipeline_state.cpp)
 target_link_libraries(sifucraft_render_tests PRIVATE d3d11 d3dcompiler dxgi dxguid)
 add_test(NAME render_tests COMMAND sifucraft_render_tests)
+add_executable(sifucraft_depth_tests tests/depth_tests.cpp src/render/depth_copy.cpp src/render/depth_observer.cpp src/render/view_parameters.cpp
+    src/render/compositor.cpp src/render/pipeline_state.cpp
+    src/hooks/vtable_hook.cpp src/core/safe_memory.cpp src/core/log.cpp)
+target_link_libraries(sifucraft_depth_tests PRIVATE d3d11 d3dcompiler dxgi dxguid)
+add_test(NAME depth_tests COMMAND sifucraft_depth_tests)
 add_executable(sifucraft_hud_tests tests/hud_tests.cpp)
 add_test(NAME hud_tests COMMAND sifucraft_hud_tests)
 
@@ -106,7 +124,7 @@ add_executable(sifucraft_native_tests
 add_dependencies(sifucraft_native_tests sifucraft_native)
 add_test(NAME native_tests COMMAND sifucraft_native_tests $<TARGET_FILE:sifucraft_native>)
 
-foreach(target sifucraft_native sifucraft_fake_sifu sifucraft_collision_replay sifucraft_native_tests sifucraft_overlay_tests sifucraft_render_tests sifucraft_hud_tests)
+foreach(target sifucraft_native sifucraft_fake_sifu sifucraft_collision_replay sifucraft_native_tests sifucraft_overlay_tests sifucraft_world_tests sifucraft_world_render_tests sifucraft_render_tests sifucraft_depth_tests sifucraft_hud_tests)
     set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     target_include_directories(${target} PRIVATE ${SIFUCRAFT_INCLUDE_DIRS})
     target_compile_definitions(${target} PRIVATE ${SIFUCRAFT_COMMON_DEFINITIONS})

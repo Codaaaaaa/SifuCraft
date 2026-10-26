@@ -17,6 +17,7 @@
 .gradle/
 /fabric/build/
 /fabric/run/
+/fabric/logs/
 *.class
 
 # Python

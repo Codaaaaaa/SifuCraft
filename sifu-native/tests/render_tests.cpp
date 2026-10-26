@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <d3dcompiler.h>
 
 using namespace sifucraft;
 using render::Com;
@@ -20,7 +21,7 @@ int main() {
     chain_desc.BufferDesc.Width = chain_desc.BufferDesc.Height = 4;
     chain_desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     chain_desc.SampleDesc.Count = chain_desc.BufferCount = 1;
-    chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; chain_desc.OutputWindow = window; chain_desc.Windowed = TRUE;
+    chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT | DXGI_USAGE_SHADER_INPUT; chain_desc.OutputWindow = window; chain_desc.Windowed = TRUE;
     Com<IDXGISwapChain> chain;
     auto hr = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION,
         &chain_desc, chain.put(), device.put(), nullptr, context.put());
@@ -45,6 +46,19 @@ int main() {
         const D3D11_RECT scissor{1, 2, 3, 4};
         context->RSSetViewports(1, &viewport); context->RSSetScissorRects(1, &scissor);
         context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+        // Native state that an overlay must neutralize, then restore exactly.
+        constexpr char gs_source[] = "struct V {float4 p:SV_Position;float2 uv:TEXCOORD0;}; [maxvertexcount(3)] void main(triangle V input[3],inout TriangleStream<V> output) {}";
+        Com<ID3DBlob> gs_code, gs_error; Com<ID3D11GeometryShader> native_gs;
+        hr=D3DCompile(gs_source,sizeof(gs_source)-1,nullptr,nullptr,nullptr,"main","gs_5_0",0,0,gs_code.put(),gs_error.put());
+        if(SUCCEEDED(hr)) hr=device->CreateGeometryShader(gs_code->GetBufferPointer(),gs_code->GetBufferSize(),nullptr,native_gs.put());
+        Check(SUCCEEDED(hr),"native geometry shader sentinel that emits no pixels");
+        context->GSSetShader(native_gs.get(),nullptr,0);
+        Com<ID3D11ShaderResourceView> alias; device->CreateShaderResourceView(image.get(),nullptr,alias.put());
+        auto* alias_value=alias.get(); context->PSSetShaderResources(20,1,&alias_value); context->HSSetShaderResources(3,1,&alias_value);
+        Com<ID3D11DeviceContext1> context1; context->QueryInterface(__uuidof(ID3D11DeviceContext1),reinterpret_cast<void**>(context1.put()));
+        D3D11_BUFFER_DESC cb_desc{};cb_desc.ByteWidth=1024;cb_desc.Usage=D3D11_USAGE_DEFAULT;cb_desc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+        Com<ID3D11Buffer> native_cb;device->CreateBuffer(&cb_desc,nullptr,native_cb.put());auto* cb=native_cb.get();UINT first=16,constants=16;
+        context1->VSSetConstantBuffers1(0,1,&cb,&first,&constants);context1->PSSetConstantBuffers1(0,1,&cb,&first,&constants);
         overlay::Frame frame;
         frame.header = {overlay::Ready, 4, 4, 16, 1, 1, 1, overlay::kPremultiplied, 64, 0, 0, 1, 1, 1, 0};
         frame.pixels.assign(64, 0);
@@ -58,6 +72,17 @@ int main() {
         Com<ID3D11RenderTargetView> restored;
         context->OMGetRenderTargets(1, restored.put(), nullptr);
         Check(restored.get() == sentinel_view.get(), "restore host render target, not the overlay target");
+        Com<ID3D11GeometryShader> restored_gs;context->GSGetShader(restored_gs.put(),nullptr,nullptr);
+        Check(restored_gs.get()==native_gs.get(),"restore geometry shader after disabling it for overlay draw");
+        Com<ID3D11ShaderResourceView> restored_alias;context->PSGetShaderResources(20,1,restored_alias.put());
+        Check(restored_alias.get()==alias.get(),"restore high-slot PS resource implicitly unbound by the overlay render target");restored_alias.reset();
+        context->HSGetShaderResources(3,1,restored_alias.put());
+        Check(restored_alias.get()==alias.get(),"restore resource aliases in stages the overlay does not draw");restored_alias.reset();
+        Com<ID3D11Buffer> restored_cb;UINT restored_first=0,restored_constants=0;
+        context1->VSGetConstantBuffers1(0,1,restored_cb.put(),&restored_first,&restored_constants);
+        Check(restored_cb.get()==cb&&restored_first==first&&restored_constants==constants,"preserve vertex constant buffer subrange");restored_cb.reset();
+        context1->PSGetConstantBuffers1(0,1,restored_cb.put(),&restored_first,&restored_constants);
+        Check(restored_cb.get()==cb&&restored_first==first&&restored_constants==constants,"preserve pixel constant buffer subrange");restored_cb.reset();
         D3D11_VIEWPORT after{}; UINT count = 1; context->RSGetViewports(&count, &after);
         Check(count == 1 && std::memcmp(&after, &viewport, sizeof(after)) == 0, "restore exact host viewport");
         D3D11_RECT after_scissor{}; count = 1; context->RSGetScissorRects(&count, &after_scissor);
@@ -104,6 +129,7 @@ int main() {
             Check(p[1] == 255 && p[0] == 0, "flip bottom-up source only, without moving GUI bounds");
             context->Unmap(staging.get(), 0);
         }
+        ID3D11ShaderResourceView* no_alias=nullptr;context->PSSetShaderResources(20,1,&no_alias);context->HSSetShaderResources(3,1,&no_alias);
     }
     context->OMSetRenderTargets(0, nullptr, nullptr);
     // The compositor is deliberately still alive. A retained backbuffer in its isolated context

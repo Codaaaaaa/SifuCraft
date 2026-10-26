@@ -136,6 +136,12 @@ void TestFreshness() {
     }
     auto disabled = scope; disabled.enabled = false;
     Expect(!render::FreshPresentation(disabled, shown, 1000), "F8/menu/disabled context cancels the replacement immediately");
+    disabled.world_enabled = true;
+    const auto native_world = render::WorldScope(disabled);
+    Expect(native_world.enabled && render::SameScope(native_world, scope), "F8 preserves the world identity and independently enables rendering");
+    Expect(!render::FreshPresentation(disabled, {native_world, 1000, 1000}, 1000), "a world-only Present never hides the Sifu HUD or enables Minecraft GUI input");
+    disabled.world_enabled = false;
+    Expect(!render::WorldScope(disabled).enabled, "pause/menu or invalid world cancels world drawing without changing HUD policy");
     auto stale_image = shown; stale_image.image_ms = 749;
     Expect(!render::FreshPresentation(scope, stale_image, 1000), "repeated Presents cannot refresh an expired source image");
     auto stale_context = shown; stale_context.scope.updated_ms = 749;

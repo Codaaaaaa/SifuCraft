@@ -1,4 +1,5 @@
 #include "render/compositor.h"
+#include "render/pipeline_state.h"
 
 #include <d3dcompiler.h>
 #include <cstring>
@@ -47,50 +48,22 @@ HRESULT Compile(const char* entry, const char* profile, Com<ID3DBlob>& result) {
     return hr;
 }
 
-class Isolate {
-public:
-    Isolate(ID3D11DeviceContext1* context, ID3DDeviceContextState* state) : context_(context) {
-        context_->GetPredication(predicate_.put(), &predicate_value_);
-        context_->SwapDeviceContextState(state, previous_.put());
-        context_->SetPredication(nullptr, FALSE);
-    }
-    ~Isolate() {
-        // The isolated state must not retain any backbuffer reference: ResizeBuffers needs all
-        // such references released. Unbind before saving our state and restoring the game's.
-        context_->OMSetRenderTargets(0, nullptr, nullptr);
-        ID3D11ShaderResourceView* empty = nullptr;
-        context_->PSSetShaderResources(0, 1, &empty);
-        context_->SwapDeviceContextState(previous_.get(), nullptr);
-        context_->SetPredication(predicate_.get(), predicate_value_);
-    }
-private:
-    ID3D11DeviceContext1* context_;
-    Com<ID3DDeviceContextState> previous_;
-    Com<ID3D11Predicate> predicate_;
-    BOOL predicate_value_ = FALSE;
-};
 }
 
 void Compositor::Reset() {
     view_.reset(); texture_.reset(); constants_.reset(); depth_.reset(); raster_.reset();
     sampler_.reset(); inverse_blend_.reset(); blend_.reset(); invert_.reset(); normal_.reset();
-    vertex_.reset(); state_.reset(); context_.reset(); device_.reset(); width_ = height_ = 0;
+    vertex_.reset(); context_.reset(); device_.reset(); width_ = height_ = 0;
 }
 
 HRESULT Compositor::Initialize(ID3D11Device* device) {
-    if (device_.get() == device && state_) return S_OK;
+    if (device_.get() == device && constants_) return S_OK;
     Reset();
     device->AddRef(); device_.reset(device);
-    Com<ID3D11Device1> newer;
-    HRESULT hr = device->QueryInterface(__uuidof(ID3D11Device1), reinterpret_cast<void**>(newer.put()));
-    if (FAILED(hr)) return hr;
+    HRESULT hr;
     Com<ID3D11DeviceContext> context;
     device->GetImmediateContext(context.put());
     hr = context->QueryInterface(__uuidof(ID3D11DeviceContext1), reinterpret_cast<void**>(context_.put()));
-    if (FAILED(hr)) return hr;
-    auto level = device->GetFeatureLevel();
-    D3D_FEATURE_LEVEL chosen{};
-    hr = newer->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION, __uuidof(ID3D11Device), &chosen, state_.put());
     if (FAILED(hr)) return hr;
     Com<ID3DBlob> blob;
     if (FAILED(hr = Compile("vertexMain", "vs_5_0", blob))) return hr;
@@ -170,7 +143,8 @@ HRESULT Compositor::Draw(ID3D11Device* device, ID3D11Texture2D* backbuffer, cons
         (h.flags & overlay::kBottomUp) ? 1.0f : 0.0f, 0, 0, 0};
     std::memcpy(mapped.pData, params, sizeof(params));
     context_->Unmap(constants_.get(), 0);
-    Isolate isolate(context_.get(), state_.get());
+    PipelineState isolate(context_.get());
+    if (!isolate.ready()) return DXGI_ERROR_UNSUPPORTED;
     auto* rtv = target.get();
     context_->OMSetRenderTargets(1, &rtv, nullptr);
     context_->OMSetBlendState(blend_.get(), nullptr, 0xffffffffu);

@@ -20,9 +20,46 @@ inline constexpr std::uintptr_t GDynamicRHI = 0x5E602C0;
 inline constexpr std::uintptr_t InternationalizationStore = 0x5D26918;
 inline constexpr std::uintptr_t LevelStreamingManager = 0x5C7EBF0;
 inline constexpr std::uintptr_t InteractionKey = 0x5D8AE10;
+inline constexpr std::uintptr_t SceneRenderTargets = 0x5A55318;
+inline constexpr std::uintptr_t DepthTextureVtable = 0x4B7E440;
 }  // namespace rva
 
 namespace off {
+namespace FViewUniformShaderParameters {
+inline constexpr std::uint32_t WorldToClip = 0x40;
+inline constexpr std::uint32_t ViewToClip = 0x1C0;
+inline constexpr std::uint32_t ViewToClipNoAA = 0x200;
+inline constexpr std::uint32_t InvDeviceZToWorldZTransform = 0x410;
+inline constexpr std::uint32_t WorldCameraOrigin = 0x430;
+inline constexpr std::uint32_t TemporalAAJitter = 0x7E0;
+inline constexpr std::uint32_t ViewRectMin = 0x810;
+inline constexpr std::uint32_t ViewSizeAndInvSize = 0x820;
+inline constexpr std::uint32_t BufferSizeAndInvSize = 0x840;
+inline constexpr std::uint32_t NearPlane = 0x8E0;
+inline constexpr std::uint32_t FrameNumber = 0x900;
+}
+namespace FSceneRenderTargets {
+inline constexpr std::uint32_t SceneDepthZ = 0x38;
+}
+namespace IPooledRenderTarget {
+inline constexpr std::uint32_t RenderTargetItem = 0x8;
+}
+namespace FSceneRenderTargetItem {
+inline constexpr std::uint32_t TargetableTexture = 0x0;
+inline constexpr std::uint32_t ShaderResourceTexture = 0x8;
+}
+namespace D3D11Texture2D {
+inline constexpr std::uint32_t Resource = 0x90;
+inline constexpr std::uint32_t ShaderResourceView = 0x98;
+}
+namespace FRHITexture2D {
+inline constexpr std::uint32_t SizeX = 0x60;
+inline constexpr std::uint32_t SizeY = 0x64;
+}
+namespace FRHITexture {
+inline constexpr std::uint32_t NumSamples = 0x38;
+inline constexpr std::uint32_t Format = 0x3C;
+}
 namespace AFightingPlayerController {
 inline constexpr std::uint32_t m_CurrentInteractionObjectComponent = 0x1330;
 }
@@ -67,6 +104,8 @@ inline constexpr std::uint32_t FunctionName = 0x8;
 }
 namespace FD3D11DynamicRHI {
 inline constexpr std::uint32_t Viewports = 0x2690;
+inline constexpr std::uint32_t Direct3DDeviceIMContext = 0x160;
+inline constexpr std::uint32_t Direct3DDevice = 0x178;
 }
 namespace FD3D11Viewport {
 inline constexpr std::uint32_t WindowHandle = 0x40;

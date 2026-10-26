@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+    <!-- Development runner only. Do not replace a normal Minecraft installation's log configuration. -->
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level] (%logger{1}) %msg{nolookups}%n"/>
+        </Console>
+        <RollingRandomAccessFile name="Latest" fileName="logs/latest.log" filePattern="logs/archive/latest-%i.log.gz">
+            <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level] (%logger{1}) %msg{nolookups}%n"/>
+            <Policies><SizeBasedTriggeringPolicy size="16MB"/><OnStartupTriggeringPolicy/></Policies>
+            <DefaultRolloverStrategy max="3"/>
+        </RollingRandomAccessFile>
+        <RollingRandomAccessFile name="Debug" fileName="logs/debug.log" filePattern="logs/archive/debug-%i.log.gz">
+            <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level] (%logger) %msg{nolookups}%n"/>
+            <Policies><SizeBasedTriggeringPolicy size="16MB"/><OnStartupTriggeringPolicy/></Policies>
+            <DefaultRolloverStrategy max="3"/>
+        </RollingRandomAccessFile>
+    </Appenders>
+    <Loggers>
+        <Logger name="net.minecraft" level="${sys:fabric.log.level:-info}"/>
+        <Root level="${sys:fabric.log.debug.level:-debug}">
+            <AppenderRef ref="Console" level="${sys:fabric.log.level:-info}"/>
+            <AppenderRef ref="Latest" level="${sys:fabric.log.level:-info}"/>
+            <AppenderRef ref="Debug" level="${sys:fabric.log.debug.level:-debug}"/>
+        </Root>
+    </Loggers>
+</Configuration>

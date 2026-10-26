@@ -18,6 +18,7 @@
 //             (next anchor epoch): several test runs in one Minecraft session
 //     --combat-scenario: two static test targets; validate damage events and reply with fake HP
 //     --food-scenario: send one 5-HP hit after the real-client golden apple fixture is ready
+//     --world-camera-scenario: six world/HUD handover phases, native camera roll/FOV and viewport checks
 
 #include <windows.h>
 
@@ -34,6 +35,7 @@
 
 #include "bridge/sifu_bridge.h"
 #include "bridge/overlay_reader.h"
+#include "bridge/world_reader.h"
 #include "combat/damage_ledger.h"
 #include "combat/shield_ledger.h"
 #include "combat/impulse_ledger.h"
@@ -157,6 +159,8 @@ int main(int argc, char** argv) {
     std::string grid_file;
     std::string language;
     std::string overlay_output;
+    unsigned viewport_width = 0, viewport_height = 0;
+    std::string world_output;
     StandingPawn pawn;
     std::vector<HeldKey> keys;
     std::vector<PawnMove> moves;
@@ -166,6 +170,8 @@ int main(int argc, char** argv) {
     std::string door_closed, door_open;
     bool respawn_scenario = false;
     bool gui_test = false;
+    bool world_camera_scenario = false;
+    bool world_audio_scenario = false;
     bool shield_scenario = false;
     bool totem_scenario = false, totem_sent = false;
     bool food_scenario = false, food_sent = false;
@@ -181,6 +187,14 @@ int main(int argc, char** argv) {
             grid_file = argv[++i];
         } else if (std::strcmp(argv[i], "--overlay-output") == 0 && i + 1 < argc) {
             overlay_output = argv[++i];
+        } else if (std::strcmp(argv[i], "--viewport") == 0 && i + 2 < argc) {
+            viewport_width = unsigned(std::atoi(argv[++i])); viewport_height = unsigned(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--world-output") == 0 && i + 1 < argc) {
+            world_output = argv[++i];
+        } else if (std::strcmp(argv[i], "--world-camera-scenario") == 0) {
+            world_camera_scenario = true;
+        } else if (std::strcmp(argv[i], "--world-audio-scenario") == 0) {
+            world_camera_scenario = world_audio_scenario = true;
         } else if (std::strcmp(argv[i], "--gui") == 0) {
             gui_test = true;
         } else if (std::strcmp(argv[i], "--pawn") == 0 && i + 3 < argc) {
@@ -290,6 +304,12 @@ int main(int argc, char** argv) {
     overlay::Frame overlay_frame;
     unsigned overlay_frames = 0;
     bool overlay_saved = false;
+    world_image::Reader world_reader;
+    world_image::Frame world_frame;
+    unsigned world_frames = 0;
+    bool world_saved = false;
+    unsigned camera_samples[6]{}, camera_visible[6]{}, camera_errors = 0, native_hud_frames = 0;
+    int camera_phase = 0, logged_camera_phase = -1;
     const ULONGLONG begin = GetTickCount64();
     for (std::uint64_t tick = 1; !g_stop; ++tick) {
         Sleep(kTickMs);
@@ -299,6 +319,25 @@ int main(int argc, char** argv) {
         bridge::PlayerFrame frame = pawn.enabled ? StandingFrame(pawn) : SyntheticFrame(elapsed);
         frame.language = language;
         if (gui_test) frame.flags |= protocol::kSnapshotGuiAvailable;
+        if (world_camera_scenario && handed_over_at) {
+            const auto age = now - handed_over_at;
+            camera_phase = age < 3000 ? 0 : age < 7000 ? 1 : age < 11000 ? 2 : age < 15000 ? 3 : age < 19000 ? 4 : 5;
+            const bool native = camera_phase == 1 || camera_phase == 2 || camera_phase == 4;
+            if (native) {
+                frame.input_owner = protocol::InputOwner::Sifu;
+                frame.camera_location = {pawn.x + (camera_phase == 2 ? 100.f : -80.f), pawn.y - 250.f, pawn.z + 130.f};
+                const float dx = pawn.x - frame.camera_location.x, dy = pawn.y + 150.f - frame.camera_location.y;
+                frame.camera_rotation = {float(std::atan2(-60.f, std::hypot(dx, dy)) * 180 / 3.141592653589793),
+                    float(std::atan2(dy, dx) * 180 / 3.141592653589793), camera_phase == 2 ? 17.f : -12.f};
+                frame.camera_fov = camera_phase == 2 ? 95.f : 70.f;
+            }
+            if (camera_phase >= 2) { viewport_width = 1366; viewport_height = 768; }
+            if (camera_phase == 5) frame.anchor_epoch = pawn.epoch + 1;
+            if (camera_phase != logged_camera_phase) {
+                SC_LOG("[world-camera-test] phase=%d owner=%s epoch=%u viewport=%ux%u", camera_phase, native ? "sifu" : "mc", frame.anchor_epoch, viewport_width, viewport_height);
+                logged_camera_phase = camera_phase;
+            }
+        }
         if (combat_scenario) frame.world_path = "/SifuCraft/Test/" + pawn.map + "." + pawn.map;
         if (with_enemies && !enemies_ready_at && bridge.peer_connected() &&
             (bridge.peer_state().flags & protocol::kMcReady)) enemies_ready_at = now;
@@ -332,10 +371,61 @@ int main(int argc, char** argv) {
         }
         if (gui_test && !gui_motion_sent && (bridge.peer_state().flags & protocol::kMcGuiOpen))
             gui_motion_sent = bridge.SendGuiMotion(0, 0, 0);
-        if (!overlay_output.empty() && bridge.peer_connected() &&
-            frame.input_owner == protocol::InputOwner::Minecraft &&
+        if (!world_output.empty() && bridge.peer_connected() &&
+            world_reader.Read(bridge.peer_session(), bridge.session(), frame.world_generation, frame.anchor_epoch, GetTickCount64(), &world_frame)) {
+            ++world_frames;
+            const auto plane = world_frame.pixels.size() / 2;
+            unsigned colored = 0, covered = 0;
+            for (std::size_t at = 0; at < plane; at += 4) {
+                if (world_frame.pixels[at + 3] <= 8) continue;
+                ++colored;
+                float depth; std::memcpy(&depth, world_frame.pixels.data() + plane + at, 4);
+                if (std::isfinite(depth) && depth > 0 && depth <= 1) ++covered;
+            }
+            if (world_camera_scenario && handed_over_at) {
+                const auto age = now - handed_over_at;
+                const std::uint64_t starts[] = {0, 3000, 7000, 11000, 15000, 19000};
+                if (age - starts[camera_phase] > 750) {
+                    ++camera_samples[camera_phase];
+                    if (colored >= 20 && covered >= colored * .95) ++camera_visible[camera_phase];
+                    if (frame.input_owner == protocol::InputOwner::Sifu) {
+                        const auto& h = world_frame.header;
+                        const double d = 3.141592653589793 / 180;
+                        const double cp=std::cos(frame.camera_rotation.pitch*d), sp=std::sin(frame.camera_rotation.pitch*d);
+                        const double cy=std::cos(frame.camera_rotation.yaw*d), sy=std::sin(frame.camera_rotation.yaw*d);
+                        const double cr=std::cos(frame.camera_rotation.roll*d), sr=std::sin(frame.camera_rotation.roll*d);
+                        const double forward[] = {cp*cy, sp, cp*sy};
+                        const double up[] = {-cr*sp*cy-sr*sy, cr*cp, cy*sr-cr*sp*sy};
+                        bool valid = std::abs(h.camera_cm[0]-frame.camera_location.x)<.02 && std::abs(h.camera_cm[1]-frame.camera_location.y)<.02 &&
+                            std::abs(h.camera_cm[2]-frame.camera_location.z)<.02 && h.width==viewport_width && h.height==viewport_height;
+                        for (int row=0;row<3;++row) {
+                            double f=0,u=0;
+                            for(int col=0;col<3;++col) { f+=h.view_rotation[col*4+row]*forward[col]; u+=h.view_rotation[col*4+row]*up[col]; }
+                            valid = valid && std::abs(f-(row==2 ? -1:0))<.0002 && std::abs(u-(row==1 ? 1:0))<.0002;
+                        }
+                        const double expected=1/std::tan(frame.camera_fov*d/2);
+                        valid = valid && std::abs(h.projection[0]-expected)<.0002 && std::abs(h.projection[5]-expected*h.width/h.height)<.0002;
+                        if (!valid) ++camera_errors;
+                    }
+                }
+            }
+            if (!world_saved && colored >= 20 && covered >= colored * .95) {
+                std::ofstream output(world_output, std::ios::binary);
+                output.write(reinterpret_cast<const char*>(&world_frame.header), sizeof(world_frame.header));
+                output.write(reinterpret_cast<const char*>(world_frame.pixels.data()), static_cast<std::streamsize>(world_frame.pixels.size()));
+                output.close(); world_saved = !output.fail();
+                SC_LOG("[world-image-test] paired=%u depth=%u source_age_ms=%llu frame=%llu -> %s", colored, covered,
+                    static_cast<unsigned long long>(GetTickCount64() - world_frame.header.captured_ms),
+                    static_cast<unsigned long long>(world_frame.header.frame_id), world_output.c_str());
+            }
+        }
+        if (world_camera_scenario) overlay_reader.SetViewport(viewport_width, viewport_height);
+        if ((!overlay_output.empty() || (viewport_width && viewport_height)) && bridge.peer_connected() &&
             overlay_reader.Read(bridge.peer_session(), bridge.session(), frame.world_generation, frame.anchor_epoch, &overlay_frame)) {
+            if (world_camera_scenario && frame.input_owner == protocol::InputOwner::Sifu && now - handed_over_at > 3750 &&
+                now - handed_over_at < 6500) ++native_hud_frames;
             ++overlay_frames;
+            if (viewport_width && viewport_height) overlay_reader.SetViewport(viewport_width, viewport_height);
             std::size_t transparent = 0, visible = 0, translucent = 0;
             for (std::size_t at = 3; at < overlay_frame.pixels.size(); at += 4) {
                 if (overlay_frame.pixels[at] == 0) ++transparent; else ++visible;
@@ -343,7 +433,7 @@ int main(int argc, char** argv) {
             }
             const bool transparent_hud = visible > 0 && (gui_test ?
                 translucent > 0 && (bridge.peer_state().flags & protocol::kMcGuiOpen) : transparent > visible);
-            if ((!gui_test && overlay_frames == 30) || (overlay_frames > 30 && !overlay_saved && transparent_hud)) {
+            if (!overlay_output.empty() && ((!gui_test && overlay_frames == 30) || (overlay_frames > 30 && !overlay_saved && transparent_hud))) {
                 std::ofstream output(overlay_output, std::ios::binary);
                 output.write(reinterpret_cast<const char*>(&overlay_frame.header), sizeof(overlay_frame.header));
                 output.write(reinterpret_cast<const char*>(overlay_frame.pixels.data()), static_cast<std::streamsize>(overlay_frame.pixels.size()));
@@ -579,6 +669,19 @@ int main(int argc, char** argv) {
     if (interaction_scenario) SC_LOG("[fake-interaction] %s accepted=%u rejected=%u", interaction_accepted == 2 && interaction_rejected == 0 ? "PASS" : "FAIL",
         interaction_accepted, interaction_rejected);
     bridge.MarkClosing();
+    if (world_audio_scenario) {
+        SC_LOG("[world-audio-fixture] %s final_phase=%d", camera_phase == 5 ? "PASS" : "FAIL", camera_phase);
+        if (camera_phase != 5) return 1;
+    }
+    if (world_camera_scenario && !world_audio_scenario) {
+        bool passed = camera_errors == 0 && native_hud_frames == 0;
+        for (int phase=0;phase<6;++phase) {
+            SC_LOG("[world-camera-test] phase=%d samples=%u visible=%u",phase,camera_samples[phase],camera_visible[phase]);
+            passed = passed && camera_samples[phase] >= 5 && camera_visible[phase] >= 3;
+        }
+        SC_LOG("[world-camera-test] %s camera_errors=%u native_hud_frames=%u",passed?"PASS":"FAIL",camera_errors,native_hud_frames);
+        if(!passed) return 1;
+    }
     if (impulse_accepted || impulse_rejected) SC_LOG("[fake-mace] %s accepted=%u rejected=%u", impulse_rejected ? "FAIL" : "PASS", impulse_accepted, impulse_rejected);
     SC_LOG("[bridge] final: %s", bridge.Describe().c_str());
     if (shield_scenario) {
@@ -597,6 +700,11 @@ int main(int argc, char** argv) {
         SC_LOG("[overlay-test] %s frames=%u schema=%u layout=%016llX", overlay_saved ? "PASS" : "FAIL", overlay_frames,
             overlay::kVersion, static_cast<unsigned long long>(overlay::kLayoutHash));
         if (!overlay_saved) return 1;
+    }
+    if (!world_output.empty()) {
+        SC_LOG("[world-image-test] %s frames=%u schema=%u layout=%016llX", world_saved ? "PASS" : "FAIL", world_frames,
+            world_image::kVersion, static_cast<unsigned long long>(world_image::kLayoutHash));
+        if (!world_saved) return 1;
     }
     return 0;
 }

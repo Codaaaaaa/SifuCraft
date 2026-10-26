@@ -813,7 +813,10 @@ void Run(std::uintptr_t image_base) {
             scope.world = generation; scope.epoch = ownership.epoch(); scope.updated_ms = GetTickCount64();
             scope.enabled = g_bridge.peer_connected() && frame.input_owner == InputOwner::Minecraft &&
                 hooks::PoseActive() && McAnchoredTo(ownership.epoch(), generation);
-            render::Maintain(image_base, scope);
+            scope.world_enabled = settings.stage >= 9 && g_bridge.peer_connected() && world && player.controller &&
+                (frame.flags & protocol::kSnapshotHasPawn) && (frame.flags & protocol::kSnapshotHasCamera) &&
+                McAnchoredTo(ownership.epoch(), generation) && !WorldPaused(world) && !CursorVisible(player.controller);
+            render::Maintain(image_base, scope, settings.stage);
             ui::UpdateHudContext(world, player.controller, player.pawn, scope);
         }
         if (settings.stage >= 7) {

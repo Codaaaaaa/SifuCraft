@@ -1,9 +1,9 @@
 package dev.sifucraft.client;
 
 import dev.sifucraft.collision.MapPlacement;
+import dev.sifucraft.storage.AtomicFiles;
 import java.io.IOException;
 import java.io.Reader;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,6 +24,8 @@ final class MapSlots {
     private final Consumer<String> log;
     private final Properties slots = new Properties();
     private Path file;
+    private boolean dirty;
+    private long nextSaveNs;
 
     MapSlots(Consumer<String> log) {
         this.log = log;
@@ -33,7 +35,9 @@ final class MapSlots {
     void open(Path worldRoot) {
         Path wanted = worldRoot.resolve(FILE_NAME);
         if (wanted.equals(file)) return;
+        save(true);
         file = wanted;
+        dirty = false; nextSaveNs = 0;
         slots.clear();
         if (!Files.exists(file)) return;
         try (Reader in = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
@@ -44,8 +48,10 @@ final class MapSlots {
     }
 
     void close() {
+        save(true);
         file = null;
         slots.clear();
+        dirty = false; nextSaveNs = 0;
     }
 
     boolean isOpen() {
@@ -57,16 +63,22 @@ final class MapSlots {
         if (slot == null) {
             slot = Integer.toString(slots.size());
             slots.setProperty(map, slot);
-            save();
+            dirty = true;
+            save(true);
             log.accept("map " + map + " placed in slot " + slot + " (x " + Integer.parseInt(slot) * SPACING + ")");
         }
+        save(false);
         return new MapPlacement(map, Integer.parseInt(slot) * SPACING, ORIGIN_Y, 0);
     }
 
-    private void save() {
-        if (file == null) return;
-        try (Writer out = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
-            slots.store(out, "SifuCraft: Sifu map -> place in this world (x = slot * " + SPACING + ")");
+    private void save(boolean force) {
+        long now = System.nanoTime();
+        if (file == null || !dirty || !force && now < nextSaveNs) return;
+        nextSaveNs = now + 1_000_000_000L;
+        try {
+            AtomicFiles.write(file, out -> slots.store(out,
+                    "SifuCraft: Sifu map -> place in this world (x = slot * " + SPACING + ")"));
+            dirty = false;
         } catch (IOException e) {
             log.accept("could not write " + file + ": " + e);
         }

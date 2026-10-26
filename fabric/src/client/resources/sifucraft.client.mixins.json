@@ -3,6 +3,10 @@
 	"package": "dev.sifucraft.client.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
+    "AvatarSkinMixin",
+    "WorldReadbackMixin",
+    "WorldCameraMixin",
+    "WorldCracksMixin",
 		"ContainerScreenAccessor",
 		"DevItemGuiMixin",
 		"FireworkRocketAccessor",
@@ -17,7 +21,11 @@
 		"MusicManagerMixin",
 		"PlayerDataMixin",
 		"ScreenMixin",
-		"SDLEventHandlerMixin"
+		"SDLEventHandlerMixin",
+		"WorldBorderMixin",
+		"WorldCloudMixin",
+		"WorldTerrainMixin",
+		"WorldWeatherMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
