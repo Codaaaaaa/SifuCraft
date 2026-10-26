@@ -14,10 +14,12 @@ import java.util.Map;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.MoverType;
+import net.minecraft.world.entity.Pose;
+import net.minecraft.world.entity.animal.cow.Cow;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
@@ -27,6 +29,10 @@ import net.minecraft.world.phys.Vec3;
 
 /** Disposable, synchronous vanilla BE calls. Never submits a Native motion request. */
 final class PistonContactCases {
+    private static final class ReferenceBody extends Cow {
+        ReferenceBody(ServerLevel level){super(EntityTypes.COW,level);}
+        @Override public EntityDimensions getDefaultDimensions(Pose pose){return EntityDimensions.scalable(.7f,1.84f);}
+    }
     private record Run(Vec3 actual,Vec3 velocity,float health,float progress,List<PistonContacts.Contact> contacts){}
     private static void require(boolean ok,String why){if(!ok)throw new AssertionError("piston contacts: "+why);}
     private static Vec3 vec(Direction direction,double distance){return new Vec3(direction.getStepX()*distance,direction.getStepY()*distance,direction.getStepZ()*distance);}
@@ -50,12 +56,13 @@ final class PistonContactCases {
             case UP -> y=initial.getY()+1.1;
             case DOWN -> y=initial.getY()-.1-1.84;
         }
-        Mob body=kind==2?new EnemyProxy(EnemyEntities.ENEMY_PROXY,level):EntityTypes.COW.create(level,EntitySpawnReason.COMMAND);
+        Mob body=kind==2?new EnemyProxy(EnemyEntities.ENEMY_PROXY,level):new ReferenceBody(level);
         require(body!=null,"body created");
         if(body instanceof EnemyProxy proxy)proxy.mirror(new EnemyFrame.Entry(900001,7,
             new SifuFrame.Vec3((float)(x*100),(float)(z*100),(float)((y+.92)*100)),0,35,92,60,60,
             Protocol.ENEMY_ALIVE,1,SifuFrame.Vec3.ZERO),new MapPlacement("piston-contact",0,0,0));
         body.setNoAi(true);body.setNoGravity(true);body.setSilent(true);body.noPhysics=kind!=0;
+        body.refreshDimensions();
         body.setPos(x,y,z);body.setBoundingBox(new AABB(x-.35,y,z-.35,x+.35,y+1.84,z+.35));
         body.setOnGround(carried);body.setDeltaMovement(Vec3.ZERO);
         var before=body.position();float health=body.getHealth();
@@ -65,6 +72,8 @@ final class PistonContactCases {
             require(level.getEntities((net.minecraft.world.entity.Entity)null,body.getBoundingBox().inflate(2)).contains(body),"fixture entity is queryable in a ticking chunk");
             Runnable tick=()->{for(int i=0;i<ticks;i++)PistonMovingBlockEntity.tick(level,pos,moving,piston);};
             if(recording)capture.run(tick);else tick.run();
+            require(Math.abs(body.getBoundingBox().getXsize()-.7)<1e-6&&Math.abs(body.getBoundingBox().getYsize()-1.84)<1e-6,
+                "reference dimensions survive vanilla setPos after every movement");
             require(body.getHealth()==health,"observation preserves health");
             var contacts=capture.contacts();
             if(recording){
@@ -88,7 +97,7 @@ final class PistonContactCases {
         }finally{body.discard();level.removeBlockEntity(pos);level.setBlock(pos,original,2);}
     }
 
-    static List<Map<String,Object>> run(ServerLevel level,BlockPos base){
+    static List<Map<String,Object>> run(ServerLevel level,BlockPos base) throws ReflectiveOperationException {
         var rows=new ArrayList<Map<String,Object>>();
         for(var face:Direction.values())for(boolean extending:new boolean[]{false,true})
             for(var moved:List.of(Blocks.STONE.defaultBlockState(),Blocks.SLIME_BLOCK.defaultBlockState(),Blocks.HONEY_BLOCK.defaultBlockState()))
@@ -113,6 +122,16 @@ final class PistonContactCases {
         require(proxy.contacts.size()==2&&ordinary.contacts.size()==2,"both vanilla calls captured separately");
         rows.add(Map.of("case","contact-same-tick-cap","ordinary",values(ordinary.actual),"proxy",values(proxy.actual),
             "requested",proxy.contacts.stream().map(c->values(c.requested())).toList(),"contacts",2));
+        for(var face:Direction.values())for(boolean extending:new boolean[]{false,true}){
+            var plain=run(level,base,face,extending,Blocks.STONE.defaultBlockState(),0,true,2,false);
+            var mirror=run(level,base,face,extending,Blocks.STONE.defaultBlockState(),2,true,2,false);
+            var limited=PistonLimitCases.replay(level,mirror.contacts);
+            var ordinaryLimit=PistonLimitCases.replay(level,plain.contacts);
+            // This is a pre-collision limit, not an actual trajectory. Moving-block
+            // geometry and the changed body position can affect the next contact.
+            rows.add(Map.of("case","contact-budget-plan","face",face.getName(),"extending",extending,
+                "ordinary",values(plain.actual),"proxy",values(mirror.actual),"limited",values(limited),"ordinary_limited",values(ordinaryLimit)));
+        }
         return rows;
     }
 }
