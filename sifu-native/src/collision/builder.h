@@ -5,6 +5,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "collision/shapes.h"
@@ -34,6 +35,20 @@ struct PublishedGrid {
     std::wstring path;
 };
 
+// Worker-owned cache of the last successfully published content. Compare every voxel,
+// so transform jitter cannot churn files/MC caches and real door changes are never lost.
+struct PublishedContent {
+    std::shared_ptr<const VoxelGrid> grid;
+    std::uint32_t world = 0;
+    std::string map, tag;
+    bool Matches(const BuildRequest& request, const VoxelGrid& candidate) const {
+        return grid && world == request.generation && map == request.map && tag == request.file_tag && *grid == candidate;
+    }
+    void Confirm(const BuildRequest& request, std::shared_ptr<const VoxelGrid> accepted) {
+        grid = std::move(accepted); world = request.generation; map = request.map; tag = request.file_tag;
+    }
+};
+
 class Builder {
 public:
     Builder();
@@ -58,6 +73,7 @@ private:
     // Worker thread only.
     std::uint32_t next_generation_;
     std::vector<std::wstring> written_;
+    PublishedContent content_;
 };
 
 }  // namespace sifucraft::collision

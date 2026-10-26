@@ -16,6 +16,10 @@ public final class BlockShapesOfflineTest {
         index.changed(new BlockPos(0,64,2),Blocks.STONE_BUTTON.defaultBlockState());
         index.changed(new BlockPos(MapSlots.SPACING,64,2),Blocks.STONE.defaultBlockState());
         var placement=new MapPlacement("map",0,64,0);
+        check(BlockShapes.matchesWorld(3,"/Game/Maps/map.map",placement),"valid static world survives presentation/F8 changes");
+        check(!BlockShapes.matchesWorld(0,"/Game/Maps/map.map",placement),"cleared Native world cannot publish while heartbeat is still fresh");
+        check(!BlockShapes.matchesWorld(3,"None.None",placement) && !BlockShapes.matchesWorld(3,"",placement),"loading/exit paths cannot reuse a previous placement");
+        check(!BlockShapes.matchesWorld(4,"/Game/Maps/other.other",placement),"new world waits for matching map placement");
         var out=BlockShapes.export(index.snapshots(),EmptyBlockGetter.INSTANCE,placement,1,1,"map",7);
         check(out.sections()==1 && out.payload().length==56,"no button cube and no other-map collision");
         var wire=ByteBuffer.wrap(out.payload()).order(ByteOrder.LITTLE_ENDIAN);

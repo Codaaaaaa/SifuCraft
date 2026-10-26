@@ -52,6 +52,9 @@ public final class BlockShapes implements AutoCloseable {
         // Re-anchoring and menus can temporarily withhold a presentation camera/placement.
         // They do not discard a static world's negotiated geometry or recompile its chunks.
         if (frame == null || placement == null) return;
+        // A final heartbeat may still be fresh after Native has cleared its world. Never
+        // publish an invalid generation, or use the previous map's placement during loading.
+        if (!matchesWorld(frame.worldGeneration(),frame.worldPath(),placement)) { close(); return; }
         String wantedMap = placement.map();
         if (writer == null || mcSession != bridge.session() || sifuSession != bridge.peerSession()) {
             close(); writer = new ShapeWriter(bridge.session(),bridge.peerSession());
@@ -96,6 +99,10 @@ public final class BlockShapes implements AutoCloseable {
                 }
             } finally { building.set(false); }
         });
+    }
+
+    static boolean matchesWorld(int generation, String path, MapPlacement placement) {
+        return generation != 0 && !path.isBlank() && UnrealSpace.mapName(path).equals(placement.map());
     }
 
     static Export export(List<BlockSectionIndex.Snapshot> snapshots, net.minecraft.world.level.BlockGetter level,

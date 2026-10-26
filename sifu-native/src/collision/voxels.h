@@ -23,7 +23,10 @@ class VoxelGrid {
 public:
     struct Block {
         std::uint64_t layers[kCellsPerBlock]{};
+        bool operator==(const Block&) const = default;
     };
+
+    bool operator==(const VoxelGrid&) const = default;
 
     // Global cell coordinates (cell = floor(position / kCellCm)).
     void Set(int x, int y, int z);

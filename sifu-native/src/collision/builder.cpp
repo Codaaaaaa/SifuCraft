@@ -135,7 +135,11 @@ void Builder::Run() {
             pending_.reset();
         }
         std::shared_ptr<const VoxelGrid> grid = Build(request);
-        std::optional<PublishedGrid> published = Publish(request, *grid);
+        std::optional<PublishedGrid> published;
+        if (!content_.Matches(request,*grid)) {
+            published = Publish(request,*grid);
+            if (published) content_.Confirm(request,grid);
+        }
         std::lock_guard lock(mutex_);
         latest_ = std::move(grid);
         latest_generation_ = request.generation;

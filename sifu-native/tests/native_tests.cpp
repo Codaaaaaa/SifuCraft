@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "collision/shape_file.h"
+#include "collision/builder.h"
 #include "combat/activation_tracker.h"
 #include "combat/damage_ledger.h"
 #include "combat/hit_sample.h"
@@ -88,6 +89,26 @@ void TestLightImpactCall() {
     Expect(combat::ImpactDamage(18, 60, true) == 18 && combat::ImpactDamage(27, 6, true) == 6 &&
            combat::ImpactDamage(27, 6, false) == 27,
            "light impact preserves ordinary, lethal and cannot-die wrapper damage semantics");
+}
+
+void TestGridPublication() {
+    using namespace sifucraft::collision;
+    BuildRequest request; request.generation=3;request.map="map";request.file_tag="-doors";
+    PublishedContent content;
+    auto first=std::make_shared<VoxelGrid>();first->Set(-9,3,2);first->Set(17,-2,4);
+    Expect(!content.Matches(request,*first),"first grid needs publication, including after an unconfirmed write failure");
+    content.Confirm(request,first);
+    VoxelGrid reordered;reordered.Set(17,-2,4);reordered.Set(-9,3,2);
+    Expect(content.Matches(request,reordered),"identical voxel cells in different extraction order retain the published generation");
+    VoxelGrid changed;changed.Set(17,-2,4);changed.Set(-9,3,3);
+    Expect(!content.Matches(request,changed),"same cell/block counts with a moved door still require publication");
+    Expect(!content.Matches(request,VoxelGrid{}),"removing all dynamic collision publishes an empty replacement");
+    request.generation++;
+    Expect(!content.Matches(request,reordered),"same geometry in another Native world gets a new publication");
+    request.generation--;request.map="other";
+    Expect(!content.Matches(request,reordered),"same geometry in another map is not suppressed");
+    request.map="map";request.file_tag="";
+    Expect(!content.Matches(request,reordered),"static and dynamic grids keep separate publications");
 }
 
 void TestGuardedReads() {
@@ -1190,6 +1211,7 @@ int main(int argc, char** argv) {
     TestInputRouter();
     TestWorldTransform();
     TestAffine();
+    TestGridPublication();
     TestVoxels();
     TestCollisionFiles();
     TestCombatSamples();
