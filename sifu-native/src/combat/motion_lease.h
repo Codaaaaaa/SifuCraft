@@ -26,12 +26,27 @@ struct Step {
     }
     bool operator==(const Step&) const = default;
 };
+enum class Part : unsigned { Movement=1, AI=2, Behavior=4 };
+struct Component {
+    std::uint64_t pointer=0;
+    std::int32_t index=-1,serial=0;
+    bool valid() const { return pointer && index>=0 && serial>0; }
+    bool operator==(const Component&) const = default;
+};
+struct Peers {
+    Component ai,behavior;
+    bool valid() const { return ai.valid() && behavior.valid() && ai.pointer!=behavior.pointer; }
+    bool operator==(const Peers&) const = default;
+};
+enum class Kind { Sweep, AIHold };
 struct Request {
     Scope scope;
     Target target;
     std::uint64_t id = 0, created_ms = 0;
     std::uint32_t duration_ms = 0;
     Step step;
+    Kind kind=Kind::Sweep;
+    Peers peers;
     bool operator==(const Request&) const = default;
 };
 enum class State { NativeFree, AcquirePending, Machine, ReleasePending };
@@ -51,10 +66,12 @@ public:
             auto result = old.result; result.replay = true; return result;
         }
         if (!r.id || r.id <= highest_id_) return {r.id, Outcome::Stale};
-        if (!r.target.valid() || !r.step.valid() || !r.duration_ms || r.duration_ms > 500 ||
+        const bool operation = r.kind==Kind::Sweep ? r.step.valid() :
+            r.kind==Kind::AIHold && r.step.x==0 && r.step.y==0 && r.peers.valid();
+        if (!r.target.valid() || !operation || !r.duration_ms || r.duration_ms > 500 ||
             r.created_ms > now || now - r.created_ms > 1000) return Save(r, Outcome::Invalid);
         if (state_ != State::NativeFree) return Save(r, Outcome::Busy);
-        request_ = r; deadline_ = now + r.duration_ms; state_ = State::AcquirePending;
+        request_ = r; deadline_ = now + r.duration_ms; restored_=0; state_ = State::AcquirePending;
         return Save(r, Outcome::Ready);
     }
     Result Complete(std::uint64_t id, Outcome outcome, float x = 0, float y = 0, float z = 0) {
@@ -74,8 +91,11 @@ public:
         if (state_ == State::AcquirePending) Complete(request_.id, Outcome::Cancelled);
         if (state_ == State::Machine) state_ = State::ReleasePending;
     }
-    void OriginalTick(const Target& target) {
-        if (state_ == State::ReleasePending && request_.target == target) state_ = State::NativeFree;
+    void OriginalTick(const Target& target,Part part=Part::Movement,const Peers& peers={}) {
+        if(state_!=State::ReleasePending || request_.target!=target) return;
+        if(request_.kind==Kind::AIHold && request_.peers!=peers) return;
+        restored_|=static_cast<unsigned>(part);
+        if((restored_&required())==required()) state_=State::NativeFree;
     }
     // A destroyed target needs no original tick, but losing it must not forget applied ids.
     void Abandon() { Release(); state_ = State::NativeFree; }
@@ -83,6 +103,8 @@ public:
     State state() const { return state_; }
     const Request& request() const { return request_; }
     std::uint64_t deadline() const { return deadline_; }
+    unsigned restored() const { return restored_; }
+    unsigned required() const { return request_.kind==Kind::AIHold?7u:1u; }
 private:
     struct Saved { Request request; Result result; };
     Result Save(const Request& r, Outcome outcome) {
@@ -92,6 +114,7 @@ private:
     State state_ = State::NativeFree;
     Request request_;
     std::uint64_t deadline_ = 0, highest_id_ = 0;
+    unsigned restored_=0;
     std::size_t next_ = 0;
     std::array<Saved, 64> history_{};
 };

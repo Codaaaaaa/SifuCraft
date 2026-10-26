@@ -40,6 +40,9 @@ HOOKS = {
                      "APlayerCameraManager::UpdateCamera"),
     "MovementTick": ("UFightingMovementComponent", "UActorComponent", "TickComponent",
                      "UFightingMovementComponent::TickComponent"),
+    # M3/M4: actual NPC AI tree derives from USC and inherits its Tick implementation.
+    "AIFightingTick": ("UAIFightingComponent", "UActorComponent", "TickComponent", "UAIFightingComponent::TickComponent"),
+    "BehaviorTreeTick": ("UAIBehaviorTreeComponent", "UActorComponent", "TickComponent", "USCBehaviorTreeComponent::TickComponent"),
     # P5 S0 only inspects these targets; generating a plan does not install a hook.
     "ValidateHit": ("UHitComponent", "UHitComponent", "BPE_ValidateHit_Implementation",
                     "UHitComponent::BPE_ValidateHit_Implementation"),
@@ -141,6 +144,11 @@ MEMBERS = {
     "AActor": ["RootComponent"],
     # P8 approved M1/M2: read-only qualification and swept-hit result layouts.
     "UActorComponent": ["OwnerPrivate"],
+    "AAIController": ["BrainComponent"],
+    "USCAIComponent": ["m_CachedBehaviorTreeComponent"],
+    "UAIFightingComponent": ["m_bIsOutOfIdle", "m_bForceActionHandlerTick"],
+    "USCBehaviorTreeComponent": ["m_OwnerAiComponent"],
+    "UAIBehaviorTreeComponent": ["m_CharacterOwner"],
     "ABaseCharacter": ["m_OrderComponent"],
     "UOrderComponent": ["m_OrderManager"],
     "OrderManager": ["m_OrderList", "m_DelayedOrderCommand", "m_DelayedOrderCommandDuringPrediction"],
@@ -188,7 +196,7 @@ MEMBERS = {
     "ASCCharacter": ["m_bIsPooled", "m_bPooledActorActive"],
     "AFightingCharacter": ["m_HealthComponent", "m_eFaction", "m_HitComponent", "m_DefenseComponent",
                            "m_AttackComponent", "m_HitCapsule", "m_AvoidCapsule", "m_AbilityComponent",
-                           "m_bHasJustBeenHitted", "m_HittedDescription"],
+                           "m_bHasJustBeenHitted", "m_HittedDescription", "m_AIComponent"],
     "UHealthComponent": ["m_fHealth", "m_fMaxHealth", "m_bCanBeDamaged", "m_bCanDieByDamage",
                          "m_bForceDeathOnApplyDamage"],
     "UCharacterHealthComponent": ["m_fMaxHealthMultiplier", "m_bIsDown", "m_eDownState"],
@@ -233,6 +241,7 @@ SIZES = ["InternationalizationStore", "FCulture", "FUObjectItem", "UObjectBase",
 
 # type -> bitfield members whose bit position/width are emitted.
 BITFIELDS = {
+    "UBehaviorTreeComponent": ["bIsRunning", "bIsPaused"],
     "FNameEntryHeader": ["bIsWide", "Len"],
     "APlayerController": ["bShowMouseCursor", "bCinematicMode"],
     "AActor": ["bHidden", "bActorEnableCollision"],

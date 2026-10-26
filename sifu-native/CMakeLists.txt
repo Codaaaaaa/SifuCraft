@@ -42,6 +42,7 @@ add_library(sifucraft_native SHARED
     src/core/safe_memory.cpp
     src/combat/enemies.cpp
     src/combat/motion_probe.cpp
+    src/combat/ai_tick_gate.cpp
     src/combat/damage.cpp
     src/combat/player_hits.cpp
     src/hooks/camera_fade.cpp

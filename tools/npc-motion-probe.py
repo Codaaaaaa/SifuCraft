@@ -6,6 +6,7 @@ Observe never moves an actor. Move requests are limited to one <=10cm axis step.
 import argparse
 import ctypes as C
 import json
+import math
 from pathlib import Path
 import re
 import time
@@ -13,7 +14,8 @@ import time
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('observe', 'move'))
+    actions = ('observe', 'move', 'observe-ai', 'hold-ai')
+    parser.add_argument('action', choices=actions)
     parser.add_argument('--game-dir', type=Path, required=True)
     parser.add_argument('--target', required=True, help='exact EnemyTable id/spawn/UObject serial')
     parser.add_argument('--x', type=float, default=0)
@@ -21,10 +23,15 @@ def main():
     args = parser.parse_args()
     game = args.game_dir.resolve(strict=True)
     control = game / 'SifuCraft'
-    if not (game / 'Sifu-Win64-Shipping.exe').is_file() or not (control / 'npc-motion-probe').is_file():
-        parser.error('expected Sifu binaries directory and explicit npc-motion-probe opt-in file')
+    opt_in = 'npc-ai-probe' if args.action.endswith('-ai') else 'npc-motion-probe'
+    if not (game / 'Sifu-Win64-Shipping.exe').is_file() or not (control / opt_in).is_file():
+        parser.error(f'expected Sifu binaries directory and explicit {opt_in} opt-in file')
+    if not math.isfinite(args.x) or not math.isfinite(args.y):
+        parser.error('step must be finite')
     if args.action == 'move' and not ((args.x == 0) != (args.y == 0) and abs(args.x) + abs(args.y) <= 10):
         parser.error('move must be one finite horizontal axis step <=10cm')
+    if args.action != 'move' and (args.x or args.y):
+        parser.error('observation and AI hold require a zero step')
     target = tuple(int(x) for x in args.target.split('/'))
     if len(target) != 3 or not all(x > 0 for x in target):
         parser.error('target must contain three positive identity values')
@@ -58,7 +65,7 @@ def main():
     finally:
         k.CloseHandle(handle)
     now = k.GetTickCount64()
-    fields = [0 if args.action == 'observe' else 1, now, now, native, peer, world, *target, args.x, args.y]
+    fields = [actions.index(args.action), now, now, native, peer, world, *target, args.x, args.y]
     # A complete line is published atomically; partial writes never become a command.
     request = control / 'npc-motion-request.txt'
     temporary = control / 'npc-motion-request.tmp'

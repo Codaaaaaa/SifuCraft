@@ -663,7 +663,7 @@ void Run(std::uintptr_t image_base) {
     probe::WaitForEngine(image_base);
     g_bridge.Start();
     const config::Settings settings = config::Load();
-    combat::motion::Configure(settings.npc_motion_probe);
+    combat::motion::Configure(settings.npc_motion_probe,settings.npc_ai_probe);
     hooks::Configure(image_base, settings.stage);
     bool engine_hooked = false;
     Ownership ownership;
@@ -772,7 +772,7 @@ void Run(std::uintptr_t image_base) {
             }
         }
         g_bridge.Tick(frame, GetTickCount64());
-        if (settings.npc_motion_probe) {
+        if (settings.npc_motion_probe || settings.npc_ai_probe) {
             combat::motion::Context motion;
             const auto world_id = ue::IdentityOf(world);
             motion.scope = {g_bridge.session(), g_bridge.peer_connected() ? g_bridge.peer_session() : 0,

@@ -2,6 +2,7 @@
 #include <limits>
 #include "combat/motion_lease.h"
 #include "combat/sweep_params.h"
+#include "hooks/hook_pair.h"
 using namespace sifucraft::combat::motion;
 namespace {
 int failures = 0;
@@ -67,5 +68,36 @@ int main() {
     broken=layout; broken.size=169;
     Check(!broken.valid(),"return value must fit the full reflected allocation");
     Check(!layout.Encode(std::span<std::uint8_t>(bytes).first(170),location,rotation),"short parameter buffer rejected");
+    auto hold=Sample(100); hold.kind=Kind::AIHold; hold.step={}; hold.peers={{0x4000,45,11},{0x5000,46,12}};
+    l.Reset();
+    Check(l.Begin(hold,hold.scope,1000).outcome==Outcome::Ready,"AI hold reserves without a motion step");
+    auto deadline=l.deadline(); l.Complete(100,Outcome::Applied);
+    Check(l.deadline()==deadline && l.Check(1099,true) && !l.Check(1100,true),"AI and movement share one fixed deadline");
+    l.OriginalTick(hold.target,Part::Movement,hold.peers);l.OriginalTick(hold.target,Part::AI,hold.peers);
+    Check(l.state()==State::ReleasePending&&l.restored()==3,"two restored components cannot release three-part ownership");
+    auto replaced=hold.peers;++replaced.behavior.serial;
+    l.OriginalTick(hold.target,Part::Behavior,replaced);
+    Check(l.state()==State::ReleasePending,"replacement behavior tree cannot acknowledge old lease");
+    l.OriginalTick(hold.target,Part::Behavior,hold.peers);
+    Check(l.state()==State::NativeFree&&l.restored()==7,"all same-identity original ticks restore ownership");
+    for(int i=0;i<3;++i){
+        l.Reset();auto bad=hold;
+        if(i==0)bad.step={1,0};if(i==1)bad.peers.behavior.serial=0;if(i==2)bad.duration_ms=501;
+        Check(l.Begin(bad,hold.scope,1000).outcome==Outcome::Invalid,"invalid hold cannot suppress AI");
+    }
+    l.Reset();l.Begin(hold,hold.scope,1000);l.Complete(100,Outcome::Applied);
+    Check(!l.Check(1001,false)&&l.state()==State::ReleasePending,"HP, command or pause takeover ends shared hold");
+    using sifucraft::hooks::InstallPair;using sifucraft::hooks::PairResult;
+    int writes=0,undo=0;
+    Check(InstallPair(false,[&]{++writes;return true;},[&]{++writes;return true;},[&]{++undo;return true;})==PairResult::Refused&&writes==0,
+          "pair preflight failure never patches either slot");
+    Check(InstallPair(true,[]{return false;},[&]{++writes;return true;},[&]{++undo;return true;})==PairResult::Refused&&writes==0&&undo==0,
+          "first install failure never patches second or claims ownership");
+    Check(InstallPair(true,[]{return true;},[]{return false;},[&]{++undo;return true;})==PairResult::RolledBack&&undo==1,
+          "second install failure restores first slot");
+    Check(InstallPair(true,[]{return true;},[]{return false;},[]{return false;})==PairResult::RollbackFailed,
+          "failed rollback is explicit and never ready");
+    Check(InstallPair(true,[]{return true;},[]{return true;},[&]{++undo;return true;})==PairResult::Ready&&undo==1,
+          "pair ownership requires both successful installs");
     return failures ? 1 : 0;
 }

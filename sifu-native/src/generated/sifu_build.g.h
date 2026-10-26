@@ -265,6 +265,22 @@ inline constexpr std::uint32_t RootComponent = 0x190;
 namespace UActorComponent {
 inline constexpr std::uint32_t OwnerPrivate = 0xB0;
 }
+namespace AAIController {
+inline constexpr std::uint32_t BrainComponent = 0x370;
+}
+namespace USCAIComponent {
+inline constexpr std::uint32_t m_CachedBehaviorTreeComponent = 0xE0;
+}
+namespace UAIFightingComponent {
+inline constexpr std::uint32_t m_bIsOutOfIdle = 0x934;
+inline constexpr std::uint32_t m_bForceActionHandlerTick = 0x935;
+}
+namespace USCBehaviorTreeComponent {
+inline constexpr std::uint32_t m_OwnerAiComponent = 0x310;
+}
+namespace UAIBehaviorTreeComponent {
+inline constexpr std::uint32_t m_CharacterOwner = 0x318;
+}
 namespace ABaseCharacter {
 inline constexpr std::uint32_t m_OrderComponent = 0x870;
 }
@@ -466,6 +482,7 @@ inline constexpr std::uint32_t m_AvoidCapsule = 0x1340;
 inline constexpr std::uint32_t m_AbilityComponent = 0x12B0;
 inline constexpr std::uint32_t m_bHasJustBeenHitted = 0xCF8;
 inline constexpr std::uint32_t m_HittedDescription = 0xD00;
+inline constexpr std::uint32_t m_AIComponent = 0x1338;
 }
 namespace UHealthComponent {
 inline constexpr std::uint32_t m_fHealth = 0x138;
@@ -646,6 +663,14 @@ inline constexpr std::uint32_t FHitResult = 0x8C;
 }  // namespace size
 
 namespace bits {
+namespace UBehaviorTreeComponent {
+inline constexpr std::uint32_t bIsRunning_Offset = 0x283;
+inline constexpr std::uint32_t bIsRunning_Shift = 5;
+inline constexpr std::uint32_t bIsRunning_Width = 1;
+inline constexpr std::uint32_t bIsPaused_Offset = 0x283;
+inline constexpr std::uint32_t bIsPaused_Shift = 6;
+inline constexpr std::uint32_t bIsPaused_Width = 1;
+}
 namespace FNameEntryHeader {
 inline constexpr std::uint32_t bIsWide_Offset = 0x0;
 inline constexpr std::uint32_t bIsWide_Shift = 0;
@@ -737,6 +762,10 @@ inline constexpr Target PlayerInputAxis{"PlayerInputAxis", 0x4893030, 0xD10, 0x1
 inline constexpr Target CameraUpdate{"CameraUpdate", 0x487DD98, 0x760, 0x3763770};
 // UFightingMovementComponent vftable, UActorComponent::TickComponent slot -> UFightingMovementComponent::TickComponent
 inline constexpr Target MovementTick{"MovementTick", 0x48A2968, 0x360, 0x1ABB6F0};
+// UAIFightingComponent vftable, UActorComponent::TickComponent slot -> UAIFightingComponent::TickComponent
+inline constexpr Target AIFightingTick{"AIFightingTick", 0x485DAA0, 0x360, 0x18C8960};
+// UAIBehaviorTreeComponent vftable, UActorComponent::TickComponent slot -> USCBehaviorTreeComponent::TickComponent
+inline constexpr Target BehaviorTreeTick{"BehaviorTreeTick", 0x48DF738, 0x360, 0xBF0A10};
 // UHitComponent vftable, UHitComponent::BPE_ValidateHit_Implementation slot -> UHitComponent::BPE_ValidateHit_Implementation
 inline constexpr Target ValidateHit{"ValidateHit", 0x4897F48, 0x418, 0x85E600};
 // UCharacterHealthComponent vftable, UHealthComponent::InternalApplyDamage slot -> UCharacterHealthComponent::InternalApplyDamage

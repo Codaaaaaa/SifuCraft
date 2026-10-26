@@ -17,9 +17,11 @@ struct Context {
     std::vector<Enemies::Target> targets;
     std::shared_ptr<const collision::VoxelGrid> grid;
 };
-void Configure(bool enabled);
+void Configure(bool enabled,bool ai_enabled=false);
 void UpdateContext(Context context); // runtime thread, includes local diagnostic file polling
 void ApplyOnGameThread(std::uintptr_t image_base);
 bool SkipMovement(std::uintptr_t component); // existing H5, never suppress on another thread
 void AfterOriginalMovement(std::uintptr_t component);
+bool SkipDecision(std::uintptr_t component,Part part);
+void AfterOriginalDecision(std::uintptr_t component,Part part);
 }  // namespace sifucraft::combat::motion

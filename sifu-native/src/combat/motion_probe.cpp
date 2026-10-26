@@ -9,6 +9,7 @@
 #include <sstream>
 #include <string>
 #include "combat/sweep_params.h"
+#include "combat/ai_tick_gate.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "hooks/game_hooks.h"
@@ -32,19 +33,29 @@ struct Command {
 };
 Command g_pending;
 std::atomic<bool> g_configured{false}, g_enabled{false};
+std::atomic<bool> g_motion_enabled{false},g_ai_enabled{false};
+bool g_motion_startup=false,g_ai_startup=false;
 std::atomic<DWORD> g_thread{0};
 std::atomic<std::uintptr_t> g_watch{0};
+std::atomic<std::uintptr_t> g_ai_watch{0},g_tree_watch{0};
+std::atomic<unsigned> g_wrong_threads{0};
 std::uintptr_t g_base = 0;
 // All state below is exclusively H1/H5 game-thread owned.
 Context g_current;
 Lease g_lease;
 ProbeBudget g_budget;
+ProbeBudget g_hold_budget;
 Target g_target;
+Peers g_peers;
+bool g_ai_observing=false;
+float g_hold_hp=0;
+struct Seen { std::uint64_t originals=0,skips=0,last_ms=0; };
+std::array<Seen,3> g_seen{};
 ue::FVector g_last_position{};
 std::uint64_t g_original_ticks = 0, g_skips = 0, g_next_log = 0;
 bool g_failed = false;
 struct Timing { std::uint64_t n=0, total=0, peak=0; };
-Timing g_h1_time,g_h5_time;
+Timing g_h1_time,g_h5_time,g_ai_time;
 struct Timer {
     Timing& timing; LARGE_INTEGER start{},frequency{};
     explicit Timer(Timing& t):timing(t) { QueryPerformanceFrequency(&frequency); QueryPerformanceCounter(&start); }
@@ -54,7 +65,7 @@ struct Timer {
         ++timing.n; timing.total+=us; timing.peak=std::max(timing.peak,us);
     }
 };
-struct Monitor { Target target; ue::FVector position; float hp; std::uint64_t started, next; };
+struct Monitor { Target target; ue::FVector position; float hp; std::uint64_t started, next; Kind kind=Kind::Sweep; };
 Monitor g_monitor{};
 ue::FunctionCall g_move;
 SweepParams g_params;
@@ -176,6 +187,51 @@ const char* Inspect(const Context& c,const Target& t,Sample* s,bool geometry) {
     return Same(t)?nullptr:"identity-changed";
 }
 
+Component Token(std::uintptr_t pointer) {
+    const auto id=ue::IdentityOf(pointer);return {pointer,id.index,id.serial};
+}
+const char* InspectPeers(const Context& c,const Target& t,Peers* peers,bool idle) {
+    if(!Same(t)||!CurrentTarget(c,t))return "ai-target";
+    const auto ai=mem::ReadPtr(t.actor+off::AFightingCharacter::m_AIComponent);
+    const auto controller=mem::ReadPtr(t.actor+off::APawn::Controller);
+    if(!ue::IsLive(ai)||ue::OuterOf(ai)!=t.actor||mem::ReadPtr(ai+off::UActorComponent::OwnerPrivate)!=t.actor||
+       !ue::IsA(ai,ue::FindClass("AIFightingComponent"))||!ue::IsLive(controller)||
+       !ue::IsA(controller,ue::FindClass("AIController"))||mem::ReadPtr(controller+off::AController::Pawn)!=t.actor)return "ai-owner";
+    // Sifu lazily fills the AI cache. Use the already-linked Controller brain and
+    // close both reverse weak-reference paths, without calling the cache-writing getter.
+    const auto bt=mem::ReadPtr(controller+off::AAIController::BrainComponent);
+    if(!ue::IsLive(bt)||!ue::IsA(bt,ue::FindClass("AIBehaviorTreeComponent"))||ue::OuterOf(bt)!=controller||
+       mem::ReadPtr(bt+off::UActorComponent::OwnerPrivate)!=controller||
+       ue::ResolveWeak(bt+off::USCBehaviorTreeComponent::m_OwnerAiComponent)!=ai||
+       ue::ResolveWeak(bt+off::UAIBehaviorTreeComponent::m_CharacterOwner)!=t.actor)return "behavior-owner";
+    const auto cached=ue::ResolveWeak(ai+off::USCAIComponent::m_CachedBehaviorTreeComponent);
+    if(cached&&cached!=bt)return "behavior-cache-mismatch";
+    if(mem::ReadPtr(ue::OuterOf(controller)+off::ULevel::OwningWorld)!=c.scope.world)return "ai-world";
+    *peers={Token(ai),Token(bt)};
+    if(!peers->valid()||!ai_gate::Matches(g_base,*peers))return "ai-identity-or-slot";
+    if(idle) {
+        namespace bits=gen::bits::UBehaviorTreeComponent;
+        std::uint8_t running=0,paused=0;
+        if(!mem::Read(bt+bits::bIsRunning_Offset,&running)||!mem::Read(bt+bits::bIsPaused_Offset,&paused)||
+           !((running>>bits::bIsRunning_Shift)&1)||((paused>>bits::bIsPaused_Shift)&1))return "behavior-not-running";
+        if(mem::ReadOr<std::uint8_t>(ai+off::UAIFightingComponent::m_bIsOutOfIdle,255)||
+           mem::ReadOr<std::uint8_t>(ai+off::UAIFightingComponent::m_bForceActionHandlerTick,255))return "ai-not-idle";
+    }
+    return nullptr;
+}
+
+bool SamePeers() {
+    Peers peers;return !InspectPeers(g_current,g_target,&peers,false)&&peers==g_peers;
+}
+void DisarmAi() {
+    g_ai_watch.store(0);g_tree_watch.store(0);
+    if(g_ai_observing) {
+        g_lease.Abandon();g_watch.store(0);g_target={};g_original_ticks=0;
+    }
+    g_ai_observing=false;g_peers={};g_seen={};g_wrong_threads.store(0);
+    if(!ai_gate::Uninstall()) {g_failed=true;SC_LOG("[npc-ai] cleanup REFUSED slot changed; all target filters cleared");}
+}
+
 bool ResolveMove() {
     // Native UFunction metadata may have no allocated weak serial. Resolve and
     // verify its registration, declaring class and complete layout on every request;
@@ -215,10 +271,53 @@ void Release(const char* reason) {
     if(g_lease.state()==State::Machine || g_lease.state()==State::AcquirePending) {
         g_lease.Release();
         SC_LOG("[npc-motion] release id=%llu reason=%s skipped=%llu original_ticks=%llu",g_lease.request().id,reason,g_skips,g_original_ticks);
+        if(g_lease.request().kind==Kind::AIHold) SC_LOG("[npc-ai] release id=%llu reason=%s deadline=%llu now=%llu skipped=%llu/%llu/%llu original=%llu/%llu/%llu",
+            g_lease.request().id,reason,g_lease.deadline(),GetTickCount64(),g_seen[0].skips,g_seen[1].skips,g_seen[2].skips,
+            g_seen[0].originals,g_seen[1].originals,g_seen[2].originals);
     }
 }
+bool HoldSafe(std::uint64_t now) {
+    Sample sample; Peers peers;
+    const char* reason=WorldSafe(g_current,now);
+    if(!reason&&!g_ai_enabled.load())reason="ai-disabled";
+    if(!reason&&g_wrong_threads.load())reason="callback-thread";
+    if(!reason)reason=Inspect(g_current,g_target,&sample,false);
+    if(!reason)reason=InspectPeers(g_current,g_target,&peers,true);
+    if(!reason&&peers!=g_peers)reason="ai-components-changed";
+    if(!reason&&(sample.hp!=g_hold_hp||Distance(sample.position,g_last_position)>1))reason="hp-or-displacement";
+    if(!reason&&now>=g_lease.deadline())reason="deadline";
+    if(reason)Release(reason);
+    return !reason;
+}
+void Original(Part part) {
+    const auto i=part==Part::Movement?0:part==Part::AI?1:2;
+    ++g_seen[i].originals;g_seen[i].last_ms=GetTickCount64();
+    const auto before=g_lease.state();g_lease.OriginalTick(g_target,part,g_peers);
+    if(before==State::ReleasePending&&g_lease.state()==State::NativeFree)
+        SC_LOG("[npc-ai] restored all original Ticks id=%llu target=%u/%u mask=%u original=%llu/%llu/%llu skipped=%llu/%llu/%llu",
+            g_lease.request().id,g_target.id,g_target.spawn,g_lease.restored(),g_seen[0].originals,g_seen[1].originals,g_seen[2].originals,
+            g_seen[0].skips,g_seen[1].skips,g_seen[2].skips);
+}
+void Hold(const Command& cmd,const Context& c,const Target& target,const Sample& sample,std::uint64_t now) {
+    if(!g_ai_observing||target!=g_target||!ai_gate::Installed()||!SamePeers()||g_wrong_threads.load()||
+       std::any_of(g_seen.begin(),g_seen.end(),[&](const Seen& s){return !s.originals||s.last_ms>now||now-s.last_ms>500;})) {
+        SC_LOG("[npc-ai] refused hold id=%llu reason=forwarding-preflight",cmd.id);return;
+    }
+    Request request{c.scope,target,cmd.id,cmd.created,100,{},Kind::AIHold,g_peers};
+    const auto result=g_lease.Begin(request,c.scope,now);
+    if(result.replay||result.outcome!=Outcome::Ready) {
+        SC_LOG("[npc-ai] refused hold id=%llu outcome=%d replay=%d",cmd.id,static_cast<int>(result.outcome),result.replay);return;
+    }
+    if(!g_hold_budget.Spend(now)) {g_lease.Complete(cmd.id,Outcome::Budget);return;}
+    g_hold_hp=sample.hp;g_last_position=sample.position;
+    g_lease.Complete(cmd.id,Outcome::Applied); // no game function call or movement suppression
+    g_monitor={target,sample.position,sample.hp,now,now+1000,Kind::AIHold};
+    SC_LOG("[npc-ai] hold id=%llu target=%u/%u/%d thread=%lu duration=100ms deadline=%llu HP=%.3f movement=original calls=%u original=%llu/%llu/%llu",
+        cmd.id,target.id,target.spawn,target.serial,GetCurrentThreadId(),g_lease.deadline(),sample.hp,g_hold_budget.calls,
+        g_seen[0].originals,g_seen[1].originals,g_seen[2].originals);
+}
 void Move(const Command& cmd,const Context& c,const Target& target,const Sample& before,std::uint64_t now) {
-    Request r{c.scope,target,cmd.id,cmd.created,100,cmd.step};
+    Request r{c.scope,target,cmd.id,cmd.created,100,cmd.step,Kind::Sweep,{}};
     const auto reserved=g_lease.Begin(r,c.scope,now);
     if(reserved.replay || reserved.outcome!=Outcome::Ready) {
         SC_LOG("[npc-motion] request id=%llu outcome=%d replay=%d",cmd.id,static_cast<int>(reserved.outcome),reserved.replay); return;
@@ -261,9 +360,11 @@ void Move(const Command& cmd,const Context& c,const Target& target,const Sample&
 }
 }
 
-void Configure(bool enabled) {
-    g_configured.store(enabled); g_enabled.store(enabled);
-    if(enabled) SC_LOG("[npc-motion] diagnostic enabled, observe only until explicit addressed request; initial cap=10cm/100ms/4 calls");
+void Configure(bool enabled,bool ai_enabled) {
+    g_motion_startup=enabled;g_ai_startup=ai_enabled;
+    g_motion_enabled.store(enabled);g_ai_enabled.store(ai_enabled);
+    g_configured.store(enabled||ai_enabled); g_enabled.store(enabled||ai_enabled);
+    if(enabled||ai_enabled) SC_LOG("[npc-motion] diagnostic enabled motion=%d ai=%d; observe only until explicit addressed request; initial cap=100ms/4 calls",enabled,ai_enabled);
 }
 void UpdateContext(Context context) {
     if(!g_configured.load()) return;
@@ -273,14 +374,15 @@ void UpdateContext(Context context) {
     if(now>=next_poll) {
         next_poll=now+50;
         const auto root=log::RootDirectory();
-        const bool enabled=GetFileAttributesW((root+L"\\npc-motion-probe").c_str())!=INVALID_FILE_ATTRIBUTES;
-        g_enabled.store(enabled);
-        if(enabled) if(FILE* file=_wfopen((root+L"\\npc-motion-request.txt").c_str(),L"rb")) {
+        g_motion_enabled.store(g_motion_startup&&GetFileAttributesW((root+L"\\npc-motion-probe").c_str())!=INVALID_FILE_ATTRIBUTES);
+        g_ai_enabled.store(g_ai_startup&&GetFileAttributesW((root+L"\\npc-ai-probe").c_str())!=INVALID_FILE_ATTRIBUTES);
+        g_enabled.store(g_motion_enabled.load()||g_ai_enabled.load());
+        if(g_enabled.load()) if(FILE* file=_wfopen((root+L"\\npc-motion-request.txt").c_str(),L"rb")) {
             std::array<char,1025> line{}; const auto size=std::fread(line.data(),1,line.size(),file); std::fclose(file);
             if(size>0 && size<line.size()) {
                 std::istringstream input(std::string(line.data(),size)); std::string extra;
                 if(input>>command.action>>command.id>>command.created>>command.native>>command.peer>>command.world>>command.target>>command.spawn>>command.serial>>command.step.x>>command.step.y &&
-                   !(input>>extra) && command.action<=1 && command.id>last_id) last_id=command.id;
+                   !(input>>extra) && command.action<=3 && command.id>last_id) last_id=command.id;
                 else command={};
             }
         }
@@ -303,8 +405,9 @@ void ApplyOnGameThread(std::uintptr_t base) {
     AcquireSRWLockShared(&g_lock); const Context c=g_context; ReleaseSRWLockShared(&g_lock);
     AcquireSRWLockExclusive(&g_lock); command=g_pending; g_pending={}; ReleaseSRWLockExclusive(&g_lock);
     const auto now=GetTickCount64();
-    if(c.scope!=g_current.scope) { g_lease.Reset(); g_watch.store(0); g_target={}; g_monitor={}; g_original_ticks=0; }
+    if(c.scope!=g_current.scope) { Release("scope-changed");DisarmAi();g_lease.Reset(); g_watch.store(0); g_target={}; g_monitor={}; g_original_ticks=0; }
     g_current=c;
+    if(g_ai_observing&&!g_ai_enabled.load()) {Release("ai-disabled");DisarmAi();SC_LOG("[npc-ai] disabled; target filters cleared and hook pair removed");}
     const char* unsafe=WorldSafe(c,now);
     if(unsafe || g_failed) {
         Release(unsafe?unsafe:"probe-stopped");
@@ -312,14 +415,19 @@ void ApplyOnGameThread(std::uintptr_t base) {
         return;
     }
     static bool signature_prepared=false;
-    if(!signature_prepared) signature_prepared=ResolveMove(); // read-only warm-up before any target is selected
+    if(g_motion_enabled.load()&&!signature_prepared) signature_prepared=ResolveMove(); // read-only warm-up
     if(g_watch.load() && (!Same(g_target) || !CurrentTarget(c,g_target))) {
-        Release("target-lost"); g_lease.Abandon(); g_watch.store(0); g_target={}; g_original_ticks=0;
+        Release("target-lost");DisarmAi(); g_lease.Abandon(); g_watch.store(0); g_target={}; g_original_ticks=0;
     }
+    if(g_ai_observing&&!SamePeers()) {Release("ai-components-lost");DisarmAi();}
     if(g_lease.state()==State::Machine || g_lease.state()==State::AcquirePending) {
-        Sample sample; const char* reason=Inspect(c,g_target,&sample,false);
-        if(reason || Distance(sample.position,g_last_position)>1) Release(reason?reason:"external-displacement");
-        if(now>=g_lease.deadline()) Release("deadline");
+        if(g_lease.request().kind==Kind::AIHold)HoldSafe(now);
+        else {
+            Sample sample; const char* reason=Inspect(c,g_target,&sample,false);
+            if(!g_motion_enabled.load())reason="motion-disabled";
+            if(reason || Distance(sample.position,g_last_position)>1) Release(reason?reason:"external-displacement");
+            if(now>=g_lease.deadline()) Release("deadline");
+        }
     }
     if(g_monitor.target.valid() && now>=g_monitor.next) {
         if(Same(g_monitor.target) && CurrentTarget(c,g_monitor.target)) {
@@ -329,6 +437,8 @@ void ApplyOnGameThread(std::uintptr_t base) {
             const auto hp=mem::ReadOr<float>(health+off::UHealthComponent::m_fHealth,NAN);
             if(ue::ReadWorldLocation(root,&position)) SC_LOG("[npc-motion] monitor elapsed=%llums target=%u/%u drift=%.3fcm HP=%.3f original_ticks=%llu skipped=%llu state=%d",
                 now-g_monitor.started,g_monitor.target.id,g_monitor.target.spawn,Distance(position,g_monitor.position),hp,g_original_ticks,g_skips,static_cast<int>(g_lease.state()));
+            if(g_monitor.kind==Kind::AIHold)SC_LOG("[npc-ai] monitor mask=%u original=%llu/%llu/%llu skipped=%llu/%llu/%llu wrong_threads=%u",
+                g_lease.restored(),g_seen[0].originals,g_seen[1].originals,g_seen[2].originals,g_seen[0].skips,g_seen[1].skips,g_seen[2].skips,g_wrong_threads.load());
         }
         g_monitor.next=now+1000; if(now-g_monitor.started>=5000) g_monitor={};
     }
@@ -339,16 +449,25 @@ void ApplyOnGameThread(std::uintptr_t base) {
         SC_LOG("[npc-motion] diagnostic_elapsed cumulative H1_n=%llu avg_us=%llu peak_us=%llu H5_n=%llu avg_us=%llu peak_us=%llu (includes idle/invalid scopes; wall clock, not GPU)",
             g_h1_time.n,g_h1_time.n?g_h1_time.total/g_h1_time.n:0,g_h1_time.peak,
             g_h5_time.n,g_h5_time.n?g_h5_time.total/g_h5_time.n:0,g_h5_time.peak);
+        if(g_ai_observing)SC_LOG("[npc-ai] forwarding target=%u/%u ai=%d/%d tree=%d/%d thread=%lu original=%llu/%llu/%llu skipped=%llu/%llu/%llu wrong_threads=%u",
+            g_target.id,g_target.spawn,g_peers.ai.index,g_peers.ai.serial,g_peers.behavior.index,g_peers.behavior.serial,thread,
+            g_seen[0].originals,g_seen[1].originals,g_seen[2].originals,g_seen[0].skips,g_seen[1].skips,g_seen[2].skips,g_wrong_threads.load());
+        if(g_ai_observing)SC_LOG("[npc-ai] decision_validation n=%llu avg_us=%llu peak_us=%llu (module checks only; excludes original Tick)",
+            g_ai_time.n,g_ai_time.n?g_ai_time.total/g_ai_time.n:0,g_ai_time.peak);
         for(const auto& t:c.targets) {
             const auto movement=mem::ReadPtr(t.actor+off::ACharacter::CharacterMovement); const auto id=ue::IdentityOf(movement);
             Target target{t.actor,movement,t.id,t.spawn,t.identity.serial,id.index,id.serial}; Sample sample;
             const auto reason=Inspect(c,target,&sample,true);
             SC_LOG("[npc-motion] qualification target=%u/%u/%d class=%s reason=%s mode=%d loc=(%.2f,%.2f,%.2f)",t.id,t.spawn,t.identity.serial,ue::ClassName(t.actor).c_str(),reason?reason:"eligible",sample.mode,sample.position.x,sample.position.y,sample.position.z);
+            if(g_ai_enabled.load()) {Peers peers;const auto ai_reason=InspectPeers(c,target,&peers,true);
+                SC_LOG("[npc-ai] qualification target=%u/%u/%d reason=%s ai=%d/%d tree=%d/%d",t.id,t.spawn,t.identity.serial,ai_reason?ai_reason:"eligible",peers.ai.index,peers.ai.serial,peers.behavior.index,peers.behavior.serial);}
         }
     }
     if(!command.id) return;
     if(command.native!=c.scope.native_session || command.peer!=c.scope.peer_session || command.world!=c.scope.generation ||
-       command.created>now || now-command.created>1000 || (command.action==1 && !command.step.valid())) {
+       command.created>now || now-command.created>1000 || (command.action==1 && !command.step.valid()) ||
+       (command.action!=1&&(command.step.x!=0||command.step.y!=0)) ||
+       (command.action<2?!g_motion_enabled.load():!g_ai_enabled.load())) {
         SC_LOG("[npc-motion] refused request id=%llu reason=scope-age-or-step",command.id); return;
     }
     const auto found=std::find_if(c.targets.begin(),c.targets.end(),[&](const auto& t){ return t.id==command.target && t.spawn==command.spawn && t.identity.serial==command.serial; });
@@ -357,18 +476,33 @@ void ApplyOnGameThread(std::uintptr_t base) {
     Target target{found->actor,movement,found->id,found->spawn,found->identity.serial,id.index,id.serial}; Sample sample;
     const auto reason=Inspect(c,target,&sample,true);
     if(reason) { SC_LOG("[npc-motion] refused request id=%llu reason=%s",command.id,reason); return; }
+    if(command.action>=2) {
+        Peers peers;const auto ai_reason=InspectPeers(c,target,&peers,true);
+        if(ai_reason) {SC_LOG("[npc-ai] refused request id=%llu reason=%s",command.id,ai_reason);return;}
+        if(command.action==3) {Hold(command,c,target,sample,now);return;}
+        if(g_lease.state()!=State::NativeFree) {SC_LOG("[npc-ai] refused observe while leased");return;}
+        DisarmAi();
+        if(g_failed||!ai_gate::Install(base,peers)) {DisarmAi();g_failed=true;SC_LOG("[npc-ai] refused hook pair; stopped");return;}
+        g_target=target;g_peers=peers;g_original_ticks=0;g_skips=0;g_seen={};g_wrong_threads.store(0);g_ai_observing=true;
+        g_watch.store(movement);g_ai_watch.store(peers.ai.pointer);g_tree_watch.store(peers.behavior.pointer);
+        SC_LOG("[npc-ai] observe target=%u/%u/%d thread=%lu ai=%d/%d tree=%d/%d forwarding only, no movement call",
+            target.id,target.spawn,target.serial,thread,peers.ai.index,peers.ai.serial,peers.behavior.index,peers.behavior.serial);return;
+    }
     if(command.action==0) {
         if(g_lease.state()!=State::NativeFree) { SC_LOG("[npc-motion] refused observe while leased"); return; }
+        DisarmAi();if(g_failed)return;
         g_target=target; g_original_ticks=0; g_skips=0; g_watch.store(movement);
         SC_LOG("[npc-motion] observe target=%u/%u/%d thread=%lu, no movement call",target.id,target.spawn,target.serial,thread); return;
     }
-    if(target!=g_target || !g_original_ticks || !ResolveMove()) { SC_LOG("[npc-motion] refused request id=%llu reason=observation-or-signature",command.id); return; }
+    if(g_ai_observing || target!=g_target || !g_original_ticks || !ResolveMove()) { SC_LOG("[npc-motion] refused request id=%llu reason=observation-or-signature",command.id); return; }
     Move(command,c,target,sample,now);
 }
 bool SkipMovement(std::uintptr_t component) {
-    if(component!=g_watch.load() || GetCurrentThreadId()!=g_thread.load()) return false;
+    if(component!=g_watch.load())return false;
+    if(GetCurrentThreadId()!=g_thread.load()) {g_wrong_threads.fetch_or(1);return false;}
     Timer timer(g_h5_time);
-    if(!g_enabled.load()) { Release("disabled"); return false; }
+    if(g_ai_observing) {if(g_lease.state()==State::Machine)HoldSafe(GetTickCount64());return false;}
+    if(!g_motion_enabled.load()) { Release("disabled"); return false; }
     if(g_lease.state()!=State::Machine) return false;
     const auto now=GetTickCount64(); Sample sample;
     const auto world=WorldSafe(g_current,now);
@@ -381,8 +515,23 @@ bool SkipMovement(std::uintptr_t component) {
 void AfterOriginalMovement(std::uintptr_t component) {
     if(component!=g_watch.load() || GetCurrentThreadId()!=g_thread.load() || !Same(g_target) || !CurrentTarget(g_current,g_target)) return;
     ++g_original_ticks;
+    if(g_ai_observing) {if(SamePeers())Original(Part::Movement);return;}
     const auto before=g_lease.state(); g_lease.OriginalTick(g_target);
     if(before==State::ReleasePending && g_lease.state()==State::NativeFree)
         SC_LOG("[npc-motion] restored original Tick target=%u/%u original_ticks=%llu skipped=%llu",g_target.id,g_target.spawn,g_original_ticks,g_skips);
+}
+bool SkipDecision(std::uintptr_t component,Part part) {
+    const auto watched=part==Part::AI?g_ai_watch.load():g_tree_watch.load();
+    if(component!=watched||!watched)return false;
+    if(GetCurrentThreadId()!=g_thread.load()) {g_wrong_threads.fetch_or(static_cast<unsigned>(part));return false;}
+    Timer timer(g_ai_time);
+    if(!g_ai_observing||g_lease.state()!=State::Machine||g_lease.request().kind!=Kind::AIHold||!HoldSafe(GetTickCount64()))return false;
+    ++g_seen[part==Part::AI?1:2].skips;return true;
+}
+void AfterOriginalDecision(std::uintptr_t component,Part part) {
+    const auto watched=part==Part::AI?g_ai_watch.load():g_tree_watch.load();
+    if(component!=watched||!watched)return;
+    if(GetCurrentThreadId()!=g_thread.load()) {g_wrong_threads.fetch_or(static_cast<unsigned>(part));return;}
+    if(g_ai_observing&&SamePeers())Original(part);
 }
 }  // namespace sifucraft::combat::motion
