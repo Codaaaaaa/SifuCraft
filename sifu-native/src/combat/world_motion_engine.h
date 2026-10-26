@@ -4,6 +4,7 @@
 #include <cmath>
 #include <deque>
 #include <optional>
+#include <memory>
 #include "combat/world_motion_ledger.h"
 
 namespace sifucraft::world_motion {
@@ -36,10 +37,10 @@ public:
 class Engine {
 public:
     enum class Phase { Free,Acquiring,Owned,Releasing };
-    explicit Engine(Backend& backend):backend_(backend){}
+    explicit Engine(Backend& backend,Ledger* shared=nullptr):backend_(backend),owned_(shared?nullptr:std::make_unique<Ledger>()),ledger_(shared?shared:owned_.get()){}
     void Update(Environment environment,std::uint64_t now) {
         const bool peer=env_.native!=environment.native||env_.peer!=environment.peer;
-        if(peer) {backend_.Forget();phase_=Phase::Free;ledger_.Reset();out_.clear();reserve_.reset();release_.reset();}
+        if(peer) {backend_.Forget();phase_=Phase::Free;if(owned_)ledger_->Reset();out_.clear();reserve_.reset();release_.reset();}
         env_=environment;
         if(phase_==Phase::Free)return;
         if(!Scope(source_)||!env_.ready||env_.flags)BeginRelease(Status::TargetLost);
@@ -62,7 +63,7 @@ public:
     }
     bool Submit(const Command& command,std::uint64_t now) {
         if(!Room())return false;
-        const auto result=ledger_.Begin(command);
+        const auto result=ledger_->Begin(command);
         switch(result.decision) {
         case Ledger::Decision::Pending:return true;
         case Ledger::Decision::Replay:out_.push_back(result.reply);return true;
@@ -141,6 +142,7 @@ public:
     Phase phase()const{return phase_;}
     unsigned restored()const{return restored_;}
     const Body& body()const{return body_;}
+    bool Target(const Command& command)const{return phase_!=Phase::Free&&source_.target==command.target&&source_.spawn==command.spawn&&source_.flags==command.flags;}
 private:
     static double Length(const float* value){double n=0;for(int i=0;i<3;++i)n+=double(value[i])*value[i];return std::sqrt(n);}
     static double Distance(const std::array<float,3>& a,const std::array<float,3>& b,const float* delta=nullptr){float d[3];for(int i=0;i<3;++i)d[i]=a[i]-b[i]-(delta?delta[i]:0);return Length(d);}
@@ -174,11 +176,36 @@ private:
     }
     void Queue(const Command& c,Status s,std::uint64_t now){out_.push_back(Make(c,s,now));}
     void Finish(const Command& c,Status s,std::uint64_t now,std::array<float,3> delta={},std::uint32_t a=0,std::uint32_t b=0){
-        const auto reply=Make(c,s,now,delta,a|b);if(ledger_.Finish(c.id,reply))out_.push_back(reply);
+        const auto reply=Make(c,s,now,delta,a|b);if(ledger_->Finish(c.id,reply))out_.push_back(reply);
     }
-    Backend& backend_;Environment env_;Ledger ledger_;Phase phase_=Phase::Free;
+    Backend& backend_;Environment env_;std::unique_ptr<Ledger> owned_;Ledger* ledger_;Phase phase_=Phase::Free;
     Command source_{};Body body_{};std::optional<Command> reserve_,release_;
     std::uint64_t deadline_=0,last_tick_=0,release_revision_=0;double spent_=0;float last_progress_=0;unsigned observed_=0,restored_=0;
     Status reason_=Status::Released;std::deque<Reply> out_;
+};
+
+// Per-activation leases with ONE deduplication history for every target and operation.
+// A replay routed to another/free slot still cannot execute its side effect again.
+template<std::size_t Capacity> class Fleet {
+public:
+    explicit Fleet(const std::array<Backend*,Capacity>& backends){for(std::size_t i=0;i<Capacity;++i)slots_[i]=std::make_unique<Engine>(*backends[i],&ledger_);}
+    void Update(const Environment& env,std::uint64_t now){
+        if(native_!=env.native||peer_!=env.peer){ledger_.Reset();native_=env.native;peer_=env.peer;}
+        for(auto& engine:slots_)engine->Update(env,now);
+    }
+    bool Submit(const Command& command,std::uint64_t now){
+        for(auto& engine:slots_)if(engine->Target(command))return engine->Submit(command,now);
+        for(auto& engine:slots_)if(engine->phase()==Engine::Phase::Free&&engine->Room())return engine->Submit(command,now);
+        for(auto& engine:slots_)if(engine->Room())return engine->Submit(command,now); // explicit Busy/replay/conflict
+        return false;
+    }
+    bool Pop(Reply* reply){
+        for(std::size_t i=0;i<Capacity;++i){auto slot=(next_+i)%Capacity;if(slots_[slot]->Pop(reply)){next_=(slot+1)%Capacity;return true;}}
+        return false;
+    }
+    Engine& at(std::size_t slot){return *slots_.at(slot);}
+private:
+    Ledger ledger_;std::array<std::unique_ptr<Engine>,Capacity> slots_;
+    std::uint64_t native_=0,peer_=0;std::size_t next_=0;
 };
 }

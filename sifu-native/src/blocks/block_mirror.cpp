@@ -876,9 +876,12 @@ bool UpdateShape(ShapeShown& shown,const ShapeWanted& wanted) {
     if(!close(actual.x,center.x)||!close(actual.y,center.y)||!close(actual.z,center.z)||
        !close(size.x,extent.x)||!close(size.y,extent.y)||!close(size.z,extent.z))return false;
     shown.box=box;g_stats.shapes_updated.fetch_add(1);
-    if(g_shape_update_logged++<12)SC_LOG("[block-shapes] update PASS source=%016llX actor=%d/%d component=%d/%d world=(%.2f,%.2f,%.2f) extent=(%.2f,%.2f,%.2f)",
-        box.source_key,shown.actor.identity.index,shown.actor.identity.serial,shown.component.identity.index,shown.component.identity.serial,
-        actual.x,actual.y,actual.z,size.x,size.y,size.z);
+    if(g_shape_update_logged<12){
+        ++g_shape_update_logged;
+        SC_LOG("[block-shapes] update PASS source=%016llX actor=%d/%d component=%d/%d world=(%.2f,%.2f,%.2f) extent=(%.2f,%.2f,%.2f)",
+            box.source_key,shown.actor.identity.index,shown.actor.identity.serial,shown.component.identity.index,shown.component.identity.serial,
+            actual.x,actual.y,actual.z,size.x,size.y,size.z);
+    }
     return true;
 }
 

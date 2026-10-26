@@ -818,7 +818,7 @@ void Run(std::uintptr_t image_base) {
             const auto& peer=g_bridge.peer_state();
             context.actors.enabled=g_bridge.peer_connected()&&peer.valid&&world&&player.pawn&&
                 peer.sifu_session==g_bridge.session()&&peer.world_generation==generation&&
-                (peer.flags&protocol::kMcReady)&&!(peer.flags&protocol::kMcGuiOpen);
+                (peer.flags&protocol::kMcReady);
             context.actors.targets=enemies.targets();context.actors.grid=collision_schedule.MotionGrid(generation);
             context.enabled=!settings.npc_motion_probe&&!settings.npc_ai_probe;
             if(shape_frame.source_mc==context.actors.scope.peer_session&&shape_frame.header.world==generation&&

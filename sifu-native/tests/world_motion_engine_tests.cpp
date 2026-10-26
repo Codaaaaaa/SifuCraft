@@ -116,5 +116,35 @@ void GeometryBarrier(){
     c.env.revision++;c.env.settled=false;c.Tick();c.Send(c.CommandFor(Op::Release));c.Pop(Status::Stale);
     c.env.settled=true;c.Tick();c.Send(c.CommandFor(Op::Release));c.Empty();c.Restore();c.Pop(Status::Released);
 }
+void MultipleTargets(){
+    Fake a,b;b.body.serial=20;b.body.token=819;
+    Fleet<2> fleet({&a,&b});Case commands;auto env=commands.env;const auto now=commands.now;
+    fleet.Update(env,now);
+    auto send=[&](Command c){Seal(c);Require(fleet.Submit(c,now),"multi-target bounded admission");return c;};
+    auto pop=[&](Status status){Reply r;Require(fleet.Pop(&r)&&Valid(r)&&r.status==status,"multi-target final receipt");return r;};
+    auto reserveA=send(commands.CommandFor());auto reserveB=commands.CommandFor();reserveB.target=8;send(reserveB);
+    Require(a.binds==1&&b.binds==1,"distinct targets have distinct simultaneous bindings");
+    for(auto part:{1u,2u,4u})fleet.at(0).Original(part);
+    fleet.Update(env,now);auto preparedA=pop(Status::Prepared);Reply none;
+    Require(preparedA.id==reserveA.id&&!fleet.Pop(&none)&&fleet.at(0).Skip(now)&&!fleet.at(1).Skip(now),"one target's original ticks cannot qualify another");
+    for(auto part:{1u,2u,4u})fleet.at(1).Original(part);
+    fleet.Update(env,now);pop(Status::Prepared);Require(fleet.at(1).Skip(now),"second target qualifies independently");
+    auto stepA=send(commands.CommandFor(Op::Step));auto appliedA=pop(Status::Applied);
+    auto stepB=commands.CommandFor(Op::Step);stepB.target=8;stepB.lease=reserveB.id;stepB.actor_stamp=20;stepB.component_token=819;send(stepB);pop(Status::Applied);
+    Require(a.moves==1&&b.moves==1&&a.body.position[0]==10&&b.body.position[0]==10,"each move affects its own backend once");
+    send(stepA);auto replay=pop(Status::Applied);Require(!std::memcmp(&appliedA,&replay,sizeof(replay))&&a.moves==1,"global ledger replays older target after newer target effects");
+    auto changed=stepA;changed.target=8;send(changed);pop(Status::Conflict);Require(b.moves==1,"changing target cannot bypass deduplication by routing to another slot");
+    auto third=commands.CommandFor();third.target=9;send(third);pop(Status::Busy);Require(a.binds==1&&b.binds==1,"full target capacity cannot displace active leases");
+    auto cancel=commands.CommandFor(Op::Cancel);send(cancel);
+    for(auto part:{1u,2u})fleet.at(0).Original(part);
+    fleet.Update(env,now);
+    Require(!fleet.Pop(&none)&&fleet.at(1).Skip(now),"releasing one target preserves another target's active control");
+    fleet.at(0).Original(4);fleet.Update(env,now);auto released=pop(Status::Cancelled);
+    Require(released.restored==7&&fleet.at(0).phase()==Engine::Phase::Free&&fleet.at(1).Skip(now),"only fully restored slot can be reused");
+    send(reserveA);replay=pop(Status::Prepared);Require(!std::memcmp(&preparedA,&replay,sizeof(replay))&&a.binds==1,"completed reserve replay does not reacquire target");
+    third=commands.CommandFor();third.target=9;third.position[0]=10;send(third);Require(a.binds==2&&fleet.at(0).phase()==Engine::Phase::Acquiring,"free slot admits a new target");
+    send(stepA);pop(Status::Applied);Require(a.moves==1,"replay remains inert after its original slot was reassigned");
+    env.peer++;fleet.Update(env,now);Require(fleet.at(0).phase()==Engine::Phase::Free&&fleet.at(1).phase()==Engine::Phase::Free,"peer change releases all target filters together");
 }
-int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();GeometryBarrier();std::printf("world motion arbiter PASS %u assertions\n",checks);}
+}
+int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();GeometryBarrier();MultipleTargets();std::printf("world motion arbiter PASS %u assertions\n",checks);}
