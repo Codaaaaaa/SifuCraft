@@ -170,6 +170,7 @@ final class PistonSceneCheck {
             require(other!=null,"other dimension loaded");
             require(SceneBlockSupport.withScene(grid(server,full(base.east())),()->PistonSceneGuard.allows(other,base,Direction.EAST,true,Direction.EAST,List.of())),"other dimension ignores Native geometry");
             eventCases(server,empty);
+            rows.addAll(PistonContactCases.run(level,server.getPlayerList().getPlayers().getFirst().blockPosition().atY(201)));
             write(server,"p8-piston-scene.json",Map.of("result","PASS","native_guard",WorldBlocks.ENABLED,"cases",rows,"blocked_attempts",blockedAttempts,"actual_native_motion",false));
             restore(server);LoggerFactory.getLogger("sifucraft").info("[piston-scene-test] PASS {} cases, {} blocked events; actual vanilla resolver/events; guard={}",rows.size(),blockedAttempts,WorldBlocks.ENABLED);
             if(needNative){restoredAt=System.currentTimeMillis();finished=true;}else Minecraft.getInstance().execute(()->Minecraft.getInstance().stop());

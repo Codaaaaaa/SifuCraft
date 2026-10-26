@@ -369,6 +369,11 @@ P8 的 NPC 水平扫掠仍为独立诊断，尚未连接普通活塞；普通启
 删除控制目录中的 `npc-motion-probe` 即停止接管；下次重启恢复完全关闭。
 这项诊断不代表真实活塞推挤、垂直承载、AI恢复或全目录验收已完成。
 
+`pistonSceneSelfTest` 另含121组MC接触观察：原版推动/蜂蜜携带、六方向与伸缩、同tick累计上限。
+`PistonContacts.Capture` 只在显式的服务端调用栈中记录来源BE/进度、目标激活、请求与实际位移，
+普通运行不采集或发送运动命令。原版普通实体的同tick限制与noPhysics代理存在差异，
+记录用于后续运动事务设计，不能直接把代理位置变化转发给Native。
+
 需要 x64 MinGW-w64 GCC（例如 WinLibs）与 CMake ≥ 3.21。VS Code 中安装 CMake Tools 扩展后可直接选择 `mingw-release` preset。
 
 ```powershell
