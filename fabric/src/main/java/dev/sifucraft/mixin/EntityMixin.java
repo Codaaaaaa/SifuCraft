@@ -29,6 +29,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  */
 @Mixin(Entity.class)
 public abstract class EntityMixin {
+    @Inject(method="isIgnoringBlockTriggers",at=@At("HEAD"),cancellable=true)
+    private void sifucraft$ignoreInactivePlayerSignals(CallbackInfoReturnable<Boolean> cir) {
+        if(dev.sifucraft.blocks.PlayerSignalContacts.ignores((Entity)(Object)this))cir.setReturnValue(true);
+    }
     @Unique private static final double MIN_MOVE = 1.0E-4;
     @Unique private static final double ABOVE_STEP = 0.05;
     @Unique private static final double REACH = 0.2;

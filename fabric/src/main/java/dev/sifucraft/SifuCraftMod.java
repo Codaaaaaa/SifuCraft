@@ -12,6 +12,8 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
 public final class SifuCraftMod implements ModInitializer {
     @Override public void onInitialize() {
         EnemyEntities.register();
+        dev.sifucraft.blocks.SignalEntities.register();
+        ServerLifecycleEvents.SERVER_STARTING.register(server -> dev.sifucraft.blocks.PlayerSignalContacts.stop());
         if (WorldBlocks.ENABLED) {
             ServerLifecycleEvents.SERVER_STARTING.register(server -> WorldBlocks.open());
             ServerLifecycleEvents.SERVER_STOPPED.register(server -> WorldBlocks.close());
@@ -19,6 +21,8 @@ public final class SifuCraftMod implements ModInitializer {
             ServerChunkEvents.CHUNK_UNLOAD.register(WorldBlocks::unloaded);
         }
         ServerTickEvents.END_SERVER_TICK.register(EnemyMirrors::tick);
+        ServerTickEvents.START_SERVER_TICK.register(dev.sifucraft.blocks.PlayerSignalContacts::tick);
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PlayerSignalContacts.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> EnemyMirrors.stop());
     }
 }

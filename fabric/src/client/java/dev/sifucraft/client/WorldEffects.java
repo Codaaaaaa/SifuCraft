@@ -38,6 +38,7 @@ public final class WorldEffects {
         boolean avatarVisible = SifuCraftClient.minecraftOwnsInput() && mc.player != null &&
                 !mc.options.getCameraType().isFirstPerson();
         state.entityRenderStates.removeIf(entity -> entity.entityType == EnemyEntities.ENEMY_PROXY ||
+                entity.entityType == dev.sifucraft.blocks.SignalEntities.PLAYER_BODY ||
                 entity instanceof AvatarRenderState avatar && (!avatarVisible || avatar.id != mc.player.getId()));
         for (var entity : state.entityRenderStates) {
             entity.shadowPieces.clear();

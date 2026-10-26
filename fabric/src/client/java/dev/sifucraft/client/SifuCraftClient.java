@@ -98,6 +98,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private FluidRenderCheck fluidRenderCheck;
     private PistonStressCheck pistonStressCheck;
     private SignalCheck signalCheck;
+    private PlayerSignalCheck playerSignalCheck;
     private final HostLanguage hostLanguage = new HostLanguage();
     private boolean crosshair;
     private CollisionLoader collision;
@@ -126,6 +127,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         EntityRenderers.register(EnemyEntities.ENEMY_PROXY, NoopRenderer::new);
+        EntityRenderers.register(dev.sifucraft.blocks.SignalEntities.PLAYER_BODY, NoopRenderer::new);
         minecraft = Minecraft.getInstance();
         input = new InputInjector(minecraft);
         bridge = new McBridge(new McBridge.Listener() {
@@ -279,6 +281,11 @@ public final class SifuCraftClient implements ClientModInitializer {
             signalCheck=new SignalCheck();
             ServerTickEvents.END_SERVER_TICK.register(signalCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(signalCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.playerSignalSelfTest")){
+            playerSignalCheck=new PlayerSignalCheck();
+            ServerTickEvents.END_SERVER_TICK.register(playerSignalCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(playerSignalCheck::restore);
         }
         if (Boolean.getBoolean("sifucraft.blockModelSelfTest")) {
             blockModelCheck = new BlockModelCheck();
@@ -464,13 +471,16 @@ public final class SifuCraftClient implements ClientModInitializer {
         publishBlocks(previous);
         enforceNoFlight();
         rescueFromFall(previous);
-        bridge.tick(now, currentState(previous));
+        var outgoing=currentState(previous);
+        if(playerSignalCheck!=null)outgoing=playerSignalCheck.protectNativePose(outgoing,guiAvailable(previous));
+        bridge.tick(now, outgoing);
         bridge.setUseBinding(input.useBinding());
         SifuFrame frame = bridge.latest();
         DevItemAccess.update(minecraft, bridge.peerSession(), frame == null ? 0 : frame.worldGeneration(),
                 frame == null ? 0 : frame.anchorEpoch(), frame != null && guiAvailable(frame));
         if (bridge.peerConnected() && frame != null) hostLanguage.update(minecraft, frame.language());
         publishEnemies(frame);
+        publishPlayerSignals(frame);
         CombatHits.pump(bridge);
         dev.sifucraft.combat.ShieldBlocks.pump(bridge);
         PlayerDamage.pump(bridge, minecraft.getSingleplayerServer(), minecraft.player == null ? null : minecraft.player.getUUID(),
@@ -493,6 +503,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (fluidRenderCheck != null) fluidRenderCheck.tick(minecraft,guiAvailable(frame));
         if (pistonStressCheck != null) pistonStressCheck.clientTick(minecraft,guiAvailable(frame));
         if (signalCheck != null) signalCheck.clientTick(minecraft,guiAvailable(frame));
+        if (playerSignalCheck != null) playerSignalCheck.clientTick(minecraft,guiAvailable(frame),frame);
         if (worldCracksCheck != null) worldCracksCheck.tick(minecraft, input, guiAvailable(frame));
         if (worldModelCheck != null) worldModelCheck.tick(minecraft, guiAvailable(frame));
         if (avatarCheck != null) avatarCheck.tick(minecraft, input, guiAvailable(frame));
@@ -738,6 +749,18 @@ public final class SifuCraftClient implements ClientModInitializer {
         slots.open(server.getWorldPath(LevelResource.ROOT));
         EnemyMirrors.offer(frame, bridge.enemies(), slots.placement(UnrealSpace.mapName(frame.worldPath())),
                 respawn.ready() && minecraft.player != null && minecraft.player.isAlive() && space.anchoredTo(frame));
+    }
+
+    private void publishPlayerSignals(SifuFrame frame) {
+        if(playerSignalCheck!=null)return;
+        var server=minecraft.getSingleplayerServer();
+        if(!bridge.peerConnected()||server==null||minecraft.player==null||frame==null||!frame.hasPawn()){
+            dev.sifucraft.blocks.PlayerSignalContacts.offer(null,0,null,null,null,false);return;
+        }
+        slots.open(server.getWorldPath(LevelResource.ROOT));
+        dev.sifucraft.blocks.PlayerSignalContacts.offer(server,bridge.peerSession(),frame,
+            slots.placement(UnrealSpace.mapName(frame.worldPath())),minecraft.player.getUUID(),
+            respawn.ready()&&minecraft.player.isAlive()&&space.anchoredTo(frame));
     }
 
     private McState currentState(SifuFrame frame) {
