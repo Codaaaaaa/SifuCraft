@@ -32,6 +32,20 @@ public final class WorldEffects {
     private record Evidence(String type,BlockPos pos,MachineProjectiles.Origin machine,java.util.UUID causal){Evidence(String type,BlockPos pos){this(type,pos,null,null);}Evidence(String type,BlockPos pos,MachineProjectiles.Origin machine){this(type,pos,machine,null);}}
     private record LandingProof(EnemyProxy target,dev.sifucraft.bridge.WorldMotionRequests.Scope scope,BlockPos pos,java.util.UUID source){}
     private static final ThreadLocal<LandingProof> landing=new ThreadLocal<>();
+    private record FloorTick(WorldMotionRequests.Scope scope,long tick){}
+    private static final Map<EnemyProxy,FloorTick> floors=new WeakHashMap<>();
+    /** A real root/support result, never the larger hit capsule or prediction,
+     * authorizes precisely one original hot-floor callback per world tick. */
+    static void stood(EnemyProxy target,WorldMotionRequests.Scope scope,net.minecraft.world.phys.Vec3 root,long at,java.util.UUID source){
+        var view=view(target);long now=WorldWriter.clockMillis();
+        if(view==null||!scope.equals(view.scope())||!FluidMotion.currentGeometry(view)||at>now||now-at>200||!Double.isFinite(root.x)||!Double.isFinite(root.y)||!Double.isFinite(root.z))return;
+        var pos=BlockPos.containing(root.x,root.y-.2,root.z);var state=target.level().getBlockState(pos);
+        if(!state.is(Blocks.MAGMA_BLOCK)||Math.abs(root.y-pos.getY()-1)>.0025)return;
+        var tick=new FloorTick(scope,target.level().getGameTime());if(tick.equals(floors.put(target,tick)))return;
+        var previous=landing.get();landing.set(new LandingProof(target,scope,pos,source));
+        try{state.getBlock().stepOn(target.level(),pos,state,target);}
+        finally{if(previous==null)landing.remove();else landing.set(previous);}
+    }
     private record TimedMovement(BlockEnvironment.Movement movement,long at){}
     private record ContactPath(WorldMotionRequests.Scope scope,List<TimedMovement> movements){}
     private record PathProof(EnemyProxy target,WorldMotionRequests.Scope scope,Map<String,BlockEnvironment.Contact> contacts){}
@@ -125,10 +139,7 @@ public final class WorldEffects {
             var pos=BlockPos.containing(proxy.getX(),proxy.getEyeY(),proxy.getZ());
             return proxy.isEyeInFluid(FluidTags.WATER)&&proxy.getAirSupply()<=0&&level.getFluidState(pos).is(FluidTags.WATER)&&SceneFluidGeometry.canOccupy(level,pos)?new Evidence("minecraft:drown",pos):null;
         }
-        if(source.is(DamageTypes.HOT_FLOOR)){
-            var pos=BlockPos.containing(proxy.getX(),box.minY-.01,proxy.getZ());
-            return level.getBlockState(pos).is(Blocks.MAGMA_BLOCK)&&Math.abs(box.minY-pos.getY()-1)<.05?new Evidence("minecraft:hot_floor",pos):null;
-        }
+        if(source.is(DamageTypes.HOT_FLOOR))return floor!=null&&floor.target==proxy&&WorldMotionWorld.current()!=null&&floor.scope.equals(WorldMotionWorld.current().scope())&&level.getBlockState(floor.pos).is(Blocks.MAGMA_BLOCK)?new Evidence("minecraft:hot_floor",floor.pos,null,floor.source):null;
         if(source.is(DamageTypes.LAVA)||source.is(DamageTypes.IN_FIRE)){
             var area=box.deflate(1e-6);
             for(var at:BlockPos.betweenClosed(BlockPos.containing(area.minX,area.minY,area.minZ),BlockPos.containing(area.maxX,area.maxY,area.maxZ))){

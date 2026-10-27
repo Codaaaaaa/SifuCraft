@@ -111,12 +111,21 @@ public final class FluidMotion {
         long now=WorldWriter.clockMillis(),age=System.currentTimeMillis()-v.enemies().receivedMs();
         return age>=0&&age<=200&&v.nativeStatus().atMs()<=now&&now-v.nativeStatus().atMs()<=200;
     }
+    static boolean currentGeometry(WorldMotionWorld.View v){
+        var index=WorldBlocks.index();
+        return v.shapesCurrent()&&index!=null&&v.geometry().index()==index.revision()&&
+            v.geometry().motion()==dev.sifucraft.blocks.ShapeChanges.revision()&&v.nativeStatus().shapeRevision()==v.geometry().revision();
+    }
     private static BlockPos medium(ServerLevel level,AABB box){
         var area=box.deflate(1e-5);
         for(var at:BlockPos.betweenClosed(BlockPos.containing(area.minX,area.minY,area.minZ),BlockPos.containing(area.maxX,area.maxY,area.maxZ))){
             if(!level.hasChunkAt(at)||!SceneFluidGeometry.canOccupy(level,at))continue;var fluid=level.getFluidState(at);
             if((fluid.is(FluidTags.WATER)||fluid.is(FluidTags.LAVA))&&area.intersects(new AABB(at.getX(),at.getY(),at.getZ(),at.getX()+1,at.getY()+fluid.getHeight(level,at),at.getZ()+1)))return at.immutable();
         }
+        // Hit-capsule feet are only an acquisition hint. The actual root
+        // binding/support and tight top-face contact are checked before damage.
+        var foot=BlockPos.containing(box.getCenter().x,box.minY-.05,box.getCenter().z);
+        if(level.hasChunkAt(foot)&&level.getBlockState(foot).is(net.minecraft.world.level.block.Blocks.MAGMA_BLOCK)&&Math.abs(box.minY-foot.getY()-1)<=.05)return foot;
         return null;
     }
     private static Vec3 rootFeet(WorldMotionWorld.View v,Reply binding,SifuFrame.Vec3 hit){var offset=binding.rootOffset();return new Vec3(v.placement().mcX(hit.x()+offset.x()),v.placement().mcY(hit.z()+offset.z()-binding.rootHalfHeight()),v.placement().mcZ(hit.y()+offset.y()));}
@@ -139,7 +148,10 @@ public final class FluidMotion {
         boolean grounded=support(v,f)||f.nativeGround&&f.groundScene==v.scene()&&f.groundRevision==v.nativeStatus().shapeRevision();
         if(reconcile||f.body.onGround()&&!grounded||!f.body.onGround()&&grounded&&dy<0)f.body.reconcileFall(dy,grounded);
         f.body.setOnGround(grounded);var contact=f.body.consumeLanding();
-        var proxy=EnemyMirrors.hitAttacker(f.key.id(),f.key.spawn());if(grounded&&proxy!=null)WorldEffects.landed(proxy,f.scope,contact,f.source);
+        var proxy=EnemyMirrors.hitAttacker(f.key.id(),f.key.spawn());if(grounded&&proxy!=null){
+            WorldEffects.landed(proxy,f.scope,contact,f.source);
+            WorldEffects.stood(proxy,f.scope,rootFeet(v,f,f.last),f.last.atMs(),f.source);
+        }
     }
     public static void machineReleased(ServerLevel level,WorldMotionRequests.Scope scope,EnemyFrame.Key key,Reply binding,Reply release,Vec3 velocity,PistonContacts.Source source){
         var v=WorldMotionWorld.current();if(v==null||!scope.equals(v.scope())||release.status()!=3||release.restored()!=7)return;
@@ -154,7 +166,7 @@ public final class FluidMotion {
         if(view==null||scope!=null&&!scope.equals(view.scope())){stop();if(view==null)return;}
         scope=view.scope();
         for(var f:new ArrayList<>(flights.values()))advance(f);
-        if(!valid(view,level)||!view.shapesCurrent())return;
+        if(!valid(view,level)||!currentGeometry(view))return;
         long now=WorldWriter.clockMillis();
         for(var incoming:view.enemies().entries()){
             var e=PistonMachines.pose(view.enemies(),incoming);
@@ -257,7 +269,7 @@ public final class FluidMotion {
             var listener=observer;if(listener!=null)listener.prepared(sample(f));
         }
         if(f.phase==Phase.RENEW){
-            var r=result(f.pending);if(!binding(f,r)||r.status()!=2){cancel(v,f,now);return;}f.pending=null;renewed++;
+            var r=result(f.pending);if(!binding(f,r)||r.status()!=2){cancel(v,f,now);return;}f.last=r;applied(v,f,r);f.pending=null;renewed++;
             if(f.resumeMove){f.resumeMove=false;f.phase=Phase.MOVE;
                 if(v.shapesCurrent()&&valid(v,f.level))sendPart(v,f,now);else{f.retryOp=STEP;f.pendingDelta=partDelta(f);}return;
             }f.phase=Phase.IDLE;
