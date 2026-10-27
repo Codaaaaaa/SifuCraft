@@ -53,6 +53,7 @@ public final class SifuCollision {
         private final long sourceSession;
         private final int sourceWorld;
         private final Map<long[], VoxelShape> shapes = new ConcurrentHashMap<>(); // keyed by the grid's own arrays
+        private final Map<Long,Boolean> fluidCells=new ConcurrentHashMap<>();
 
         public Active(CollisionGrid grid, MapPlacement placement) {
             this(grid, placement, null);
@@ -85,6 +86,29 @@ public final class SifuCollision {
             var a=fixed==null?Shapes.empty():shapes.computeIfAbsent(fixed,SifuCollision::shapeOf);
             var b=moving==null?Shapes.empty():shapes.computeIfAbsent(moving,SifuCollision::shapeOf);
             return a.isEmpty()?b:b.isEmpty()?a:Shapes.or(a,b);
+        }
+
+        /** A vanilla fluid cell must have one connected empty region. A thin
+         * internal wall must never become a liquid shortcut through two pockets. */
+        public boolean fluidCell(BlockPos pos){
+            int x=pos.getX()-placement.originX(),y=pos.getZ()-placement.originZ(),z=pos.getY()-placement.originY();
+            long[] a=grid.block(x,y,z),b=doors==null?null:doors.block(x,y,z);
+            if(a==null&&b==null)return true;
+            return fluidCells.computeIfAbsent(pos.asLong(),ignored->{
+                long[] solid=new long[8];int empty=512,start=-1;
+                for(int layer=0;layer<8;layer++){solid[layer]=(a==null?0:a[layer])|(b==null?0:b[layer]);empty-=Long.bitCount(solid[layer]);
+                    if(start<0&&solid[layer]!=-1L)start=layer*64+Long.numberOfTrailingZeros(~solid[layer]);}
+                if(empty==0)return false;if(empty==512)return true;
+                boolean[] seen=new boolean[512];int[] queue=new int[512];int head=0,tail=1;queue[0]=start;seen[start]=true;
+                while(head<tail){int at=queue[head++],cx=at&7,cy=at>>>6,cz=(at>>>3)&7;
+                    for(int axis=0;axis<3;axis++)for(int sign=-1;sign<=1;sign+=2){
+                        int coordinate=axis==0?cx:axis==1?cy:cz,nextCoordinate=coordinate+sign;if(nextCoordinate<0||nextCoordinate>7)continue;
+                        int next=at+sign*(axis==0?1:axis==1?64:8);
+                        if(!seen[next]&&(solid[next>>>6]&(1L<<(next&63)))==0){seen[next]=true;queue[tail++]=next;}
+                    }
+                }
+                return tail==empty;
+            });
         }
 
         /** Calls {@code sink} with every Minecraft block position whose Sifu shape may touch {@code box}. */

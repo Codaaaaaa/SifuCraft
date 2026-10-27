@@ -170,6 +170,8 @@ int main(int argc, char** argv) {
     bool player_hit_scenario = false;
     bool interaction_scenario = false;
     std::string door_closed, door_open;
+    std::string fluid_gate_control,fluid_gate_closed,fluid_gate_open;
+    int fluid_gate_state=-1;std::uint32_t fluid_gate_revision=0;
     bool respawn_scenario = false;
     bool gui_test = false;
     bool world_camera_scenario = false;
@@ -240,6 +242,8 @@ int main(int argc, char** argv) {
             }
         } else if (std::strcmp(argv[i], "--interaction-scenario") == 0 && i + 2 < argc) {
             interaction_scenario = true; door_closed = argv[++i]; door_open = argv[++i];
+        } else if (std::strcmp(argv[i], "--fluid-gate") == 0 && i + 3 < argc) {
+            fluid_gate_control=argv[++i];fluid_gate_closed=argv[++i];fluid_gate_open=argv[++i];
         } else if (std::strcmp(argv[i], "--motion-scenario") == 0) {
             motion_scenario=true;with_enemies=true;shapes_test=true;
         } else if (std::strcmp(argv[i], "--enemies") == 0) {
@@ -366,6 +370,17 @@ int main(int argc, char** argv) {
             }
         }
         bridge.Tick(frame, now);
+        if(!fluid_gate_control.empty()){
+            std::ifstream control(fluid_gate_control);char state=0;control.get(state);
+            if((state=='0'||state=='1')&&state!=fluid_gate_state){
+                bridge::CollisionInfo gate;
+                if(DescribeGridFile(state=='1'?fluid_gate_closed:fluid_gate_open,&gate)){
+                    gate.generation=++fluid_gate_revision;gate.world_generation=frame.world_generation;
+                    bridge.PublishDoors(gate);fluid_gate_state=state;
+                    SC_LOG("[fluid-gate] revision=%u closed=%d blocks=%u",gate.generation,state=='1',gate.block_count);
+                }
+            }
+        }
         if (shapes_test && bridge.peer_connected()) {
             if (shape_reader.Read(bridge.peer_session(),bridge.session(),frame.world_generation,pawn.map,now,&shape_frame))
                 SC_LOG("[shape-test] received revision=%llu sections=%zu",(unsigned long long)shape_frame.header.revision,shape_frame.parts.size());

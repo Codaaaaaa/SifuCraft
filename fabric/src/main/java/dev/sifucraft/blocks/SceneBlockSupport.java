@@ -10,6 +10,9 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.shapes.BooleanOp;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
@@ -74,10 +77,34 @@ public final class SceneBlockSupport {
             }
             for(int count=0;count<128&&!pending.isEmpty();count++) {
                 var pos=pending.removeFirst();var state=level.getBlockState(pos);
-                if(state.isAir()||withScene(current,()->state.canSurvive(level,pos)))continue;
-                if(withScene(before,()->state.canSurvive(level,pos)))level.destroyBlock(pos,true);
+                if(!state.getFluidState().isEmpty()&&geometryChanged(pos)){
+                    // Like a solid block replacing a fluid, a newly closed Native
+                    // volume displaces that cell's liquid. Do not keep a buried
+                    // source which reappears or emits flow through a shut door.
+                    if(withScene(current,()->!SceneFluidGeometry.canOccupy(level,pos))){
+                        if(state.getBlock() instanceof LiquidBlock)level.setBlockAndUpdate(pos,Blocks.AIR.defaultBlockState());
+                        else if(state.hasProperty(BlockStateProperties.WATERLOGGED)&&state.getValue(BlockStateProperties.WATERLOGGED))
+                            level.setBlockAndUpdate(pos,state.setValue(BlockStateProperties.WATERLOGGED,false));
+                    }
+                    // Only this directly affected fluid cell needs a new tick.
+                    // A removed liquid already notifies its neighbours through
+                    // vanilla setBlockAndUpdate; scheduling their neighbours too
+                    // would advance drainage one propagation step early.
+                    scheduleFluid(level,pos);
+                    state=level.getBlockState(pos);
+                }
+                var checked=state;
+                if(checked.isAir()||withScene(current,()->checked.canSurvive(level,pos)))continue;
+                if(withScene(before,()->checked.canSurvive(level,pos)))level.destroyBlock(pos,true);
             }
             if(pending.isEmpty())before=null;
         }
+        private boolean geometryChanged(BlockPos pos){
+            if(before==null)return false;
+            if(Shapes.joinIsNotEmpty(before.shapeAt(pos),current.shapeAt(pos),BooleanOp.NOT_SAME))return true;
+            for(var face:net.minecraft.core.Direction.values()){var next=pos.relative(face);if(Shapes.joinIsNotEmpty(before.shapeAt(next),current.shapeAt(next),BooleanOp.NOT_SAME))return true;}
+            return false;
+        }
+        private static void scheduleFluid(ServerLevel level,BlockPos pos){var fluid=level.getFluidState(pos);if(!fluid.isEmpty())level.scheduleTick(pos,fluid.getType(),fluid.getType().getTickDelay(level));}
     }
 }

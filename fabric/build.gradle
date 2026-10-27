@@ -55,6 +55,8 @@ loom {
 			property "sifucraft.shapeUpdateSelfTest", providers.gradleProperty("sifucraft.shapeUpdateSelfTest").getOrElse("false")
 			property "sifucraft.pistonTransactionSelfTest", providers.gradleProperty("sifucraft.pistonTransactionSelfTest").getOrElse("false")
 			property "sifucraft.nativePistonSelfTest", providers.gradleProperty("sifucraft.nativePistonSelfTest").getOrElse("false")
+			property "sifucraft.fluidSceneSelfTest", providers.gradleProperty("sifucraft.fluidSceneSelfTest").getOrElse("false")
+			property "sifucraft.fluidGateControl", file('../build/p9-fluid-gate.txt').canonicalPath
 			property "sifucraft.sceneSupportSelfTest", providers.gradleProperty("sifucraft.sceneSupportSelfTest").getOrElse("false")
 			property "sifucraft.redstoneSelfTest", providers.gradleProperty("sifucraft.redstoneSelfTest").getOrElse("false")
 			property "sifucraft.signalSelfTest", providers.gradleProperty("sifucraft.signalSelfTest").getOrElse("false")
@@ -159,6 +161,14 @@ tasks.register('p8OfflineTest', JavaExec) {
 	jvmArgs nativeAccess
 }
 tasks.named('check') { dependsOn tasks.named('p8OfflineTest') }
+
+tasks.register('p9GeometryTest', JavaExec) {
+	group = 'verification'
+	classpath = sourceSets.offlineTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.blocks.P9GeometryTest'
+	jvmArgs nativeAccess
+}
+tasks.named('check') { dependsOn tasks.named('p9GeometryTest') }
 tasks.register('shapeProtocolTest', JavaExec) {
 	group = 'verification'
 	classpath = sourceSets.protocolTest.runtimeClasspath
