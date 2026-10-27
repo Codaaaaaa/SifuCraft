@@ -81,6 +81,7 @@ loom {
 			property "sifucraft.pistonTicketsRestart", providers.gradleProperty("sifucraft.pistonTicketsRestart").getOrElse("off")
 			property "sifucraft.nativeFluidSelfTest", providers.gradleProperty("sifucraft.nativeFluidSelfTest").getOrElse("false")
 			property "sifucraft.nativePlayerMotionSelfTest", providers.gradleProperty("sifucraft.nativePlayerMotionSelfTest").getOrElse("false")
+			property "sifucraft.playerPhysicsSelfTest", providers.gradleProperty("sifucraft.playerPhysicsSelfTest").getOrElse("false")
 			property "sifucraft.testFocusSession", providers.gradleProperty("sifucraft.testFocusSession").getOrElse("")
 			property "sifucraft.nativeHotFloorSelfTest", providers.gradleProperty("sifucraft.nativeHotFloorSelfTest").getOrElse("false")
 			property "sifucraft.nativeLiftSelfTest", providers.gradleProperty("sifucraft.nativeLiftSelfTest").getOrElse("false")
