@@ -35,6 +35,12 @@ final class FluidSceneCheck {
     private final List<List<String>> trace=new ArrayList<>();
     private volatile boolean ready,finished;private int tick,stage;private ServerLevel level;private ServerPlayer player;
     private long started,retainedPendingAtGate;private int phaseTick;private int compared;
+    private final boolean reconnect=Boolean.getBoolean("sifucraft.fluidReconnectSelfTest");
+    private final java.nio.file.Path reconnectControl=java.nio.file.Path.of(System.getProperty("sifucraft.fluidReconnectControl"));
+    private long firstNativeSession,nextNativeSession;private int disconnectedTicks;
+    private static final BlockPos RECONNECT_SOURCE=new BlockPos(41,70,30),RECONNECT_FLOW=RECONNECT_SOURCE.east();
+    private List<BlockState> disconnectedState;
+    private List<ItemStack> reconnectInventory;private float reconnectHealth;
     private static final BlockPos GATE=new BlockPos(6,64,4);
     private static final java.nio.file.Path CONTROL=java.nio.file.Path.of(System.getProperty("sifucraft.fluidGateControl")).toAbsolutePath().normalize();
     FluidSceneCheck(){require(DevWorld.LEVEL_ID.startsWith("sifucraft-fluid-scene-check-"),"disposable save required");}
@@ -159,7 +165,8 @@ final class FluidSceneCheck {
                 require(!((BucketItem)Items.WATER_BUCKET).emptyContents(player,level,new BlockPos(2,64,4),null),"dispenser-style bucket cannot fill Native wall");
                 stage=1;LoggerFactory.getLogger("sifucraft").info("[fluid-scene-test] actual bucket source/pickup/inventory PASS; scheduled Native/reference pool traces started");return;
             }
-            require(System.currentTimeMillis()-started<30000,"bounded fixture deadline stage="+stage+" compared="+compared+" control="+CONTROL);
+            require(System.currentTimeMillis()-started<(reconnect?60000:30000),"bounded fixture deadline stage="+stage+" compared="+compared+" control="+CONTROL);
+            if(stage>=9){reconnectTick(server);return;}
             if(stage==1){
                 var actual=compare();tick++;
                 if(tick<160)return;
@@ -180,11 +187,52 @@ final class FluidSceneCheck {
                 if(stage==5){gate(false);stage=6;return;}
                 if(Long.getLong("sifucraft.fluidGeometryLoadDelayMs",0)>0)require(SceneFluidGeometry.retainedPendingPublications()>retainedPendingAtGate,"real asynchronous door loading retained the old grid while fluid geometry was unavailable");
                 LoggerFactory.getLogger("sifucraft").info("[fluid-scene-test] retained old-grid pending publications={}",SceneFluidGeometry.retainedPendingPublications()-retainedPendingAtGate);
-                restore(server);stage=8;
-                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p9-fluid-scene.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(Map.of("result","PASS","scheduled_ticks",compared,"bucket_conversions",6,"native_wall_bucket_rejected",true,"native_gate_open_close_reopen",true,"map_boundaries",true,"foreign_tick_preserved_and_resumed",true,"boundary_mix_contacts",true,"pending_geometry_preserves_fluid_and_buckets",true,"trace",trace),out));
-                LoggerFactory.getLogger("sifucraft").info("[fluid-scene-test] PASS {} scheduled ticks equal ordinary vanilla pool; bucket source/pickup/inventory, no floor/wall leak, Native gate open/close/reopen",compared);
+                if(reconnect){beginReconnect();return;}
+                complete(server);
             }else if(stage==8)finished=true;
         }catch(Exception|AssertionError e){LoggerFactory.getLogger("sifucraft").error("[fluid-scene-test] FAIL",e);restore(server);finished=true;Minecraft.getInstance().execute(()->{throw new AssertionError(e);});}
+    }
+    private void reconnectControl(String value)throws java.io.IOException{java.nio.file.Files.writeString(reconnectControl,value);}
+    private List<BlockState> reconnectState(){return List.of(level.getBlockState(RECONNECT_SOURCE),level.getBlockState(RECONNECT_FLOW));}
+    private void beginReconnect()throws java.io.IOException{
+        var view=WorldMotionWorld.current();require(view!=null,"fresh initial Native scope");firstNativeSession=view.scope().nativeSession();
+        reconnectHealth=player.getHealth();reconnectInventory=java.util.stream.IntStream.range(0,player.getInventory().getContainerSize()).mapToObj(i->player.getInventory().getItem(i).copy()).toList();
+        for(int x=40;x<=43;x++)for(int z=29;z<=31;z++){
+            set(new BlockPos(x,69,z),Blocks.STONE.defaultBlockState());
+            set(new BlockPos(x,70,z),x==40||x==43||z!=30?Blocks.STONE.defaultBlockState():Blocks.AIR.defaultBlockState());
+        }
+        set(RECONNECT_SOURCE,Blocks.WATER.defaultBlockState());set(RECONNECT_FLOW,Blocks.WATER.defaultBlockState().setValue(BlockStateProperties.LEVEL,4));
+        stage=9;reconnectControl("1:disconnect");LoggerFactory.getLogger("sifucraft").info("[fluid-scene-test] disconnect requested; same MC server remains running");
+    }
+    private void reconnectTick(MinecraftServer server)throws java.io.IOException{
+        require(server.getPlayerList().getPlayer(player.getUUID())==player&&player.getHealth()==reconnectHealth,"same MC player and health retained across the Native endpoint lifecycle");
+        for(int i=0;i<reconnectInventory.size();i++){
+            var old=reconnectInventory.get(i);var current=player.getInventory().getItem(i);
+            require(old.getCount()==current.getCount()&&ItemStack.isSameItemSameComponents(old,current),"no inventory loss or starter duplication across Native reconnect slot="+i);
+        }
+        if(stage==9){
+            if(SifuCraftClient.attachedToSifu()||SceneFluidGeometry.available(level))return;
+            set(RECONNECT_FLOW,Blocks.WATER.defaultBlockState().setValue(BlockStateProperties.LEVEL,4));disconnectedState=reconnectState();stage=10;return;
+        }
+        if(stage==10){
+            require(!SifuCraftClient.attachedToSifu()&&!SceneFluidGeometry.available(level),"Native is absent and geometry stays unavailable in the same MC world");
+            require(disconnectedState.equals(reconnectState()),"actual scheduled fluid ticks preserve state through Native disconnection");
+            if(++disconnectedTicks<60)return;stage=11;reconnectControl("3:reconnect");
+            LoggerFactory.getLogger("sifucraft").info("[fluid-scene-test] 60 disconnected world ticks preserved; new Native session requested");return;
+        }
+        if(!SceneFluidGeometry.available(level)){require(disconnectedState.equals(reconnectState()),"fluid remains unchanged until replacement geometry is loaded");return;}
+        if(!ready)return;var view=WorldMotionWorld.current();if(view==null)return;
+        nextNativeSession=view.scope().nativeSession();require(nextNativeSession!=0&&nextNativeSession!=firstNativeSession,"a distinct actual Native process/session reconnected");
+        var flow=level.getBlockState(RECONNECT_FLOW);if(!flow.is(Blocks.WATER)||flow.getValue(BlockStateProperties.LEVEL)==4)return;
+        LoggerFactory.getLogger("sifucraft").info("[fluid-scene-test] actual Native reconnect PASS same server, 60 paused ticks, source retained, flow level=4->{} sessions={}->{}",flow.getValue(BlockStateProperties.LEVEL),Long.toUnsignedString(firstNativeSession),Long.toUnsignedString(nextNativeSession));
+        reconnectControl("0:done");complete(server);
+    }
+    private void complete(MinecraftServer server)throws java.io.IOException{
+        restore(server);stage=8;
+        var report=new LinkedHashMap<String,Object>(Map.of("result","PASS","scheduled_ticks",compared,"bucket_conversions",6,"native_wall_bucket_rejected",true,"native_gate_open_close_reopen",true,"map_boundaries",true,"foreign_tick_preserved_and_resumed",true,"boundary_mix_contacts",true,"pending_geometry_preserves_fluid_and_buckets",true,"trace",trace));
+        if(reconnect)report.put("native_reconnect",Map.of("disconnected_ticks",disconnectedTicks,"first_session",Long.toUnsignedString(firstNativeSession),"next_session",Long.toUnsignedString(nextNativeSession)));
+        AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p9-fluid-scene.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(report,out));
+        LoggerFactory.getLogger("sifucraft").info("[fluid-scene-test] PASS {} scheduled ticks equal ordinary vanilla pool; bucket source/pickup/inventory, no floor/wall leak, Native gate open/close/reopen; reconnect={}",compared,reconnect);
     }
     private List<String> compare(){var actual=fluid(0);var reference=fluid(20);require(actual.equals(reference),"scheduled phase="+stage+" tick="+phaseTick+" Native/reference mismatch actual="+actual+" reference="+reference);trace.add(actual);compared++;return actual;}
     private static void gate(boolean closed)throws java.io.IOException{java.nio.file.Files.writeString(CONTROL,closed?"1":"0");}
