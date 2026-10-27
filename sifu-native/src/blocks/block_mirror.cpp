@@ -1,9 +1,11 @@
 #include "blocks/block_mirror.h"
 #include "blocks/owned_serial.h"
+#include "blocks/shape_plan.h"
 
 #include <windows.h>
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -38,6 +40,11 @@ using protocol::BlockEntry;
 
 constexpr int kSpawnsPerFrame = 8;
 constexpr int kDestroysPerFrame = 16;
+// Reusing an owned box takes two reflected calls; it must not consume the
+// much smaller actor-construction budget during a fleet of moving pistons.
+constexpr int kShapeUpdatesPerFrame = 128;
+constexpr auto kShapeUpdateMinBudget = std::chrono::microseconds(2000);
+constexpr auto kShapeUpdateMaxBudget = std::chrono::microseconds(8000);
 constexpr float kBlockCm = 100.0f;
 constexpr std::uint8_t kAlwaysSpawn = 1;       // ESpawnActorCollisionHandlingMethod
 constexpr std::uint8_t kMovable = 2;           // EComponentMobility
@@ -249,18 +256,17 @@ ShapeCalls g_shape_calls;
 std::uint64_t g_shape_retry_at = 0;
 int g_shape_logged = 0;
 int g_shape_update_logged=0;
-using ShapeKey = std::array<std::int64_t,4>;
 struct OwnedObject {
     std::uintptr_t pointer = 0;
     mutable ue::ObjectIdentity identity;
     ue::FName name{};
 };
 struct ShapeShown { OwnedObject actor, component; shape_data::Box box{};std::uint64_t geometry_version=0; };
-struct ShapeWanted { ShapeKey key{}; shape_data::Box box{}; };
 std::map<ShapeKey,ShapeShown> g_shape_actors;
 std::unordered_map<std::uintptr_t,ShapeKey> g_shape_components;
 std::uint64_t g_shape_geometry_version=0;
 std::vector<ShapeWanted> g_shape_spawns;
+std::vector<ShapeUpdate> g_shape_updates;
 std::vector<ShapeKey> g_shape_destroys;
 bool g_shape_mode = false;
 
@@ -891,16 +897,16 @@ bool UpdateShape(ShapeShown& shown,const ShapeWanted& wanted) {
 
 void PlanShapes(const std::shared_ptr<const shape_data::Frame>& frame) {
     g_shape_mode = static_cast<bool>(frame);
-    g_shape_spawns.clear(); g_shape_destroys.clear();
+    g_shape_spawns.clear(); g_shape_updates.clear(); g_shape_destroys.clear();
     std::map<ShapeKey,shape_data::Box> wanted;
     if (frame) for (const auto& part : frame->parts) for (std::size_t i = 0; i < part.boxes.size(); ++i) {
         ShapeKey key{part.section.x,part.section.y,part.section.z,static_cast<std::int64_t>(part.boxes[i].source_key)};
         wanted.emplace(key,part.boxes[i]);
-        auto old = g_shape_actors.find(key);
-        if (old == g_shape_actors.end() || !OwnedShape(old->second) || std::memcmp(&old->second.box,&part.boxes[i],sizeof(shape_data::Box)))
-            g_shape_spawns.push_back({key,part.boxes[i]});
     }
-    for (const auto& [key,shown] : g_shape_actors) if (!wanted.count(key)) g_shape_destroys.push_back(key);
+    std::map<ShapeKey,ShapeExisting> existing;
+    for(const auto& [key,shown]:g_shape_actors)existing.emplace(key,ShapeExisting{shown.box,OwnedShape(shown)});
+    auto plan=PlanShapeWork(wanted,existing);
+    g_shape_spawns=std::move(plan.spawns);g_shape_updates=std::move(plan.updates);g_shape_destroys=std::move(plan.destroys);
 }
 
 // Whether blocks are given Minecraft's textures in this world.
@@ -991,7 +997,7 @@ void ApplyOnGameThread(std::uintptr_t image_base) {
     if (world != g_world) {
         // The previous world destroyed its actors, the keeper and its materials with itself.
         g_actors.clear();
-        g_shape_actors.clear();g_shape_components.clear(); g_shape_spawns.clear(); g_shape_destroys.clear();
+        g_shape_actors.clear();g_shape_components.clear(); g_shape_spawns.clear(); g_shape_updates.clear(); g_shape_destroys.clear();
         g_shape_applied.store(0,std::memory_order_release);
         g_shape_presentation_scope.store(0,std::memory_order_release);
         g_shape_logged = 0;g_shape_update_logged=0; g_shape_retry_at = 0;
@@ -1044,10 +1050,34 @@ void ApplyOnGameThread(std::uintptr_t image_base) {
         auto found = g_shape_actors.find(key);
         if (found != g_shape_actors.end()) { DestroyShape(found->second); g_shape_actors.erase(found); ++frame_destroys; }
     }
+    if (g_shape_mode && g_actors.empty()) {
+        const auto began = std::chrono::steady_clock::now();
+        static auto previous = began;
+        // Spend at most a quarter of the observed frame period, within 2..8ms.
+        // A fixed 2ms budget cannot keep up with 20Hz animation when the renderer
+        // itself runs at 25..30Hz. The count cap still bounds recovery after stalls.
+        const auto budget=std::clamp(std::chrono::duration_cast<std::chrono::microseconds>((began-previous)/4),kShapeUpdateMinBudget,kShapeUpdateMaxBudget);
+        previous=began;
+        for (int n = 0; n < kShapeUpdatesPerFrame && !g_shape_updates.empty(); ++n) {
+            if (n && std::chrono::steady_clock::now() - began >= budget) break;
+            const auto update = g_shape_updates.back(); g_shape_updates.pop_back();
+            const auto& wanted=update.wanted;
+            auto old = g_shape_actors.find(update.from);
+            if (old == g_shape_actors.end() || (update.from!=wanted.key&&g_shape_actors.count(wanted.key)) || !UpdateShape(old->second,wanted)) {
+                g_shape_spawns.push_back(wanted);
+                if(update.from!=wanted.key)g_shape_destroys.push_back(update.from);
+            } else if(update.from!=wanted.key) {
+                // UpdateShape verifies the new bounds and advances geometry_version,
+                // invalidating motion proofs for the old key before it can be reused.
+                auto node=g_shape_actors.extract(old);
+                g_shape_components[node.mapped().component.pointer]=wanted.key;
+                node.key()=wanted.key;g_shape_actors.insert(std::move(node));
+            }
+        }
+    }
     if (g_shape_mode && g_actors.empty() && GetTickCount64() >= g_shape_retry_at) for (int n = 0; n < kSpawnsPerFrame && !g_shape_spawns.empty(); ++n) {
         const auto wanted = g_shape_spawns.back();
         auto old = g_shape_actors.find(wanted.key);
-        if(old!=g_shape_actors.end()&&UpdateShape(old->second,wanted)){g_shape_spawns.pop_back();continue;}
         if (old != g_shape_actors.end() && frame_destroys >= kDestroysPerFrame) break;
         // Build a replacement before removing this object's previous valid collision.
         ShapeShown shown = SpawnShape(wanted);
@@ -1056,7 +1086,7 @@ void ApplyOnGameThread(std::uintptr_t image_base) {
         g_shape_actors[wanted.key] = shown;g_shape_components[shown.component.pointer]=wanted.key; g_shape_spawns.pop_back();
     }
     g_stats.shapes.store(g_shape_actors.size());
-    if (g_shape_mode && g_actors.empty() && g_shape_spawns.empty() && g_shape_destroys.empty()) {
+    if (g_shape_mode && g_actors.empty() && g_shape_updates.empty() && g_shape_spawns.empty() && g_shape_destroys.empty()) {
         g_shape_applied.store(g_version,std::memory_order_release);
         g_shape_revision_done.store(g_shape_active_revision,std::memory_order_release);
         g_shape_presentation_scope.store(g_shape_game_scope,std::memory_order_release);

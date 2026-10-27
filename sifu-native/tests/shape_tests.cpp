@@ -1,5 +1,6 @@
 #include "bridge/shape_reader.h"
 #include "blocks/owned_serial.h"
+#include "blocks/shape_plan.h"
 #include <atomic>
 #include <array>
 #include <cstring>
@@ -11,6 +12,28 @@ using namespace sifucraft::shape_data;
 void Check(bool value, const char* why) { if (!value) throw std::runtime_error(why); }
 int main(int argc, char** argv) {
     try {
+        {
+            using namespace sifucraft::blocks;
+            std::map<ShapeKey,Box> wanted;
+            std::map<ShapeKey,ShapeExisting> existing;
+            const Box box{{0,0,0},{100,100,100},1};
+            // Sixty-four synchronous piston parts change source keys each half-cycle.
+            // Existing desired boxes and foreign identities must never become donors.
+            for(int i=0;i<64;++i){existing[{0,0,0,i}]={box,true};wanted[{0,0,0,i+100}]=box;}
+            existing[{0,0,0,1000}]={box,true};wanted[{0,0,0,1000}]=box;
+            existing[{0,0,0,1001}]={box,false};
+            auto plan=PlanShapeWork(wanted,existing);
+            Check(plan.spawns.empty()&&plan.updates.size()==64&&plan.destroys==std::vector<ShapeKey>{{0,0,0,1001}},"piston fleet reuses obsolete owned boxes without actor churn");
+            std::map<ShapeKey,int> sources,targets;
+            for(const auto& update:plan.updates){Check(update.from[3]<64&&update.wanted.key[3]>=100&&update.wanted.key[3]<164,"only obsolete donors and missing targets");++sources[update.from];++targets[update.wanted.key];}
+            Check(sources.size()==64&&targets.size()==64,"reuse is one-to-one");
+            existing.clear();wanted.clear();existing[{0,0,0,1}]={box,true};wanted[{16,0,0,2}]=box;
+            plan=PlanShapeWork(wanted,existing);
+            Check(plan.updates.empty()&&plan.spawns.size()==1&&plan.destroys.size()==1,"no cross-section reuse");
+            existing.clear();wanted.clear();existing[{0,0,0,1}]={box,false};existing[{0,0,0,2}]={box,true};wanted[{0,0,0,1}]=box;
+            plan=PlanShapeWork(wanted,existing);
+            Check(plan.updates.empty()&&plan.spawns.size()==1&&plan.destroys.size()==1,"invalid target keeps bounded identity replacement path");
+        }
         std::int32_t serial=0;
         Check(sifucraft::blocks::MatchOwnedSerial(7,serial,7,0),"unallocated owned serial");
         Check(sifucraft::blocks::MatchOwnedSerial(7,serial,7,12) && serial==12,"lazy serial promotion");
