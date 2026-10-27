@@ -198,7 +198,7 @@ final class FluidSceneCheck {
         if(finished||stage==0&&!ready||stage==8&&!ready)return;
         try{
             if(stage==0){
-                level=server.overworld();if(server.getPlayerList().getPlayers().isEmpty()||SceneFluidGeometry.canOccupy(level,GATE))return;player=server.getPlayerList().getPlayers().getFirst();started=System.currentTimeMillis();boundaries();randomFire();revalidation();
+                level=server.overworld();if(server.getPlayerList().getPlayers().isEmpty()||SceneFluidGeometry.canOccupy(level,GATE))return;player=server.getPlayerList().getPlayers().getFirst();started=System.currentTimeMillis();boundaries();randomFire();revalidation();DispenserFluidCases.run(level);
                 for(int offset:new int[]{0,20})for(int y=62;y<=66;y++)for(int z=1;z<=7;z++)for(int x=1;x<=15;x++)set(new BlockPos(x+offset,y,z),Blocks.AIR.defaultBlockState());
                 for(int z=2;z<=6;z++)for(int x=2;x<=6;x++){
                     set(new BlockPos(x+20,63,z),Blocks.STONE.defaultBlockState());
@@ -278,6 +278,7 @@ final class FluidSceneCheck {
     private void complete(MinecraftServer server)throws java.io.IOException{
         restore(server);stage=8;
         var report=new LinkedHashMap<String,Object>(Map.of("result","PASS","scheduled_ticks",compared,"bucket_conversions",6,"native_wall_bucket_rejected",true,"native_gate_open_close_reopen",true,"map_boundaries",true,"foreign_tick_preserved_and_resumed",true,"boundary_mix_contacts",true,"pending_geometry_preserves_fluid_and_buckets",true,"trace",trace));
+        report.put("dispenser_bucket_cases",8);report.put("dispenser_native_wall_fallbacks",4);report.put("dispenser_pending_and_foreign_preserved",true);
         report.put("lava_random_fire_seed_pairs",128);
         if(reconnect)report.put("native_reconnect",Map.of("disconnected_ticks",disconnectedTicks,"first_session",Long.toUnsignedString(firstNativeSession),"next_session",Long.toUnsignedString(nextNativeSession)));
         AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p9-fluid-scene.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(report,out));
