@@ -1,7 +1,7 @@
 package dev.sifucraft.blocks;
 
 import dev.sifucraft.collision.SifuCollision;
-import java.util.ArrayDeque;
+import java.util.LinkedHashMap;
 import java.util.function.Supplier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
@@ -54,34 +54,33 @@ public final class SceneBlockSupport {
 
     /** Server-owned, bounded revalidation after an actual same-map geometry change. */
     public static final class Updates {
-        private SifuCollision.Active current, before;
+        private SifuCollision.Active current;
         private ServerLevel sourceLevel;
         private BlockSectionIndex sourceIndex;
-        private final ArrayDeque<BlockPos> pending=new ArrayDeque<>();
+        private long loadedRevision;
+        private final LinkedHashMap<BlockPos,SifuCollision.Active> pending=new LinkedHashMap<>();
         public void tick(MinecraftServer server) { update(server.overworld(),WorldBlocks.index(),SifuCollision.active()); }
         public void update(ServerLevel level,BlockSectionIndex index,SifuCollision.Active next) {
             if(level!=sourceLevel||index!=sourceIndex) {
-                current=before=null;pending.clear();sourceLevel=level;sourceIndex=index;
+                current=null;pending.clear();loadedRevision=0;sourceLevel=level;sourceIndex=index;
             }
-            if(next==null||index==null){current=before=null;pending.clear();return;}
+            if(next==null||index==null){current=null;pending.clear();loadedRevision=0;return;}
             if(next!=current) {
-                var old=before==null?current:before;current=next;pending.clear();before=null;
-                if(old!=null&&old.sameScope(next)) {
-                    before=old;
-                    for(var section:index.snapshots())for(short local:section.states().keySet()) {
-                        var origin=SectionPos.of(section.section());
-                        pending.add(new BlockPos(origin.minBlockX()+SectionPos.sectionRelativeX(local),
-                            origin.minBlockY()+SectionPos.sectionRelativeY(local),origin.minBlockZ()+SectionPos.sectionRelativeZ(local)));
-                    }
-                }
+                var old=current;current=next;
+                if(old!=null&&!old.sameScope(next)){old=null;pending.clear();}
+                enqueue(index.snapshots(),old,next);
             }
+            long loaded=index.loadedRevision();
+            if(loaded!=loadedRevision){enqueue(index.loadedAfter(loadedRevision),null,next);loadedRevision=loaded;}
             for(int count=0;count<128&&!pending.isEmpty();count++) {
-                var pos=pending.removeFirst();var state=level.getBlockState(pos);
-                if(!state.getFluidState().isEmpty()&&geometryChanged(pos)){
+                var item=pending.pollFirstEntry();var pos=item.getKey();var before=item.getValue();var state=level.getBlockState(pos);
+                if(!state.getFluidState().isEmpty()){
+                    boolean changed=before==null||geometryChanged(before,pos);
                     // Like a solid block replacing a fluid, a newly closed Native
                     // volume displaces that cell's liquid. Do not keep a buried
                     // source which reappears or emits flow through a shut door.
-                    if(withScene(current,()->!SceneFluidGeometry.canOccupy(level,pos))){
+                    boolean displaced=withScene(current,()->!SceneFluidGeometry.canOccupy(level,pos));
+                    if(displaced){
                         if(state.getBlock() instanceof LiquidBlock)level.setBlockAndUpdate(pos,Blocks.AIR.defaultBlockState());
                         else if(state.hasProperty(BlockStateProperties.WATERLOGGED)&&state.getValue(BlockStateProperties.WATERLOGGED))
                             level.setBlockAndUpdate(pos,state.setValue(BlockStateProperties.WATERLOGGED,false));
@@ -90,17 +89,24 @@ public final class SceneBlockSupport {
                     // A removed liquid already notifies its neighbours through
                     // vanilla setBlockAndUpdate; scheduling their neighbours too
                     // would advance drainage one propagation step early.
-                    scheduleFluid(level,pos);
+                    if(changed||displaced)scheduleFluid(level,pos);
                     state=level.getBlockState(pos);
                 }
                 var checked=state;
                 if(checked.isAir()||withScene(current,()->checked.canSurvive(level,pos)))continue;
-                if(withScene(before,()->checked.canSurvive(level,pos)))level.destroyBlock(pos,true);
+                if(before!=null&&withScene(before,()->checked.canSurvive(level,pos)))level.destroyBlock(pos,true);
             }
-            if(pending.isEmpty())before=null;
         }
-        private boolean geometryChanged(BlockPos pos){
-            if(before==null)return false;
+        private void enqueue(java.util.List<BlockSectionIndex.Snapshot> snapshots,SifuCollision.Active old,SifuCollision.Active next){
+            for(var section:snapshots)for(short local:section.states().keySet()){
+                var origin=SectionPos.of(section.section());
+                var pos=new BlockPos(origin.minBlockX()+SectionPos.sectionRelativeX(local),origin.minBlockY()+SectionPos.sectionRelativeY(local),origin.minBlockZ()+SectionPos.sectionRelativeZ(local));
+                // Keep the earliest unprocessed baseline and queue position.
+                // Rapid door revisions must not restart a large scan forever.
+                if(next.placement().containsX(pos.getX())&&(!pending.containsKey(pos)||old==null))pending.put(pos,old);
+            }
+        }
+        private boolean geometryChanged(SifuCollision.Active before,BlockPos pos){
             if(Shapes.joinIsNotEmpty(before.shapeAt(pos),current.shapeAt(pos),BooleanOp.NOT_SAME))return true;
             for(var face:net.minecraft.core.Direction.values()){var next=pos.relative(face);if(Shapes.joinIsNotEmpty(before.shapeAt(next),current.shapeAt(next),BooleanOp.NOT_SAME))return true;}
             return false;

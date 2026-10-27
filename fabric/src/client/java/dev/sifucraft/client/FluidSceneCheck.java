@@ -2,6 +2,9 @@ package dev.sifucraft.client;
 
 import dev.sifucraft.blocks.BlockStateKey;
 import dev.sifucraft.blocks.SceneFluidGeometry;
+import dev.sifucraft.blocks.SceneBlockSupport;
+import dev.sifucraft.blocks.BlockSectionIndex;
+import dev.sifucraft.blocks.WorldMotionWorld;
 import dev.sifucraft.collision.SifuCollision;
 import dev.sifucraft.storage.AtomicFiles;
 import java.util.ArrayList;
@@ -46,11 +49,26 @@ final class FluidSceneCheck {
     private List<String> fluid(int offset){var out=new ArrayList<String>();for(int y=62;y<=65;y++)for(int z=1;z<=7;z++)for(int x=1;x<=15;x++){
         var pos=new BlockPos(x+offset,y,z);var state=level.getFluidState(pos);if(!state.isEmpty())out.add((x)+","+y+","+z+":"+state.toString());
     }return out;}
+    private void revalidation(){
+        var index=new BlockSectionIndex();
+        // These are only work-list entries in a private index. They do not
+        // install 1024 fake stones in the world or the Native collision channel.
+        for(int i=0;i<1024;i++)index.changed(new BlockPos(-1-(i&15),64+((i>>4)&15),(i>>8)&3),Blocks.STONE.defaultBlockState());
+        set(GATE,Blocks.WATER.defaultBlockState());index.changed(GATE,Blocks.WATER.defaultBlockState());
+        var scene=SifuCollision.active();var scope=WorldMotionWorld.current().scope();var updates=new SceneBlockSupport.Updates();
+        for(int revision=0;revision<10;revision++)updates.update(level,index,new SifuCollision.Active(scene.grid(),scene.placement(),scene.doors(),scope.nativeSession(),scope.world()));
+        require(level.getFluidState(GATE).isEmpty(),"first-grid buried source is removed despite 1024 earlier positions and a fresh geometry revision every work batch");
+        var lateIndex=new BlockSectionIndex();var late=new SceneBlockSupport.Updates();late.update(level,lateIndex,scene);
+        set(GATE,Blocks.WATER.defaultBlockState());lateIndex.replace(net.minecraft.core.SectionPos.of(GATE).asLong(),Map.of(net.minecraft.core.SectionPos.sectionRelativePos(GATE),Blocks.WATER.defaultBlockState()));
+        late.update(level,lateIndex,scene);
+        require(level.getFluidState(GATE).isEmpty(),"saved fluid loaded after the initial geometry is revalidated without waiting for a door change");
+        LoggerFactory.getLogger("sifucraft").info("[fluid-scene-test] initial-load/rapid-revision 1025-position bounded revalidation PASS");
+    }
     void tick(MinecraftServer server){
         if(finished||stage==0&&!ready||stage==8&&!ready)return;
         try{
             if(stage==0){
-                level=server.overworld();if(server.getPlayerList().getPlayers().isEmpty()||SceneFluidGeometry.canOccupy(level,GATE))return;player=server.getPlayerList().getPlayers().getFirst();started=System.currentTimeMillis();
+                level=server.overworld();if(server.getPlayerList().getPlayers().isEmpty()||SceneFluidGeometry.canOccupy(level,GATE))return;player=server.getPlayerList().getPlayers().getFirst();started=System.currentTimeMillis();revalidation();
                 for(int offset:new int[]{0,20})for(int y=62;y<=66;y++)for(int z=1;z<=7;z++)for(int x=1;x<=15;x++)set(new BlockPos(x+offset,y,z),Blocks.AIR.defaultBlockState());
                 for(int z=2;z<=6;z++)for(int x=2;x<=6;x++){
                     set(new BlockPos(x+20,63,z),Blocks.STONE.defaultBlockState());

@@ -21,11 +21,13 @@ public final class BlockSectionIndex {
     private static final class Section {
         final Map<Short, BlockState> states = new HashMap<>();
         long revision;
+        long loaded;
     }
 
     private final Map<Long, Section> sections = new HashMap<>();
     private final Map<Long, Long> dirty = new HashMap<>();
     private long revision;
+    private long loadedRevision;
 
     public synchronized void changed(BlockPos pos, BlockState state) {
         long key = SectionPos.of(pos).asLong();
@@ -48,7 +50,7 @@ public final class BlockSectionIndex {
         Section old = sections.get(key);
         if(old==null&&states.isEmpty())return; // a newly loaded empty section has no previous geometry to remove
         if (old != null && old.states.equals(states)) return;
-        var next = new Section(); next.states.putAll(states); next.revision = ++revision;
+        var next = new Section(); next.states.putAll(states); next.revision = ++revision;next.loaded=++loadedRevision;
         sections.put(key, next); dirty.put(key, revision);
     }
 
@@ -84,6 +86,9 @@ public final class BlockSectionIndex {
     }
 
     public synchronized long revision() { return revision; }
+    public synchronized long loadedRevision(){return loadedRevision;}
+    /** Newly read chunk data needs validation even if Native geometry was already present. */
+    public synchronized List<Snapshot> loadedAfter(long after){return sections.entrySet().stream().filter(e->e.getValue().loaded>after).map(e->snapshot(e.getKey())).toList();}
     /** Full reconnect snapshot, including sections whose last update was already acknowledged. */
     public synchronized List<Snapshot> snapshots() {
         return sections.keySet().stream().sorted().map(this::snapshot).toList();
