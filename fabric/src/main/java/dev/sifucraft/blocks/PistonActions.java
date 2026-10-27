@@ -31,13 +31,26 @@ public final class PistonActions {
             if(!created.isEmpty()){
                 var token=new Token(capture.id,capture.base,created.stream().map(p->p.getBlockPos().immutable()).toList());
                 synchronized(members){for(int i=0;i<created.size();i++)members.put(created.get(i),new Member(token,i));}
+                PistonActionTickets.hold(server,token);
             }
         }
     }
     public static void created(BlockEntity entity){var capture=active.get();if(capture!=null&&entity instanceof PistonMovingBlockEntity moving){if(capture.created.size()>=64)throw new IllegalStateException("piston action membership capacity");capture.created.add(moving);}}
     public static Member member(PistonMovingBlockEntity piston){synchronized(members){return members.get(piston);}}
     public static java.util.Set<UUID> liveTokens(){synchronized(members){return members.values().stream().map(m->m.token.id).collect(java.util.stream.Collectors.toSet());}}
+    public static java.util.Map<ServerLevel,java.util.Set<Token>> loadedTokens(){
+        var result=new java.util.IdentityHashMap<ServerLevel,java.util.Set<Token>>();
+        synchronized(members){for(var entry:members.entrySet()){
+            var piston=entry.getKey();if(piston.isRemoved()||!(piston.getLevel() instanceof ServerLevel level))continue;
+            var pos=piston.getBlockPos();var chunk=level.getChunkSource().getChunkNow(pos.getX()>>4,pos.getZ()>>4);
+            // Level.getBlockEntity can renew an implicit UNKNOWN ticket. A
+            // cleanup/readback must not keep an expired action's chunk loaded.
+            if(chunk==null||chunk.getBlockEntity(pos)!=piston)continue;
+            result.computeIfAbsent(level,k->new java.util.HashSet<>()).add(entry.getValue().token);
+        }}return result;
+    }
     public static List<PistonMovingBlockEntity> members(ServerLevel level,Member member){
+        PistonActionTickets.hold(level,member.token);
         var result=new ArrayList<PistonMovingBlockEntity>();
         // Chunk loading is staggered. Never let the first loaded member advance
         // while another saved member's chunk is still unavailable.
@@ -58,5 +71,5 @@ public final class PistonActions {
         if(blocks.stream().anyMatch(p->Math.abs((long)p.getX()-base.getX())>16||Math.abs((long)p.getY()-base.getY())>16||Math.abs((long)p.getZ()-base.getZ())>16))return;
         var token=new Token(new UUID(hi,lo),base,blocks);synchronized(members){members.put(piston,new Member(token,ordinal));}
     }
-    public static void stop(){active.remove();synchronized(members){members.clear();}}
+    public static void stop(){PistonActionTickets.stop();active.remove();synchronized(members){members.clear();}}
 }

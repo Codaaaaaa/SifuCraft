@@ -13,6 +13,7 @@ public final class SifuCraftMod implements ModInitializer {
     @Override public void onInitialize() {
         EnemyEntities.register();
         dev.sifucraft.blocks.SignalEntities.register();
+        dev.sifucraft.blocks.PistonActionTickets.register();
         ServerLifecycleEvents.SERVER_STARTING.register(server -> dev.sifucraft.blocks.PlayerSignalContacts.stop());
         if (WorldBlocks.ENABLED) {
             ServerLifecycleEvents.SERVER_STARTING.register(server -> WorldBlocks.open());
@@ -22,6 +23,7 @@ public final class SifuCraftMod implements ModInitializer {
         }
         ServerTickEvents.START_SERVER_TICK.register(EnemyMirrors::tick);
         ServerTickEvents.END_SERVER_TICK.register(dev.sifucraft.blocks.PistonMachines::update);
+        ServerTickEvents.END_SERVER_TICK.register(dev.sifucraft.blocks.PistonActionTickets::tick);
         // The explicit environment fixture tests NativeFree H7/F8/pause against
         // a stationary reference. Continuous motion has separate differential
         // and real-capsule fixtures; letting it float this reference target away
@@ -31,7 +33,10 @@ public final class SifuCraftMod implements ModInitializer {
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PlayerSignalContacts.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> EnemyMirrors.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PistonMachines.stop());
-        ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PistonActions.stop());
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PistonActionTickets.stop());
+        // stopServer saves chunk BEs AFTER SERVER_STOPPING. Keep their action
+        // membership available to the NBT mixin until the final save has ended.
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> dev.sifucraft.blocks.PistonActions.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.combat.FluidMotion.stop());
     }
 }
