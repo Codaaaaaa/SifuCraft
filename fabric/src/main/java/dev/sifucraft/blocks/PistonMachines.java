@@ -48,6 +48,7 @@ public final class PistonMachines {
         final float progress;final long deadline;final Map<EnemyFrame.Key,Target> targets=new LinkedHashMap<>();
         final List<Work> work=new ArrayList<>();final List<CompletableFuture<Reply>> moves=new ArrayList<>();
         final Set<Long> reported=new HashSet<>();
+        final Set<Work> refunded=java.util.Collections.newSetFromMap(new IdentityHashMap<>());
         Phase phase=Phase.PREPARE;int dispatched;long commitMotion,commitIndex,lastRevision;
         final AtomicBoolean wakeScheduled=new AtomicBoolean();
         Flight(ServerLevel level,PistonMovingBlockEntity piston,List<PistonMovingBlockEntity> members,SourceToken token,WorldMotionRequests.Scope scope,long now){
@@ -70,11 +71,11 @@ public final class PistonMachines {
     private static volatile java.util.function.BiConsumer<EnemyFrame.Key,Reply> preparedObserver;
     /** Isolated real-game test observes the physical binding before creating its independent reference. */
     public static void observePrepared(java.util.function.BiConsumer<EnemyFrame.Key,Reply> observer){
-        if(observer!=null&&!Boolean.getBoolean("sifucraft.nativePistonSelfTest"))throw new IllegalStateException("isolated fixture only");preparedObserver=observer;
+        if(observer!=null&&!Boolean.getBoolean("sifucraft.nativePistonSelfTest")&&!Boolean.getBoolean("sifucraft.pistonPauseSelfTest"))throw new IllegalStateException("isolated fixture only");preparedObserver=observer;
     }
-    private static long prepared,applied,committed,cancelled,released,releaseFailed;
-    public record Stats(long prepared,long applied,long committed,long cancelled,long released,long releaseFailed,int pending){}
-    public static Stats stats(){return new Stats(prepared,applied,committed,cancelled,released,releaseFailed,(int)flights.values().stream().distinct().count());}
+    private static long prepared,applied,committed,cancelled,released,releaseFailed,refundedSteps;private static double refundedCm;
+    public record Stats(long prepared,long applied,long committed,long cancelled,long released,long releaseFailed,int pending,long refundedSteps,double refundedCm){}
+    public static Stats stats(){return new Stats(prepared,applied,committed,cancelled,released,releaseFailed,(int)flights.values().stream().distinct().count(),refundedSteps,refundedCm);}
     /** Receipt callbacks only queue work. A vanilla ticker is always entered on its owning server thread. */
     private static void wake(Flight f){
         var server=f.level.getServer();if(server.isSameThread()||!f.wakeScheduled.compareAndSet(false,true))return;
@@ -82,6 +83,15 @@ public final class PistonMachines {
             PistonMovingBlockEntity.tick(f.level,f.piston.getBlockPos(),f.level.getBlockState(f.piston.getBlockPos()),f.piston);});
     }
     private static CompletableFuture<Reply> watch(Flight f,CompletableFuture<Reply> reply){reply.whenComplete((value,error)->wake(f));return reply;}
+    private static CompletableFuture<Reply> watchMove(Flight f,Work work,CompletableFuture<Reply> future,double distance){
+        future.whenComplete((reply,error)->{
+            boolean none=error instanceof WorldMotionRequests.Lost lost&&!lost.mayHaveExecuted()||error==null&&reply!=null&&(reply.flags()&STEP_NOT_EXECUTED)!=0;
+            if(none)f.level.getServer().execute(()->{
+                if(f.refunded.add(work)){f.token.spent.compute(work.target.key,(k,spent)->Math.max(0,(spent==null?0:spent)-distance));refundedSteps++;refundedCm+=distance*100;}
+            });
+        });
+        return watch(f,future);
+    }
     /** New applied geometry can unblock release between ordinary 20Hz block-entity ticks. */
     public static void offered(WorldMotionWorld.View view){
         var server=activeServer;if(server==null||view==null||!view.shapesCurrent()||view.geometry().revision()==offeredRevision)return;
@@ -195,7 +205,7 @@ public final class PistonMachines {
                 // receipts. A partial/unknown sweep never refunds its request.
                 double distance=Math.sqrt((double)work.delta.x()*work.delta.x()+(double)work.delta.y()*work.delta.y()+(double)work.delta.z()*work.delta.z())/100;
                 f.token.spent.merge(work.target.key,distance,Double::sum);
-                f.moves.add(watch(f,view.requests().request(f.scope,id->command(f,work.target,work.source,STEP,id,work.target.binding,work.position,work.delta,work.revision,now))));f.dispatched++;
+                f.moves.add(watchMove(f,work,view.requests().request(f.scope,id->command(f,work.target,work.source,STEP,id,work.target.binding,work.position,work.delta,work.revision,now)),distance));f.dispatched++;
             }
             for(int i=0;i<f.moves.size();i++)if(done(f.moves.get(i))){
                 var reply=result(f.moves.get(i));if(reply==null||reply.status()!=2){cancel(view,f);return;}

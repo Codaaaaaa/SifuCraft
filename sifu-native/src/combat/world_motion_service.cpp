@@ -227,7 +227,7 @@ void ApplyOnGameThread(std::uintptr_t base) {
         while(!commands.empty()){g_commands.push_front(commands.back());commands.pop_back();}
         Reply reply;
         while(g_replies.size()<64&&g_fleet.Pop(&reply)) {
-            SC_LOG("[world-motion] reply id=%llu lease=%llu target=%u/%u status=%u actual=(%.3f,%.3f,%.3f) restored=%u",reply.id,reply.lease,reply.target,reply.spawn,static_cast<unsigned>(reply.status),reply.delta[0],reply.delta[1],reply.delta[2],reply.restored);
+            SC_LOG("[world-motion] reply id=%llu lease=%llu target=%u/%u status=%u actual=(%.3f,%.3f,%.3f) restored=%u flags=0x%08X",reply.id,reply.lease,reply.target,reply.spawn,static_cast<unsigned>(reply.status),reply.delta[0],reply.delta[1],reply.delta[2],reply.restored,reply.flags);
             g_replies.push_back(reply);
         }
     }

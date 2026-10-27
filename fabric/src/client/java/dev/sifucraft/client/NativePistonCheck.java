@@ -39,7 +39,10 @@ final class NativePistonCheck {
     private volatile boolean ready,finished;private volatile int stage;private volatile long began;
     private double walked;private long lastNs;private float playerHealth;
     private ServerLevel level;private EnemyFrame.Entry target;private Vec3 start,end,referenceStart;private BlockPos base;private Direction direction;
-    private Reference reference;private long deadline,settledAt;
+    private Reference reference;private long deadline,settledAt,lastMonitor;
+    private final boolean pause=Boolean.getBoolean("sifucraft.pistonPauseSelfTest");
+    private final java.nio.file.Path pauseFile=java.nio.file.Path.of(System.getProperty("sifucraft.motionPauseControl"));
+    private volatile long pauseRequested,pauseAt,pausedTick;private volatile boolean resumed,pauseChecked;
     NativePistonCheck(){require(DevWorld.LEVEL_ID.startsWith("sifucraft-piston-native-check-"),"disposable save required");
         PistonMachines.observePrepared((key,binding)->{
             if(target==null||!target.key().equals(key)||reference!=null)return;
@@ -47,18 +50,22 @@ final class NativePistonCheck {
             referenceStart=proxy.position().add(offset.x()/100.0,offset.z()/100.0+target.halfHeight()/100.0-binding.rootHalfHeight()/100.0,offset.y()/100.0);
             reference=new Reference(level,binding.rootRadius()*2/100,binding.rootHalfHeight()*2/100);reference.setPos(referenceStart);reference.setOnGround(true);require(level.addFreshEntity(reference),"independent actual root-sized vanilla body registered");
             LoggerFactory.getLogger("sifucraft").info("[native-piston-test] physical binding root_radius={} root_half={} root_offset_cm={} reference_start={}",binding.rootRadius(),binding.rootHalfHeight(),offset,referenceStart);
+            if(pause&&pauseRequested==0){pauseRequested=System.currentTimeMillis();pausedTick=level.getGameTime();pauseControl("1");LoggerFactory.getLogger("sifucraft").info("[native-piston-test] pause requested while physical target is prepared");}
         });
     }
     private static void require(boolean ok,String why){if(!ok)throw new AssertionError("native piston: "+why);}
+    private void pauseControl(String value){try{java.nio.file.Files.writeString(pauseFile,value);}catch(java.io.IOException e){throw new java.io.UncheckedIOException(e);}}
     void clientTick(Minecraft mc,boolean gui,SifuFrame frame){
         if(finished){mc.stop();return;}
+        if(pauseRequested!=0&&mc.isPaused()&&pauseAt==0){pauseAt=System.currentTimeMillis();mc.getSingleplayerServer().execute(()->pausedTick=level.getGameTime());}
+        if(pauseAt!=0&&!resumed&&System.currentTimeMillis()-pauseAt>=1200){resumed=true;mc.getSingleplayerServer().execute(()->{require(level.getGameTime()<=pausedTick+1,"actual Native pause froze MC world time");pauseChecked=true;});pauseControl("0");}
         var view=WorldMotionWorld.current();ready=gui&&view!=null&&view.shapesCurrent()&&view.nativeStatus()!=null&&(view.nativeStatus().capabilities()&1)!=0&&view.nativeStatus().flags()==0;
         long ns=System.nanoTime();double dt=lastNs==0?0:Math.min(.05,(ns-lastNs)/1e9);lastNs=ns;
         if(!ready||mc.player==null||frame==null)return;
         require(view.placement().map().equals("Hideout_1_Main"),"known isolated checkpoint map");
         if(began==0){began=System.currentTimeMillis();playerHealth=frame.health();}
         require(frame.health()==playerHealth,"no change to Native player HP during fixture");
-        require(System.currentTimeMillis()-began<90000,"bounded live fixture deadline stage="+stage);
+        if(stage<3)require(System.currentTimeMillis()-began<90000,"bounded live fixture deadline stage="+stage);
         // The known idle fixture is just beyond the 30m table radius at the entry.
         // Walk at 1m/s through ordinary MC collision; stop as soon as a body appears.
         if(stage==0&&view.enemies().entries().isEmpty()&&walked<4){
@@ -67,7 +74,8 @@ final class NativePistonCheck {
     }
     private void set(BlockPos pos,BlockState state){var old=level.getBlockState(pos);require(!old.hasBlockEntity(),"does not replace saved BE");originals.putIfAbsent(pos.immutable(),old);level.setBlock(pos,state,2);}
     void tick(MinecraftServer server){
-        if(finished||!ready)return;
+        if(stage==4){finished=true;return;}
+        if(finished||(!ready&&stage!=3))return;
         try{
             var view=WorldMotionWorld.current();if(view==null)return;
             if(stage==0){
@@ -89,7 +97,13 @@ final class NativePistonCheck {
                 }
                 return;
             }
-            require(System.currentTimeMillis()<deadline,"deadline stage="+stage+" stats="+PistonMachines.stats());
+            if(stage<3)require(System.currentTimeMillis()<deadline,"deadline stage="+stage+" stats="+PistonMachines.stats());
+            if(stage==3){
+                long now=System.currentTimeMillis(),age=view.enemies()==null?Long.MAX_VALUE:now-view.enemies().receivedMs();
+                if(view.nativeStatus()==null||view.nativeStatus().flags()!=0||age<0||age>200){settledAt=0;return;}
+                if(settledAt==0||now-lastMonitor>200)settledAt=now;
+                lastMonitor=now;
+            }
             var proxy=EnemyMirrors.hitAttacker(target.id(),target.spawn());require(proxy!=null,"same activation retained");
             if(stage==1){var power=base.relative(direction,-1);originals.putIfAbsent(power,level.getBlockState(power));level.setBlockAndUpdate(power,Blocks.REDSTONE_BLOCK.defaultBlockState());stage=2;return;}
             if(stage==2){
@@ -98,7 +112,8 @@ final class NativePistonCheck {
                 require(reference!=null,"physical binding produced the independent reference");
                 require(proxy.position().subtract(start).distanceToSqr(reference.position().subtract(referenceStart))<.0009,"actual Native delta matches ordinary vanilla root body: native="+proxy.position().subtract(start)+" reference="+reference.position().subtract(referenceStart));
                 require(proxy.position().distanceToSqr(start)>.01,"real target moved");
-                var stats=PistonMachines.stats();require(stats.prepared()>=2&&stats.released()==stats.prepared()&&stats.releaseFailed()==0,"every physical half-step restored all three original ticks: "+stats);
+                var stats=PistonMachines.stats();require(stats.prepared()>=2&&stats.releaseFailed()==0&&(pause?stats.released()>=2:stats.released()==stats.prepared()),"every completed physical half-step restored all three original ticks: "+stats);
+                if(pause)require(pauseAt!=0&&resumed&&pauseChecked,"real Native pause and resumed world time were observed");
                 end=proxy.position();settledAt=System.currentTimeMillis();stage=3;
             }
             if(stage==3){
@@ -111,5 +126,5 @@ final class NativePistonCheck {
             }else if(stage==4)finished=true;
         }catch(Exception|AssertionError e){LoggerFactory.getLogger("sifucraft").error("[native-piston-test] FAIL",e);restore(server);finished=true;Minecraft.getInstance().execute(()->{throw new AssertionError(e);});}
     }
-    void restore(MinecraftServer ignored){PistonMachines.observePrepared(null);if(reference!=null)reference.discard();reference=null;if(level!=null){for(var pos:originals.keySet())level.removeBlockEntity(pos);for(var e:originals.entrySet())level.setBlock(e.getKey(),e.getValue(),2);}originals.clear();}
+    void restore(MinecraftServer ignored){PistonMachines.observePrepared(null);if(pause)pauseControl("0");if(reference!=null)reference.discard();reference=null;if(level!=null){for(var pos:originals.keySet())level.removeBlockEntity(pos);for(var e:originals.entrySet())level.setBlock(e.getKey(),e.getValue(),2);}originals.clear();}
 }

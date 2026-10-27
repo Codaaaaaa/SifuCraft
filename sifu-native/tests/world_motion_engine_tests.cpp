@@ -10,11 +10,11 @@ void Require(bool value,const char* label){++checks;if(!value){std::fprintf(stde
 struct Fake final:Backend {
     Body body{19,818,{0,0,90},60,30,90};
     int binds=0,moves=0,forgets=0,hurts=0;bool valid=true,bind=true,block=false,penetrate=false,returned=true,read=true,effects=false;
-    float fraction=1;
+    float fraction=1;bool invoked=true;
     std::array<float,3> normal{};
     bool Bind(const Command&,Body* out)override{++binds;*out=body;return bind;}
     bool Check(Body* out)override{*out=body;return valid;}
-    Sweep Move(const Body&,const std::array<float,3>& d)override{++moves;for(int i=0;i<3;++i)body.position[i]+=d[i]*fraction;return {body,true,read,returned,block,penetrate,normal};}
+    Sweep Move(const Body&,const std::array<float,3>& d)override{++moves;if(invoked)for(int i=0;i<3;++i)body.position[i]+=d[i]*fraction;return {body,invoked,read,returned,block,penetrate,normal};}
     Effect Hurt(const Command& c)override{if(!effects)return {};hurts++;body.health=std::max(0.f,body.health-c.amount*3);return {Status::Applied,true,body.serial,body.health,body.position,0};}
     void Forget()override{++forgets;}
 };
@@ -73,16 +73,36 @@ void BoundsAndInvalidation(){
     Require(c.backend.moves==11&&c.backend.body.position[0]==101,"101cm contact cap books requested motion");
 }
 void SweepFailures(){
-    for(int failure=0;failure<6;++failure){
+    for(int failure=0;failure<7;++failure){
         Case c;c.Acquire();
         switch(failure){case 0:c.backend.block=true;c.backend.fraction=0;break;
         case 1:c.backend.block=true;c.backend.fraction=.25f;break;case 2:c.backend.fraction=.5f;break;
-        case 3:c.backend.returned=false;break;case 4:c.backend.penetrate=true;break;case 5:c.backend.read=false;break;}
+        case 3:c.backend.returned=false;break;case 4:c.backend.penetrate=true;break;case 5:c.backend.read=false;break;case 6:c.backend.invoked=false;c.backend.fraction=0;break;}
         auto step=c.CommandFor(Op::Step);c.Send(step);auto r=c.Pop(failure==0?Status::Blocked:failure>=4?Status::TargetLost:Status::Partial);
         Require(r.delta[0]==10*c.backend.fraction,"failure still reports actual engine readback");
+        Require(!(r.flags&kStepNotExecuted),"entering backend never certifies an unexecuted request, even with zero observed displacement");
         Require(!c.engine.Skip(c.now),"blocked/partial/penetrating lease immediately releases");
         c.Send(step);c.Pop(r.status);Require(c.backend.moves==1,"failed sweep retry not reapplied");c.Restore();
     }
+}
+void UnexecutedCredits(){
+    for(int reason=0;reason<3;++reason){
+        Case c;c.Acquire();auto step=c.CommandFor(Op::Step);
+        if(reason==0)c.env.flags=kPaused;
+        if(reason==1)c.env.settled=false;
+        if(reason==2)step.shape_revision++;
+        c.Tick();c.Send(step);auto r=c.Pop(reason==2?Status::Stale:Status::Busy);
+        Require(r.flags==kStepNotExecuted&&c.backend.moves==0,"fresh rejection certifies no backend entry");
+        c.env.flags=0;c.env.settled=true;c.Tick();c.Send(step);auto retry=c.Pop(r.status);
+        Require(!std::memcmp(&r,&retry,sizeof(r))&&c.backend.moves==0,"rejected request retry retains the original zero-execution receipt");
+    }
+    Case c;c.Acquire();auto step=c.CommandFor(Op::Step);c.Send(step);auto r=c.Pop(Status::Applied);
+    Require(!(r.flags&kStepNotExecuted)&&c.backend.moves==1,"successful motion never returns a credit");
+    for(unsigned i=0;i<Ledger::kCapacity+1;++i){c.Send(c.CommandFor(Op::Damage));c.Pop(Status::Unsupported);}
+    c.Send(step);r=c.Pop(Status::Stale);
+    Require(!(r.flags&kStepNotExecuted)&&c.backend.moves==1,"retired request may already have executed and cannot authorize a refund");
+    step.health--;c.Send(step);r=c.Pop(Status::Stale);
+    Require(!(r.flags&kStepNotExecuted),"retired changed payload cannot invent an execution proof");
 }
 void Lifetime(){
     for(int failure=0;failure<7;++failure){
@@ -102,6 +122,23 @@ void Lifetime(){
     Case pending;pending.Acquire();auto cancel=pending.CommandFor(Op::Cancel);pending.Send(cancel);pending.Empty();pending.Restore();pending.Pop(Status::Cancelled);
     Case delayed;delayed.Acquire();auto release=delayed.CommandFor(Op::Release);delayed.Send(release);delayed.engine.Original(1);delayed.now+=1000;delayed.Tick();
     auto r=delayed.Pop(Status::TimedOut);Require(r.restored==1&&delayed.engine.phase()==Engine::Phase::Free,"missing original never reports restored and cannot deadlock admission");
+}
+void PausedHandback(){
+    Case c;c.Acquire();c.Send(c.CommandFor(Op::Step));c.Pop(Status::Applied);c.env.revision++;
+    c.env.flags=kPaused;c.Tick();auto release=c.CommandFor(Op::Release);c.Send(release);c.Empty();
+    c.now+=15000;c.Tick();Require(c.engine.phase()==Engine::Phase::Releasing&&!c.engine.Skip(c.now)&&c.backend.moves==1,"true pause retains only forwarding observation, never movement authority");
+    c.Send(release);c.Empty();auto step=c.CommandFor(Op::Step);c.Send(step);auto denied=c.Pop(Status::Busy);
+    Require(denied.flags==kStepNotExecuted&&c.backend.moves==1,"pending stop during pause cannot authorize another step");
+    c.env.flags=0;c.Tick();c.engine.Original(1);c.engine.Original(2);c.now+=499;c.Tick();c.Empty();
+    Require(c.engine.phase()==Engine::Phase::Releasing&&!c.engine.Skip(c.now),"resume window waits for the third actual original without skipping any tick");
+    c.engine.Original(4);c.Tick();auto r=c.Pop(Status::Released);
+    Require(r.restored==7&&c.engine.phase()==Engine::Phase::Free&&c.backend.moves==1,"owner release confirms complete actual handback after a 15s pause");
+    c.Send(release);auto replay=c.Pop(Status::Released);Require(!std::memcmp(&r,&replay,sizeof(r)),"long-paused stop has one immutable final receipt");
+    Case expired;expired.Acquire();expired.env.flags=kPaused;expired.Tick();expired.Send(expired.CommandFor(Op::Release));expired.Empty();
+    expired.now+=15000;expired.Tick();expired.env.flags=0;expired.Tick();expired.now+=500;expired.Tick();r=expired.Pop(Status::TimedOut);
+    Require(r.restored==0&&expired.engine.phase()==Engine::Phase::Free,"missing original ticks still time out 500ms after actual resume");
+    Case lost;lost.Acquire();lost.env.flags=kPaused;lost.Tick();lost.Send(lost.CommandFor(Op::Release));lost.engine.Lost();lost.Tick();r=lost.Pop(Status::TargetLost);
+    Require(lost.engine.phase()==Engine::Phase::Free,"destroyed identity during pause cannot report successful actor handback");
 }
 void Capacity(){
     Case c;unsigned accepted=0;
@@ -253,4 +290,4 @@ void ContactNormals(){
     damage.Restore();auto final=damage.Pop(Status::Released);Require(final.restored==7&&final.health==45,"handback queued before world damage confirms actual HP and original ticks after the native hit");
 }
 }
-int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();std::printf("world motion arbiter PASS %u assertions\n",checks);}
+int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();UnexecutedCredits();Lifetime();PausedHandback();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();std::printf("world motion arbiter PASS %u assertions\n",checks);}

@@ -13,14 +13,14 @@ public final class WorldMotionRequestsTest {
     private static void check(boolean value,String why){checks++;if(!value)throw new AssertionError(why);}
     private static final class Fake implements WorldMotionRequests.Transport {
         final ArrayList<Command> commands=new ArrayList<>();final ArrayDeque<Reply> replies=new ArrayDeque<>();
-        boolean room=true,closed,fail;
+        boolean room=true,closed,fail,missingStatus;int flags;
         public boolean publish(Command c,long now){if(!room)return false;commands.add(c);if(fail)throw new IllegalStateException("after publish");return true;}
         public Reply poll(){return replies.poll();}
-        public WorldMotionMailbox.NativeStatus status(long now){return new WorldMotionMailbox.NativeStatus(1,now,7,0,19,5);}
+        public WorldMotionMailbox.NativeStatus status(long now){return missingStatus?null:new WorldMotionMailbox.NativeStatus(1,now,7,flags,19,5);}
         public void close(){closed=true;}
     }
     private static Command command(long id,int op,long now){return new Command(op,MACHINE,id,op==RESERVE?0:11,now,21,22,23,24,31,32,5,7,42,2,500,
-        new SifuFrame.Vec3(10,20,90),new SifuFrame.Vec3(op==STEP?10:0,0,0),60,35,92,0,-1,64,5,0,.5f,0,41,6,0,op==STEP?72:0);}
+        new SifuFrame.Vec3(10,20,90),new SifuFrame.Vec3(op==STEP?10:0,0,0),60,35,92,0,-1,64,5,0,.5f,op==DAMAGE?2:0,41,6,0,op==STEP?72:0);}
     private static Reply reply(Command c,int status){return new Reply(c.id(),c.op()==RESERVE?c.id():c.lease(),100,1100,c.world(),c.target(),c.spawn(),status,99,0,72,
         ByteBuffer.wrap(encode(c)).order(ByteOrder.LITTLE_ENDIAN).getLong(200),c.position(),c.delta(),c.health(),0,c.shapeRevision());}
     private static void lost(CompletableFuture<Reply> result,boolean maybe){
@@ -65,6 +65,26 @@ public final class WorldMotionRequestsTest {
         var unavailable=new WorldMotionRequests((mc,nativeSession)->{throw new IllegalArgumentException("ABI");});unavailable.attach(scope);
         var missing=unavailable.request(scope,id->command(id,RESERVE,1000));unavailable.pump(1000);lost(missing,false);unavailable.pump(1001);
         check(unavailable.stats().failures()==1,"failed mapping open backs off without a frame loop exception");
+        var pausedTransport=new Fake();var pausedBroker=new WorldMotionRequests((mc,nativeSession)->pausedTransport);pausedBroker.attach(scope);
+        var release=pausedBroker.request(scope,id->command(id,RELEASE,1000));
+        var step=pausedBroker.request(scope,id->command(id,STEP,1000));
+        var effect=pausedBroker.request(scope,id->command(id,DAMAGE,1000));pausedBroker.pump(1000);
+        var releasePacket=pausedTransport.commands.getFirst();pausedTransport.flags=PAUSED;
+        for(long now=1100;now<=16000;now+=100)pausedBroker.pump(now);
+        check(!release.isDone()&&pausedBroker.pending()==1,"15s continuously observed pause retains only the published handback receipt");lost(step,true);lost(effect,true);
+        check(pausedTransport.commands.stream().filter(c->c.op()==RELEASE).allMatch(releasePacket::equals),"pause cannot change the stop ID, timestamp or payload on retry");
+        pausedTransport.flags=0;pausedBroker.pump(16100);pausedTransport.replies.add(reply(releasePacket,3));pausedBroker.pump(16200);
+        check(release.join().status()==3&&pausedBroker.pending()==0,"real handback receipt completes after long pause without new movement authority");
+        var cancel=pausedBroker.request(scope,id->command(id,CANCEL,17000));pausedBroker.pump(17000);pausedTransport.flags=PAUSED;
+        for(long now=17100;now<=20000;now+=100)pausedBroker.pump(now);
+        check(!cancel.isDone(),"published cancel also waits for actual resumed ticks");pausedTransport.missingStatus=true;
+        for(long now=20100;now<=21700;now+=100)pausedBroker.pump(now);
+        lost(cancel,true);check(pausedBroker.pending()==0,"missing pause proof restores the bounded receipt timeout");
+        pausedTransport.missingStatus=false;pausedTransport.room=false;
+        var unpublished=pausedBroker.request(scope,id->command(id,RELEASE,22000));
+        for(long now=22000;now<=23500;now+=100)pausedBroker.pump(now);
+        lost(unpublished,false);check(pausedBroker.pending()==0,"unpublished stop cannot acquire indefinite paused lifetime");
+        pausedTransport.room=true;var scoped=pausedBroker.request(scope,id->command(id,CANCEL,24000));pausedBroker.pump(24000);pausedBroker.pump(24100);pausedBroker.close();lost(scoped,true);
         broker.close();full.close();timeout.close();System.out.println("World motion requests PASS "+checks+" assertions");
     }
 }

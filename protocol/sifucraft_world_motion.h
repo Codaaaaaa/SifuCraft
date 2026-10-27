@@ -5,13 +5,14 @@
 
 // Independent reliable commands. Module-owned shared memory, never a game UObject layout.
 namespace sifucraft::world_motion {
-inline constexpr std::uint32_t kMagic=0x4D574353,kVersion=3,kSlots=32,kSlotBytes=256,kHeaderBytes=128;
+inline constexpr std::uint32_t kMagic=0x4D574353,kVersion=4,kSlots=32,kSlotBytes=256,kHeaderBytes=128;
 inline constexpr std::uint32_t kMappingBytes=kHeaderBytes+2*kSlots*kSlotBytes;
 enum SlotState:std::uint32_t { Free,Writing,Ready,Reading };
 enum class Op:std::uint32_t { Reserve=1,Step,Release,Cancel,Damage,Renew };
 enum class Source:std::uint32_t { Machine=1,Fluid,WorldEffect };
 enum class Status:std::uint32_t { Pending,Prepared,Applied,Released,Blocked,Partial,Cancelled,Invalid,Stale,Busy,Conflict,Unsupported,TargetLost,TimedOut };
 inline constexpr std::uint32_t kPlayer=1;
+inline constexpr std::uint32_t kStepNotExecuted=8; // rejected Fresh STEP, before any backend.Move; never a retired ledger id
 inline constexpr std::uint32_t kPaused=1,kScripted=2;
 inline constexpr std::uint64_t kMotionCapability=1,kDamageCapability=2,kPauseCapability=4;
 struct Header {
@@ -51,7 +52,7 @@ inline constexpr std::uint32_t kLayout[]={kMagic,kVersion,kSlots,kSlotBytes,kHea
     0,4,8,12,16,24,32,40,48,56,60,64,72,80,88,96,104,
     0,4,8,16,24,32,40,48,56,64,72,80,88,92,96,100,104,116,128,132,136,140,144,156,160,164,168,176,184,192,200,
     0,8,16,24,32,36,40,44,48,52,56,64,72,84,96,100,104,112,116,120,Free,Writing,Ready,Reading,
-    1,2,3,4,5,6,1,2,3,0,1,2,3,4,5,6,7,8,9,10,11,12,13,kPlayer,kPaused,kScripted,1,2,4};
+    1,2,3,4,5,6,1,2,3,0,1,2,3,4,5,6,7,8,9,10,11,12,13,kPlayer,kPaused,kScripted,1,2,4,kStepNotExecuted};
 inline constexpr std::uint64_t kLayoutHash=[] {
     std::uint64_t h=14695981039346656037ull;
     for(auto v:kLayout)for(int shift=0;shift<32;shift+=8){h^=(v>>shift)&255u;h*=1099511628211ull;}
@@ -83,6 +84,7 @@ inline bool Valid(const Command& c){
 inline bool Valid(const Reply& r){
     if(!r.id||!r.at_ms||!r.world||static_cast<std::uint32_t>(r.status)>13||r.restored>7||
        !std::isfinite(r.health)||r.health<0)return false;
+    if((r.flags&kStepNotExecuted)&&(r.flags!=kStepNotExecuted||static_cast<std::uint32_t>(r.status)<6||r.delta[0]!=0||r.delta[1]!=0||r.delta[2]!=0))return false;
     if(!std::isfinite(r.root_radius)||!std::isfinite(r.root_half_height)||
        ((r.root_radius!=0||r.root_half_height!=0)&&(r.root_radius<10||r.root_radius>100||r.root_half_height<r.root_radius||r.root_half_height>200))||
        (r.status==Status::Prepared&&r.root_radius==0))return false;

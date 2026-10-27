@@ -70,6 +70,15 @@ int main(int argc,char** argv){try{
     Reply r{};r.id=11;r.lease=12;r.native_frame=100;r.at_ms=1100;r.world=7;r.target=42;r.spawn=2;r.status=Status::Released;r.actor_serial=99;r.restored=7;
     r.component_token=55;r.source_hash=66;r.position[0]=10;r.position[1]=20;r.position[2]=90;r.delta[0]=10;r.health=60;r.shape_revision=9;r.root_radius=35;r.root_half_height=90;Seal(r);
     bytes=Hex(argv[2]);Check(Valid(r)&&bytes.size()==sizeof(r)&&std::memcmp(bytes.data(),&r,sizeof(r))==0,"independent reply golden bytes");
+    auto unexecuted=r;unexecuted.status=Status::Busy;unexecuted.flags=kStepNotExecuted;
+    for(auto& d:unexecuted.delta)d=0;
+    Seal(unexecuted);Check(Valid(unexecuted),"explicit fresh pre-sweep rejection receipt");
+    for(int mutation=0;mutation<3;++mutation){auto bad=unexecuted;
+        if(mutation==0)bad.status=Status::Applied;
+        if(mutation==1)bad.delta[0]=.01f;
+        if(mutation==2)bad.flags|=1;
+        Seal(bad);Check(!Valid(bad),"contradictory execution proof rejected despite valid digest");
+    }
     auto bad_root=r;bad_root.root_half_height=34;Seal(bad_root);Check(!Valid(bad_root),"physical capsule dimensions reject a correctly hashed malformed reply");
     bad_root=r;bad_root.root_radius=36;Check(!Valid(bad_root),"physical capsule metadata protected by reply digest");
     alignas(64) std::array<std::uint8_t,kMappingBytes> memory{};

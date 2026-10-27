@@ -6,17 +6,18 @@ import java.nio.ByteOrder;
 /** Reliable world commands, independent of presentation and player input epochs. */
 public final class WorldMotionProtocol {
     private WorldMotionProtocol(){}
-    public static final int MAGIC=0x4D574353,VERSION=3,SLOTS=32,SLOT_BYTES=256,HEADER_BYTES=128;
+    public static final int MAGIC=0x4D574353,VERSION=4,SLOTS=32,SLOT_BYTES=256,HEADER_BYTES=128;
     public static final int MAPPING_BYTES=HEADER_BYTES+2*SLOTS*SLOT_BYTES,COMMAND_BYTES=208,REPLY_BYTES=128;
     public static final int FREE=0,WRITING=1,READY=2,READING=3,RESERVE=1,STEP=2,RELEASE=3,CANCEL=4,DAMAGE=5,RENEW=6;
     public static final int MACHINE=1,FLUID=2,WORLD_EFFECT=3,PLAYER=1;
+    public static final int STEP_NOT_EXECUTED=8;
     public static final int PAUSED=1,SCRIPTED=2;
     public static final long MOTION_CAPABILITY=1,DAMAGE_CAPABILITY=2,PAUSE_CAPABILITY=4;
     private static final int[] LAYOUT={MAGIC,VERSION,SLOTS,SLOT_BYTES,HEADER_BYTES,MAPPING_BYTES,208,128,
         0,4,8,12,16,24,32,40,48,56,60,64,72,80,88,96,104,
         0,4,8,16,24,32,40,48,56,64,72,80,88,92,96,100,104,116,128,132,136,140,144,156,160,164,168,176,184,192,200,
         0,8,16,24,32,36,40,44,48,52,56,64,72,84,96,100,104,112,116,120,FREE,WRITING,READY,READING,
-        1,2,3,4,5,6,1,2,3,0,1,2,3,4,5,6,7,8,9,10,11,12,13,PLAYER,PAUSED,SCRIPTED,1,2,4};
+        1,2,3,4,5,6,1,2,3,0,1,2,3,4,5,6,7,8,9,10,11,12,13,PLAYER,PAUSED,SCRIPTED,1,2,4,STEP_NOT_EXECUTED};
     public static final long LAYOUT_HASH;
     static {long h=0xcbf29ce484222325L;for(int v:LAYOUT)for(int s=0;s<32;s+=8){h^=v>>>s&255;h*=0x100000001b3L;}LAYOUT_HASH=h;}
     public static String mappingName(long mc,long nativeSession){
@@ -62,6 +63,7 @@ public final class WorldMotionProtocol {
         var r=new Reply(b.getLong(),b.getLong(),b.getLong(),b.getLong(),b.getInt(),b.getInt(),b.getInt(),b.getInt(),b.getInt(),b.getInt(),
             b.getLong(),b.getLong(),get(b),get(b),b.getFloat(),b.getInt(),b.getLong(),b.getFloat(),b.getFloat());
         long digest=b.getLong();
+        if((r.flags&STEP_NOT_EXECUTED)!=0&&(r.flags!=STEP_NOT_EXECUTED||r.status<6||r.delta.x()!=0||r.delta.y()!=0||r.delta.z()!=0))throw new IllegalArgumentException("contradictory unexecuted step receipt");
         if(r.id==0||r.atMs==0||r.world==0||r.status<0||r.status>13||r.restored<0||r.restored>7||!finite(r.position)||!finite(r.delta)||
             !Float.isFinite(r.health)||r.health<0||!Float.isFinite(r.rootRadius)||!Float.isFinite(r.rootHalfHeight)||
             (r.rootRadius!=0||r.rootHalfHeight!=0)&&(r.rootRadius<10||r.rootRadius>100||r.rootHalfHeight<r.rootRadius||r.rootHalfHeight>200)||

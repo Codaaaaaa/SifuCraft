@@ -39,6 +39,17 @@ public final class WorldMotionProtocolTest {
         check(encode(sample(RESERVE,MACHINE,SifuFrame.Vec3.ZERO,100,PLAYER,0,0)).length==COMMAND_BYTES,"player lifetime scope");
         var bytes=fixture("world_motion_reply.hex");bytes[72]^=1;invalid(()->decodeReply(bytes));
         invalid(()->decodeReply(new byte[REPLY_BYTES-1]));
+        var credit=fixture("world_motion_reply.hex");var packet=java.nio.ByteBuffer.wrap(credit).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        packet.putInt(44,9);packet.putInt(100,STEP_NOT_EXECUTED);
+        for(int offset=84;offset<96;offset+=4)packet.putFloat(offset,0);
+        packet.putLong(120,hash(credit,120));check(decodeReply(credit).flags()==STEP_NOT_EXECUTED,"fresh rejection proof");
+        for(int mutation=0;mutation<3;mutation++){
+            var bad=credit.clone();var b=java.nio.ByteBuffer.wrap(bad).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            if(mutation==0)b.putInt(44,2);
+            if(mutation==1)b.putFloat(84,.01f);
+            if(mutation==2)b.putInt(100,STEP_NOT_EXECUTED|1);
+            b.putLong(120,hash(bad,120));invalid(()->decodeReply(bad));
+        }
         check(!mappingName(11,22).equals(mappingName(12,22)),"mapping changes with MC session");
         invalid(()->mappingName(0,22));
         try(var arena=Arena.ofConfined()){

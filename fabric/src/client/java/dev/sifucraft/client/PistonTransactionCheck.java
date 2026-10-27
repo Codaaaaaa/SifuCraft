@@ -38,10 +38,24 @@ final class PistonTransactionCheck {
     private final List<Vec3> starts=new ArrayList<>();
     private volatile boolean ready,finished;private long deadline;private ServerLevel level;private int stage;
     private volatile long presentationFrames;
-    PistonTransactionCheck(){require(DevWorld.LEVEL_ID.startsWith("sifucraft-piston-motion-check-"),"disposable save required");}
+    private final boolean pause=Boolean.getBoolean("sifucraft.pistonPauseSelfTest");
+    private final java.nio.file.Path pauseFile=java.nio.file.Path.of(System.getProperty("sifucraft.motionPauseControl"));
+    private volatile long pauseRequested,pauseAt,pausedTick;private volatile boolean resumed,pauseChecked;
+    PistonTransactionCheck(){
+        require(DevWorld.LEVEL_ID.startsWith("sifucraft-piston-motion-check-"),"disposable save required");
+        if(pause)PistonMachines.observePrepared((key,reply)->{
+            if(pauseRequested!=0)return;pauseRequested=System.currentTimeMillis();pausedTick=level.getGameTime();pauseControl("1");
+            LoggerFactory.getLogger("sifucraft").info("[piston-pause-test] requested actual world pause at prepared target={}",key);
+        });
+    }
+    private void pauseControl(String value){try{java.nio.file.Files.writeString(pauseFile,value);}catch(java.io.IOException error){throw new java.io.UncheckedIOException(error);}}
     private static void require(boolean value,String why){if(!value)throw new AssertionError("piston transaction: "+why);}
     void clientTick(Minecraft mc,boolean gui){
         if(finished){mc.stop();return;}
+        if(pauseRequested!=0&&mc.isPaused()&&pauseAt==0){pauseAt=System.currentTimeMillis();mc.getSingleplayerServer().execute(()->pausedTick=level.getGameTime());}
+        if(pauseAt!=0&&!resumed&&System.currentTimeMillis()-pauseAt>=1200){
+            resumed=true;mc.getSingleplayerServer().execute(()->{require(level.getGameTime()<=pausedTick+1,"world time froze during actual pause");pauseChecked=true;});pauseControl("0");
+        }
         var view=WorldMotionWorld.current();ready=gui&&view!=null&&view.nativeStatus()!=null&&(view.nativeStatus().capabilities()&1)!=0&&view.shapesCurrent();
         if(mc.level!=null)for(var pos:PistonTimeline.positions())if(mc.level.getBlockEntity(pos) instanceof PistonMovingBlockEntity piston&&PistonTimeline.progress(piston)!=null){
             float progress=piston.getProgress(1);require(progress>=0&&progress<=1,"client presentation uses bounded server timeline");presentationFrames++;
@@ -81,7 +95,8 @@ final class PistonTransactionCheck {
                     results.add(Map.of("id",101+i,"actual",List.of(actual.x,actual.y,actual.z),"reference",List.of(reference.x,reference.y,reference.z)));
                 }
                 var stats=PistonMachines.stats();require(stats.prepared()>=4&&stats.applied()>=16&&stats.committed()>=4,"both half-steps used real production motion transactions: "+stats);
-                require(stats.released()==stats.prepared()&&stats.releaseFailed()==0,"every prepared target completed the new-geometry barrier and all original ticks: "+stats);
+                if(pause){require(pauseAt!=0&&resumed&&pauseChecked&&stats.cancelled()>0&&stats.refundedSteps()>0,"actual pause interrupted the prepared flight, froze world time and returned confirmed unexecuted credits");require(stats.released()>=4&&stats.releaseFailed()==0,"both restarted half-steps completed real restore barriers");}
+                else require(stats.released()==stats.prepared()&&stats.releaseFailed()==0,"every prepared target completed the new-geometry barrier and all original ticks: "+stats);
                 require(presentationFrames>0,"client moving block retained its delayed server timeline");
                 restore(server);stage=2;
                 AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p8-piston-transactions.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(
@@ -91,5 +106,5 @@ final class PistonTransactionCheck {
             if(stage==2&&ready&&PistonMachines.stats().pending()==0)finished=true;
         }catch(Exception|AssertionError e){LoggerFactory.getLogger("sifucraft").error("[piston-transaction-test] FAIL",e);Minecraft.getInstance().execute(()->{throw new AssertionError(e);});finished=true;}
     }
-    void restore(MinecraftServer ignored){for(var ref:references)ref.discard();references.clear();if(level!=null){for(var pos:originals.keySet())level.removeBlockEntity(pos);for(var e:originals.entrySet())level.setBlock(e.getKey(),e.getValue(),2);}originals.clear();}
+    void restore(MinecraftServer ignored){if(pause){PistonMachines.observePrepared(null);pauseControl("0");}for(var ref:references)ref.discard();references.clear();if(level!=null){for(var pos:originals.keySet())level.removeBlockEntity(pos);for(var e:originals.entrySet())level.setBlock(e.getKey(),e.getValue(),2);}originals.clear();}
 }

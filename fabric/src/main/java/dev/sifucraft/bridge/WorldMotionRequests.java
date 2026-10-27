@@ -29,8 +29,8 @@ public final class WorldMotionRequests implements AutoCloseable {
     private static final long RETRY_MS=75,EXPIRE_MS=1500;
     private static final class Pending {
         final Command command;final long hash;final CompletableFuture<Reply> result=new CompletableFuture<>();
-        boolean published,attempted;long lastSent;
-        Pending(Command c){command=c;hash=java.nio.ByteBuffer.wrap(encode(c)).order(java.nio.ByteOrder.LITTLE_ENDIAN).getLong(200);}
+        boolean published,attempted,paused;long lastSent,lastClock,suspended;
+        Pending(Command c){command=c;lastClock=c.issuedMs();hash=java.nio.ByteBuffer.wrap(encode(c)).order(java.nio.ByteOrder.LITTLE_ENDIAN).getLong(200);}
     }
     private final Factory factory;
     private final LinkedHashMap<Long,Pending> pending=new LinkedHashMap<>();
@@ -98,7 +98,14 @@ public final class WorldMotionRequests implements AutoCloseable {
             var iterator=pending.values().iterator();
             while(iterator.hasNext()){
                 var p=iterator.next();
-                if(now<p.command.issuedMs()||now-p.command.issuedMs()>=EXPIRE_MS){
+                boolean stopping=p.published&&(p.command.op()==RELEASE||p.command.op()==CANCEL);
+                boolean paused=stopping&&status!=null&&(status.flags()&PAUSED)!=0&&status.atMs()<=now&&now-status.atMs()<=200;
+                long elapsed=now>=p.lastClock?now-p.lastClock:0;
+                // Only continuously observed true pause suspends a handback
+                // receipt clock. Movement/effect freshness never changes.
+                if(paused&&p.paused&&elapsed<=200)p.suspended+=elapsed;
+                p.paused=paused;p.lastClock=now;
+                if(now<p.command.issuedMs()||now-p.command.issuedMs()-p.suspended>=EXPIRE_MS){
                     iterator.remove();expired++;done.add(()->p.result.completeExceptionally(new Lost("world receipt timeout",p.published)));continue;
                 }
                 if(p.published&&now-p.lastSent<RETRY_MS)continue;

@@ -64,15 +64,23 @@ public:
             phase_=Phase::Owned;Finish(*reserve_,Status::Prepared,now);reserve_.reset();
         }
         if(phase_==Phase::Releasing&&reserve_&&Room()) {Finish(*reserve_,reason_,now);reserve_.reset();}
-        const bool restore_timeout=phase_==Phase::Releasing&&now>=deadline_+500;
+        // Pausing cannot prolong movement ownership (Releasing always forwards).
+        // It can postpone observing original world ticks, which do not run in
+        // a paused world. Give that observation its own bounded resume window.
+        if(phase_==Phase::Releasing){
+            if(env_.flags&kPaused)restore_paused_=true;
+            else if(restore_paused_){restore_deadline_=now+500;restore_paused_=false;}
+        }
+        const bool restore_timeout=phase_==Phase::Releasing&&!(env_.flags&kPaused)&&now>=restore_deadline_;
         if(phase_==Phase::Releasing&&(restored_==7||restore_timeout)&&(!release_||Room())) {
             if(restore_timeout&&restored_!=7)reason_=Status::TimedOut;
+            bool observed=false;
             if(restored_==7){
-                Body observed;
-                if(backend_.Observe(&observed)&&ValidBody(observed)&&observed.serial==body_.serial&&observed.token==body_.token)body_=observed;
+                Body sample;
+                if(!identity_lost_&&backend_.Observe(&sample)&&ValidBody(sample)&&sample.serial==body_.serial&&sample.token==body_.token){body_=sample;observed=true;}
                 else reason_=Status::TargetLost;
             }
-            if(release_) {Finish(*release_,reason_==Status::Released?Status::Released:reason_,now);release_.reset();}
+            if(release_) {Finish(*release_,release_->op==Op::Release&&observed?Status::Released:reason_,now);release_.reset();}
             backend_.Forget();phase_=Phase::Free;
         }
     }
@@ -88,11 +96,18 @@ public:
         case Ledger::Decision::Invalid:Queue(command,Status::Invalid,now);return true;
         case Ledger::Decision::Fresh:break;
         }
-        if(!Scope(command)||command.issued_ms>now||now-command.issued_ms>200) {Finish(command,Status::Stale,now);return true;}
-        if(!env_.ready||env_.flags) {Finish(command,Status::Busy,now);return true;}
-        if(command.flags&kPlayer) {Finish(command,Status::Unsupported,now);return true;}
+        if(!Scope(command)||command.issued_ms>now||now-command.issued_ms>200) {Reject(command,Status::Stale,now);return true;}
+        // Releasing authority needs no ready movement world. A real pause must
+        // not reject the owner's stop request as Busy.
+        if((command.op==Op::Cancel||command.op==Op::Release)&&phase_!=Phase::Free&&Owns(command)){
+            if(release_){Reject(command,Status::Busy,now);return true;}
+            if(command.op==Op::Release&&(!env_.settled||command.shape_revision!=env_.revision||command.shape_revision<release_revision_)){Reject(command,Status::Stale,now);return true;}
+            release_=command;BeginRelease(command.op==Op::Cancel?Status::Cancelled:Status::Released);return true;
+        }
+        if(!env_.ready||env_.flags) {Reject(command,Status::Busy,now);return true;}
+        if(command.flags&kPlayer) {Reject(command,Status::Unsupported,now);return true;}
         if(command.op==Op::Damage){
-            if(command.source!=Source::WorldEffect||!EnvironmentEffect(command.action)){Finish(command,Status::Unsupported,now);return true;}
+            if(command.source!=Source::WorldEffect||!EnvironmentEffect(command.action)){Reject(command,Status::Unsupported,now);return true;}
             const auto effect=backend_.Hurt(command);
             if(effect.invoked&&phase_!=Phase::Free)BeginRelease(Status::TargetLost);
             auto reply=Make(command,effect.status,now);reply.actor_serial=effect.serial;reply.health=effect.health;reply.flags=effect.flags;
@@ -103,43 +118,37 @@ public:
             if(phase_!=Phase::Free) {
                 if(source_.source==Source::Fluid&&command.source==Source::Machine&&command.target==source_.target&&command.spawn==source_.spawn&&command.flags==source_.flags)
                     BeginRelease(Status::Cancelled);
-                Finish(command,Status::Busy,now);return true;
+                Reject(command,Status::Busy,now);return true;
             }
-            if(!env_.settled){Finish(command,Status::Busy,now);return true;}
-            if(command.shape_revision!=env_.revision||now-command.issued_ms>=command.duration_ms) {Finish(command,Status::Stale,now);return true;}
+            if(!env_.settled){Reject(command,Status::Busy,now);return true;}
+            if(command.shape_revision!=env_.revision||now-command.issued_ms>=command.duration_ms) {Reject(command,Status::Stale,now);return true;}
             Body body;
             if(!backend_.Bind(command,&body)||!Expected(command,body)) {
-                backend_.Forget();Finish(command,Status::TargetLost,now);return true;
+                backend_.Forget();Reject(command,Status::TargetLost,now);return true;
             }
             source_=command;body_=body;deadline_=command.issued_ms+command.duration_ms;
-            observed_=restored_=0;spent_=0;last_tick_=command.tick;last_progress_=command.progress;release_revision_=command.shape_revision;reason_=Status::Released;
+            observed_=restored_=0;identity_lost_=false;spent_=0;last_tick_=command.tick;last_progress_=command.progress;release_revision_=command.shape_revision;reason_=Status::Released;
             phase_=Phase::Acquiring;reserve_=command;return true;
         }
-        if(phase_==Phase::Free||!Owns(command)) {Finish(command,Status::Stale,now);return true;}
-        if(command.op==Op::Cancel||command.op==Op::Release) {
-            if(release_) {Finish(command,Status::Busy,now);return true;}
-            // Release waits until the exact post-commit collision revision is present.
-            if(command.op==Op::Release&&(!env_.settled||command.shape_revision!=env_.revision||command.shape_revision<release_revision_)) {Finish(command,Status::Stale,now);return true;}
-            release_=command;BeginRelease(command.op==Op::Cancel?Status::Cancelled:Status::Released);return true;
-        }
-        if(phase_!=Phase::Owned) {Finish(command,Status::Busy,now);return true;}
+        if(phase_==Phase::Free||!Owns(command)) {Reject(command,Status::Stale,now);return true;}
+        if(phase_!=Phase::Owned) {Reject(command,Status::Busy,now);return true;}
         Body current;
         if(now>=deadline_||!backend_.Check(&current)||!SameBody(current,body_)) {
-            BeginRelease(now>=deadline_?Status::TimedOut:Status::TargetLost);Finish(command,reason_,now);return true;
+            BeginRelease(now>=deadline_?Status::TimedOut:Status::TargetLost);Reject(command,reason_,now);return true;
         }
-        if(command.tick<last_tick_||command.progress<last_progress_||!Expected(command,current)) {Finish(command,Status::Stale,now);return true;}
+        if(command.tick<last_tick_||command.progress<last_progress_||!Expected(command,current)) {Reject(command,Status::Stale,now);return true;}
         if(command.op==Op::Renew){
             // Identity/HP/actual pose and a fresh heartbeat retain authority.
             // This operation performs no sweep and need not wait for collision
             // publication. Movement still requires the exact settled epoch below.
-            if(command.source!=Source::Fluid||now-command.issued_ms>=command.duration_ms){Finish(command,Status::Stale,now);return true;}
+            if(command.source!=Source::Fluid||now-command.issued_ms>=command.duration_ms){Reject(command,Status::Stale,now);return true;}
             deadline_=std::max(deadline_,command.issued_ms+command.duration_ms);last_tick_=command.tick;
             Finish(command,Status::Applied,now);return true;
         }
-        if(!env_.settled){Finish(command,Status::Busy,now);return true;}
-        if(command.shape_revision!=env_.revision){Finish(command,Status::Stale,now);return true;}
+        if(!env_.settled){Reject(command,Status::Busy,now);return true;}
+        if(command.shape_revision!=env_.revision){Reject(command,Status::Stale,now);return true;}
         const double requested=Length(command.delta);
-        if(command.source==Source::Machine&&spent_+requested>101.0001) {Finish(command,Status::Invalid,now);BeginRelease(Status::Invalid);return true;}
+        if(command.source==Source::Machine&&spent_+requested>101.0001) {Reject(command,Status::Invalid,now);BeginRelease(Status::Invalid);return true;}
         // Book the request before the engine call. A partial sweep never refunds or retries it.
         spent_+=requested;last_tick_=command.tick;last_progress_=command.progress;
         const auto moved=backend_.Move(current,{command.delta[0],command.delta[1],command.delta[2]});
@@ -178,7 +187,7 @@ public:
         else if(phase_==Phase::Releasing)restored_|=part;
     }
     // Destroyed/replaced components cannot produce their old original Tick again.
-    void Lost() {BeginRelease(Status::TargetLost);restored_=7;}
+    void Lost() {BeginRelease(Status::TargetLost);identity_lost_=true;restored_=7;}
     void CallbackThreadLost(){BeginRelease(Status::TargetLost);}
     bool Pop(Reply* reply){if(out_.empty())return false;*reply=out_.front();out_.pop_front();return true;}
     bool Room()const{return out_.size()<60;}
@@ -210,7 +219,7 @@ private:
         c.actor_stamp==static_cast<std::uint64_t>(body_.serial)&&c.component_token==body_.token;}
     void BeginRelease(Status reason){
         if(phase_==Phase::Free||phase_==Phase::Releasing)return;
-        phase_=Phase::Releasing;restored_=0;reason_=reason;
+        phase_=Phase::Releasing;restored_=0;reason_=reason;restore_deadline_=deadline_+500;restore_paused_=(env_.flags&kPaused)!=0;
     }
     Reply Make(const Command& c,Status status,std::uint64_t now,std::array<float,3> delta={},std::uint32_t flags=0)const{
         Reply r{};r.id=c.id;r.lease=c.op==Op::Reserve?c.id:c.lease;r.native_frame=env_.frame;r.at_ms=std::max<std::uint64_t>(now,1);
@@ -223,12 +232,14 @@ private:
         Seal(r);return r;
     }
     void Queue(const Command& c,Status s,std::uint64_t now){out_.push_back(Make(c,s,now));}
+    void Reject(const Command& c,Status s,std::uint64_t now){Finish(c,s,now,{},c.op==Op::Step?kStepNotExecuted:0);}
     void Finish(const Command& c,Status s,std::uint64_t now,std::array<float,3> delta={},std::uint32_t a=0,std::uint32_t b=0){
         const auto reply=Make(c,s,now,delta,a|b);if(ledger_->Finish(c.id,reply))out_.push_back(reply);
     }
     Backend& backend_;Environment env_;std::unique_ptr<Ledger> owned_;Ledger* ledger_;Phase phase_=Phase::Free;
     Command source_{};Body body_{};std::optional<Command> reserve_,release_;
-    std::uint64_t deadline_=0,last_tick_=0,release_revision_=0;double spent_=0;float last_progress_=0;unsigned observed_=0,restored_=0;
+    std::uint64_t deadline_=0,last_tick_=0,release_revision_=0,restore_deadline_=0;double spent_=0;float last_progress_=0;unsigned observed_=0,restored_=0;
+    bool restore_paused_=false,identity_lost_=false;
     Status reason_=Status::Released;std::deque<Reply> out_;
 };
 
