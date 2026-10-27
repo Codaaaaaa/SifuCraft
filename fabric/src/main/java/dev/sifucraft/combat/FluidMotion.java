@@ -16,6 +16,7 @@ import dev.sifucraft.bridge.WorldWriter;
 import dev.sifucraft.collision.SifuCollision;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -43,6 +44,7 @@ public final class FluidMotion {
         final boolean machine;
         final PistonContacts.Source machineSource;
         Phase phase=Phase.ACQUIRE;CompletableFuture<Reply> pending;Reply binding,last;
+        List<CompletableFuture<Reply>> burst=List.of();
         VanillaFluidBody body;long lease,deadline,renewAt,lastTick=Long.MIN_VALUE;Vec3 requested,actualStart,nextVelocity;int parts,part;
         int pendingOp,retryOp;SifuFrame.Vec3 pendingDelta=SifuFrame.Vec3.ZERO;
         boolean resumeMove;
@@ -93,7 +95,7 @@ public final class FluidMotion {
     public record Sample(EnemyFrame.Key key,Vec3 position,Vec3 velocity,float width,float height,long seed,int entityId,long tick){}
     public interface Observer {void prepared(Sample initial);void simulated(Sample planned);void completed(Sample actual);}
     private static volatile Observer observer;
-    public static void observe(Observer value){if(value!=null&&!Boolean.getBoolean("sifucraft.fluidMotionSelfTest")&&!Boolean.getBoolean("sifucraft.nativeLiftSelfTest")&&!Boolean.getBoolean("sifucraft.pistonAftermathSelfTest"))throw new IllegalStateException("isolated fixture only");observer=value;}
+    public static void observe(Observer value){if(value!=null&&!Boolean.getBoolean("sifucraft.fluidMotionSelfTest")&&!Boolean.getBoolean("sifucraft.nativeLiftSelfTest")&&!Boolean.getBoolean("sifucraft.pistonAftermathSelfTest")&&!Boolean.getBoolean("sifucraft.fluidPartialSelfTest"))throw new IllegalStateException("isolated fixture only");observer=value;}
     private static Sample sample(Flight f){return new Sample(f.key,f.body.position(),f.body.getDeltaMovement(),f.body.getBbWidth(),f.body.getBbHeight(),((long)f.key.id()<<32)^f.key.spawn(),f.body.getId(),f.lastTick);}
     private static boolean available(WorldMotionWorld.View v,ServerLevel level){
         if(v==null||!WorldBlocks.ENABLED||!v.scope().equals(v.requests().scope())||v.scope().save()!=PistonMovePlans.saveKey(level)||v.scene()==null||
@@ -176,14 +178,18 @@ public final class FluidMotion {
     private static Reply result(CompletableFuture<Reply> f){return f==null||!f.isDone()||f.isCompletedExceptionally()||f.isCancelled()?null:f.getNow(null);}
     private static void wake(Flight f){if(!f.queued.compareAndSet(false,true))return;f.level.getServer().execute(()->{f.queued.set(false);if(flights.get(f.key)==f)advance(f);});}
     private static void send(WorldMotionWorld.View v,Flight f,int op,SifuFrame.Vec3 pos,SifuFrame.Vec3 delta,long now){
+        if(op!=STEP)f.burst=List.of();
         f.pendingOp=op;f.pendingDelta=delta;
         if(op==RENEW){f.deadline=now+500;f.renewAt=now+200;}
-        f.pending=v.requests().request(f.scope,id->{if(op==RESERVE)f.lease=id;
+        f.pending=request(v,f,op,pos,delta,now);
+        f.pending.whenComplete((reply,error)->wake(f));
+    }
+    private static CompletableFuture<Reply> request(WorldMotionWorld.View v,Flight f,int op,SifuFrame.Vec3 pos,SifuFrame.Vec3 delta,long now){
+        return v.requests().request(f.scope,id->{if(op==RESERVE)f.lease=id;
             return new Command(op,FLUID,id,op==RESERVE?0:f.lease,now,f.source.getMostSignificantBits(),f.source.getLeastSignificantBits(),f.action,f.level.getGameTime(),
                 f.scope.save(),f.scope.map(),v.nativeStatus().shapeRevision(),f.scope.world(),f.key.id(),f.key.spawn(),op==RESERVE||op==RENEW?500:0,pos,delta,
                 f.initial.health(),f.initial.radius(),f.initial.halfHeight(),0,f.sourcePos.getX(),f.sourcePos.getY(),f.sourcePos.getZ(),0,0,0,f.stateHash,f.sectionRevision,
                 f.binding==null?0:f.binding.actorSerial(),f.binding==null?0:f.binding.componentToken());});
-        f.pending.whenComplete((reply,error)->wake(f));
     }
     private static Vec3 rootFeet(WorldMotionWorld.View v,Flight f,Reply reply){
         var p=reply.position();var offset=f.binding.rootOffset();
@@ -209,7 +215,10 @@ public final class FluidMotion {
         if(!ok)failed++;
     }
     private static void cancel(WorldMotionWorld.View v,Flight f,long now){
-        if(f.phase==Phase.CANCEL)return;f.phase=Phase.CANCEL;
+        if(f.phase==Phase.CANCEL)return;
+        if(logs++<80){var r=result(f.pending);String error=f.pending==null?"none":f.pending.handle((value,failure)->failure==null?"":failure.toString()).getNow("pending");
+            LoggerFactory.getLogger("sifucraft").info("[fluid-motion] cancel target={} phase={} op={} now={} deadline={} available={} same_scope={} flags={} caps={} reply={} error={} caller={}",f.key,f.phase,f.pendingOp,now,f.deadline,available(v,f.level),v!=null&&f.scope.equals(v.scope()),v==null||v.nativeStatus()==null?-1:v.nativeStatus().flags(),v==null||v.nativeStatus()==null?-1:v.nativeStatus().capabilities(),r==null?-1:r.status(),error,Thread.currentThread().getStackTrace()[2].getLineNumber());
+        }f.phase=Phase.CANCEL;
         if(f.binding!=null&&v!=null&&f.scope.equals(v.requests().scope())&&v.nativeStatus()!=null)send(v,f,CANCEL,f.last.position(),SifuFrame.Vec3.ZERO,now);
         else retire(f,false); // an unobserved reservation remains bounded by its native 500ms deadline
     }
@@ -226,7 +235,7 @@ public final class FluidMotion {
         // short authority while the new geometry ACK arrives, then issue a NEW
         // command against that epoch. Never replay a partial/applied movement.
         var rejection=result(f.pending);
-        if(f.binding!=null&&binding(f,rejection)&&(rejection.status()==8||rejection.status()==9)){
+        if(f.burst.isEmpty()&&f.binding!=null&&binding(f,rejection)&&(rejection.status()==8||rejection.status()==9)){
             // This command performed no movement. Preserve the unfinished
             // original physics tick (including velocity/fall bookkeeping), and
             // try only its unexecuted segment against the NEW collision epoch.
@@ -235,7 +244,8 @@ public final class FluidMotion {
         }
         if(f.retryOp!=0){
             if(f.retryOp==STEP&&now>=f.renewAt){f.retryOp=0;f.resumeMove=true;f.phase=Phase.RENEW;send(v,f,RENEW,f.last.position(),SifuFrame.Vec3.ZERO,now);return;}
-            if(f.retryOp!=RENEW&&(!v.shapesCurrent()||!valid(v,f.level)))return;int op=f.retryOp;f.retryOp=0;send(v,f,op,f.last.position(),f.pendingDelta,now);return;
+            if(f.retryOp!=RENEW&&(!v.shapesCurrent()||!valid(v,f.level)))return;int op=f.retryOp;f.retryOp=0;
+            if(op==STEP)sendPart(v,f,now);else send(v,f,op,f.last.position(),f.pendingDelta,now);return;
         }
         if(f.phase==Phase.ACQUIRE){
             var r=result(f.pending);if(r==null||r.status()!=1||r.actorSerial()<=0||r.rootRadius()<10||r.rootHalfHeight()<r.rootRadius()){retire(f,false);return;}
@@ -258,10 +268,19 @@ public final class FluidMotion {
             if(ok){if(r.status()==3){applied(v,f,r);if(f.machine&&!f.damageYield&&!f.machineYield)machineReleased(f.level,f.scope,f.key,f.binding,r,Vec3.ZERO,f.machineSource);}released++;}retire(f,ok);return;
         }
         if(f.phase==Phase.MOVE){
-            var r=result(f.pending);if(!binding(f,r)||(r.status()!=2&&r.status()!=4&&r.status()!=5)){cancel(v,f,now);return;}
-            f.last=r;applied(v,f,r);f.pending=null;steps++;
-            if(r.status()!=2){blocked++;f.part=f.parts;f.partial=true;f.nativeGround=(r.flags()&4)!=0;f.contactNormal=normal(r);}
-            else f.part++;
+            if(f.burst.isEmpty()){
+                if(now>=f.renewAt){f.resumeMove=true;f.phase=Phase.RENEW;send(v,f,RENEW,f.last.position(),SifuFrame.Vec3.ZERO,now);}else sendPart(v,f,now);return;
+            }
+            int completed=0;boolean rejected=false;
+            for(var future:f.burst){
+                var r=result(future);if(!binding(f,r)||(r.status()!=2&&r.status()!=4&&r.status()!=5&&r.status()!=8&&r.status()!=9)){cancel(v,f,now);return;}
+                f.last=r;applied(v,f,r);
+                if(r.status()==8||r.status()==9){rejected=true;continue;}
+                steps++;completed++;
+                if(r.status()!=2){blocked++;f.partial=true;f.nativeGround=(r.flags()&4)!=0;f.contactNormal=normal(r);}
+            }
+            f.burst=List.of();f.pending=null;f.part=f.partial?f.parts:f.part+completed;
+            if(rejected&&!f.partial&&f.part<f.parts){f.retryOp=STEP;f.pendingDelta=partDelta(f);return;}
             if(f.part<f.parts){
                 if(now>=f.renewAt){f.resumeMove=true;f.phase=Phase.RENEW;send(v,f,RENEW,f.last.position(),SifuFrame.Vec3.ZERO,now);}else sendPart(v,f,now);
                 return;
@@ -297,7 +316,16 @@ public final class FluidMotion {
         f.parts=(int)Math.ceil(f.requested.length()/.1);f.part=0;f.phase=Phase.MOVE;sendPart(v,f,now);
     }
     private static void sendPart(WorldMotionWorld.View v,Flight f,long now){
-        send(v,f,STEP,f.last.position(),partDelta(f),now);
+        // Reserve eight broker slots for heartbeat/release/damage. Native still
+        // validates and sweeps every <=10cm command separately and in order.
+        int count=Math.min(Math.min(8,f.parts-f.part),24-v.requests().pending());if(count<=0){f.pending=null;return;}
+        var delta=partDelta(f);var position=f.last.position();var batch=new ArrayList<CompletableFuture<Reply>>(count);
+        for(int i=0;i<count;i++){
+            batch.add(request(v,f,STEP,position,delta,now));position=new SifuFrame.Vec3(position.x()+delta.x(),position.y()+delta.y(),position.z()+delta.z());
+        }
+        f.burst=List.copyOf(batch);f.pendingOp=STEP;f.pendingDelta=delta;
+        f.pending=CompletableFuture.allOf(batch.toArray(new CompletableFuture<?>[0])).thenApply(ignored->batch.get(batch.size()-1).getNow(null));
+        f.pending.whenComplete((reply,error)->wake(f));
     }
     private static SifuFrame.Vec3 partDelta(Flight f){
         var d=f.requested.scale(100.0/f.parts);

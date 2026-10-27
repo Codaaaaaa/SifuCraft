@@ -32,6 +32,7 @@ class Harness {
                 else if(amount<0&&lo[axis]>=max[axis]-.001f)amount=std::max(amount,std::min(0.f,max[axis]-lo[axis]));
             };
             const float floor_min[]{-100000,-100000,-100},floor_max[]{100000,100000,0};clip(floor_min,floor_max);
+            if(owner->ceiling_>0){const float min[]{350,-50,owner->ceiling_},max[]{550,150,owner->ceiling_+50};clip(min,max);}
             if(owner->shapes_)for(const auto& section:owner->shapes_->parts)for(const auto& box:section.boxes){
                 const float offset[]{section.section.x*100.f,section.section.y*100.f,section.section.z*100.f};
                 float min[3],max[3];for(int i=0;i<3;++i){min[i]=offset[i]+box.min[i];max[i]=offset[i]+box.max[i];}clip(min,max);
@@ -56,11 +57,13 @@ class Harness {
     Fleet<2> fleet_{Pointers()};Mailbox mailbox_;
     const shape_data::Frame* shapes_=nullptr;
     bool initialized_=false;unsigned calls_=0;
+    float ceiling_=0;
     std::deque<Reply> replies_;
 public:
-    void Initialize(const protocol::Vec3& player,float rise=0){
+    void Initialize(const protocol::Vec3& player,float rise=0,float ceiling=0){
         if(initialized_)return;
         initialized_=true;
+        ceiling_=ceiling;if(ceiling_>0)SC_LOG("[fake-motion] unpublished test-only physical ceiling z=%.3fcm; absent from scene metadata",ceiling_);
         for(unsigned i=0;i<2;++i){auto& a=actors_[i];a.id=101+i;a.body={static_cast<int>(1001+i),818+i,{player.x+450,player.y+50+i*200,92+rise},60,35,92};}
     }
     void Tick(std::uint64_t native,std::uint64_t mc,std::uint64_t frame,std::uint32_t world,std::uint64_t now,const shape_data::Frame& shapes,std::uint32_t flags=0){
