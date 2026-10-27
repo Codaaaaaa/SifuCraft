@@ -12,6 +12,8 @@
 #include "combat/target_retention.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
+#include "hooks/game_hooks.h"
+#include "input/input_router.h"
 #include "probe/combat_sample.h"
 #include "ue/transform.h"
 
@@ -33,12 +35,27 @@ unsigned g_gate_users=0; // game thread only, shared forwarding-hook ownership
 std::atomic<std::uint32_t> g_flags{kScripted};
 std::atomic<bool> g_ready{false};
 std::uintptr_t g_base=0;
+struct PlayerPublication {motion::Scope scope;std::uint64_t stamp=0,at=0,save=0,map=0;PlayerInfo info;};
+PlayerPublication g_player_publication; // g_lock protects runtime publication
+std::uint64_t Stamp(ue::ObjectIdentity id){return (std::uint64_t(static_cast<std::uint32_t>(id.index))<<32)|static_cast<std::uint32_t>(id.serial);}
+const char* PlayerBody(motion::Target* target,motion::BodySample* sample,bool geometry){
+    const auto& c=g_current.actors;
+    if(!c.pawn_identity.valid()||ue::IdentityOf(c.pawn)!=c.pawn_identity)return "player-identity";
+    const auto movement=mem::ReadPtr(c.pawn+off::ACharacter::CharacterMovement);const auto id=ue::IdentityOf(movement);
+    *target={c.pawn,movement,static_cast<std::uint32_t>(c.pawn_identity.index),1,c.pawn_identity.serial,id.index,id.serial};
+    if(const auto why=motion::CheckPlayerBody(c,*target,sample,geometry))return why;
+    if(!ue::IdentityOf(sample->root).valid())return "player-root-identity";
+    return nullptr;
+}
 unsigned PartIndex(motion::Part part){return part==motion::Part::Movement?0:part==motion::Part::AI?1:2;}
 class NativeBackend final:public Backend {
 public:
     void Slot(std::size_t index){slot_=index;}
+    bool SupportsPlayer(Source source)const override{return source==Source::Machine;}
     bool Bind(const Command& c,Body* out)override {
         if(motion::CheckWorld(g_base,g_current.actors,GetTickCount64()))return false;
+        player_=(c.flags&kPlayer)!=0;
+        if(player_)return BindPlayer(c,out);
         const auto& targets=g_current.actors.targets;
         const auto it=std::find_if(targets.begin(),targets.end(),[&](const auto& t){return t.id==c.target&&t.spawn==c.spawn;});
         if(it==targets.end())return false;
@@ -70,6 +87,16 @@ public:
         return true;
     }
     bool Identity()const {
+        if(player_)return target_.valid()&&g_current.actors.pawn==target_.actor&&
+            g_current.actors.pawn_identity==ue::ObjectIdentity{static_cast<int>(target_.id),target_.serial}&&
+            ue::IdentityOf(target_.actor)==g_current.actors.pawn_identity&&
+            ue::IdentityOf(target_.movement)==ue::ObjectIdentity{target_.movement_index,target_.movement_serial}&&
+            mem::ReadPtr(target_.movement+off::UActorComponent::OwnerPrivate)==target_.actor&&
+            mem::ReadPtr(target_.actor+off::ACharacter::CharacterMovement)==target_.movement&&
+            mem::ReadPtr(target_.actor+off::AActor::RootComponent)==hit_&&
+            mem::ReadPtr(target_.actor+off::ACharacter::CapsuleComponent)==hit_&&
+            mem::ReadPtr(target_.actor+off::AFightingCharacter::m_HealthComponent)==sample_.health&&
+            ue::IdentityOf(hit_)==hit_id_&&ue::OuterOf(hit_)==target_.actor;
         motion::Peers peers;
         return target_.valid()&&ue::IdentityOf(target_.actor)==ue::ObjectIdentity{static_cast<int>(target_.id),target_.serial}&&
             ue::IdentityOf(target_.movement)==ue::ObjectIdentity{target_.movement_index,target_.movement_serial}&&
@@ -82,6 +109,7 @@ public:
     }
     bool Check(Body* out)override {
         if(g_wrong_thread[slot_].load()||!Identity()||motion::CheckWorld(g_base,g_current.actors,GetTickCount64()))return false;
+        if(player_){if(motion::CheckPlayerBody(g_current.actors,target_,&sample_,false)||sample_.mode!=mode_)return false;return Convert(sample_,out);}
         motion::Peers peers;
         if(motion::CheckBody(g_current.actors,target_,&sample_,false,false)||
            sample_.mode!=mode_||motion::CheckPeers(g_base,g_current.actors,target_,&peers,true)||peers!=peers_)return false;
@@ -97,7 +125,7 @@ public:
     }
     Sweep Move(const Body&,const std::array<float,3>& delta)override {
         motion::SweepResult result;
-        const bool valid=motion::SweepBody(g_current.actors,target_,sample_,{delta[0],delta[1],delta[2]},&result);
+        const bool valid=motion::SweepBody(g_current.actors,target_,sample_,{delta[0],delta[1],delta[2]},&result,player_);
         if(result.invoked)sample_=result.body;
         Body body;const bool anchor=Convert(sample_,&body);
         return {body,result.invoked,valid&&anchor,result.returned,result.blocking,result.penetrating,{result.normal.x,result.normal.y,result.normal.z}};
@@ -126,16 +154,32 @@ public:
         return out;
     }
     void Forget()override {
-        AcquireSRWLockExclusive(&g_lock);g_retained.Release(retained_world_,target_.id,target_.spawn,GetTickCount64());ReleaseSRWLockExclusive(&g_lock);retained_world_=0;
+        if(!player_){AcquireSRWLockExclusive(&g_lock);g_retained.Release(retained_world_,target_.id,target_.spawn,GetTickCount64());ReleaseSRWLockExclusive(&g_lock);}retained_world_=0;
         for(auto& watch:g_watches[slot_])watch.store(0);
         if(gate_){gate_=false;if(g_gate_users&&!--g_gate_users&&!combat::ai_gate::Uninstall())SC_LOG("[world-motion] cleanup slot changed; all filters cleared");}
-        target_={};peers_={};sample_={};token_=0;hit_=0;hit_id_={};
+        target_={};peers_={};sample_={};token_=0;hit_=0;hit_id_={};player_=false;
     }
 private:
+    bool BindPlayer(const Command& c,Body* out){
+        if(c.actor_stamp!=Stamp(g_current.actors.pawn_identity))return Refuse("player-stamp");
+        if(const auto why=PlayerBody(&target_,&sample_,true))return Refuse(why);
+        hit_=sample_.root;hit_id_=ue::IdentityOf(hit_);mode_=sample_.mode;
+        const std::uint64_t identity[]={g_current.actors.scope.native_session,g_current.actors.scope.peer_session,c.actor_stamp,
+            static_cast<std::uint64_t>(target_.movement_index),static_cast<std::uint64_t>(target_.movement_serial),
+            static_cast<std::uint64_t>(hit_id_.index),static_cast<std::uint64_t>(hit_id_.serial)};
+        token_=Hash(identity,sizeof(identity));if(!token_)token_=1;
+        if(!Convert(sample_,out))return false;
+        g_wrong_thread[slot_].store(0);g_watches[slot_][0].store(target_.movement);g_watches[slot_][1].store(0);g_watches[slot_][2].store(0);
+        SC_LOG("[world-player] observe pawn=%u/%d root=%d/%d token=%016llX thread=%lu",target_.id,target_.serial,hit_id_.index,hit_id_.serial,token_,GetCurrentThreadId());return true;
+    }
     bool Refuse(const char* reason){
         static unsigned logged=0;if(logged<32){++logged;SC_LOG("[world-motion] qualification REFUSE target=%u/%u class=%s reason=%s mode=%d",target_.id,target_.spawn,ue::ClassName(target_.actor).c_str(),reason,sample_.mode);}return false;
     }
     bool Convert(const motion::BodySample& s,Body* out)const{
+        if(player_){
+            if(s.root!=hit_||!hit_id_.valid()||ue::IdentityOf(hit_)!=hit_id_)return false;
+            *out={target_.serial,token_,{s.position.x,s.position.y,s.position.z},s.hp,s.radius,s.half,{0,0,0},s.radius,s.half};return true;
+        }
         // EnemyFrame and the MC reference body use the hit capsule anchor. The
         // swept root capsule is a different component (90cm vs 92cm in this build).
         // Read the real child transform after every sweep/original Tick; never
@@ -149,7 +193,7 @@ private:
         *out={target_.serial,token_,{position.x,position.y,position.z},s.hp,radius,half,
             {s.position.x-position.x,s.position.y-position.y,s.position.z-position.z},s.radius,s.half};return true;
     }
-    motion::Target target_;motion::Peers peers_;motion::BodySample sample_;std::uint64_t token_=0;std::size_t slot_=0;bool gate_=false;int mode_=-1;
+    motion::Target target_;motion::Peers peers_;motion::BodySample sample_;std::uint64_t token_=0;std::size_t slot_=0;bool gate_=false,player_=false;int mode_=-1;
     std::uintptr_t hit_=0;ue::ObjectIdentity hit_id_;std::uint32_t retained_world_=0;
 };
 std::array<NativeBackend,kTargets> g_backends;
@@ -174,7 +218,7 @@ void Exchange(Context context,Mailbox& mailbox) {
     const auto scope=context.actors.scope;
     AcquireSRWLockExclusive(&g_lock);
     const bool changed=g_io_native!=scope.native_session||g_io_peer!=scope.peer_session;
-    if(changed){g_commands.clear();g_replies.clear();g_retained.Reset();g_io_native=scope.native_session;g_io_peer=scope.peer_session;}
+    if(changed){g_commands.clear();g_replies.clear();g_retained.Reset();g_player_publication={};g_io_native=scope.native_session;g_io_peer=scope.peer_session;}
     g_published=std::move(context);
     if(!scope.peer_session){mailbox.Close();g_ready.store(false);ReleaseSRWLockExclusive(&g_lock);return;}
     if(!mailbox.Open(scope.peer_session,scope.native_session)){ReleaseSRWLockExclusive(&g_lock);return;}
@@ -185,16 +229,19 @@ void Exchange(Context context,Mailbox& mailbox) {
         if(valid)g_commands.push_back(command);
         else SC_LOG("[world-motion] malformed command discarded");
     }
-    const auto stamp=(std::uint64_t(static_cast<std::uint32_t>(g_published.actors.pawn_identity.index))<<32)|static_cast<std::uint32_t>(g_published.actors.pawn_identity.serial);
+    const auto stamp=Stamp(g_published.actors.pawn_identity);
     // H1 may stop while UE is truly paused. Runtime must still report the real
     // PauserPlayerState, so MC does not run scheduled world ticks during that pause.
     const auto level=mem::ReadPtr(scope.world+off::UWorld::PersistentLevel);
     const auto settings=mem::ReadPtr(level+off::ULevel::WorldSettings);
     const bool settings_live=ue::IsLive(settings);
     const auto flags=(g_flags.load()&~kPaused)|(settings_live&&mem::ReadOr<std::uintptr_t>(settings+off::AWorldSettings::PauserPlayerState,0)?kPaused:0);
-    const auto capabilities=changed?0ull:((g_ready.load()?kMotionCapability:0)|(g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kDamageCapability:0)|(settings_live?kPauseCapability:0));
-    mailbox.Status(scope.generation,capabilities,GetTickCount64(),stamp,
-        blocks::ShapesAppliedRevision(),flags);
+    const auto now=GetTickCount64();
+    const bool player_ready=g_ready.load()&&!flags&&g_player_publication.scope==scope&&g_player_publication.stamp==stamp&&
+        g_player_publication.save==g_published.save&&g_player_publication.map==g_published.map&&g_player_publication.at<=now&&now-g_player_publication.at<=200&&
+        input::Router().owner()==protocol::InputOwner::Sifu&&!hooks::PoseActive();
+    const auto capabilities=changed?0ull:((g_ready.load()?kMotionCapability:0)|(g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kDamageCapability:0)|(settings_live?kPauseCapability:0)|(player_ready?kPlayerMachineCapability:0));
+    mailbox.Status(scope.generation,capabilities,now,stamp,blocks::ShapesAppliedRevision(),flags,player_ready?g_player_publication.info:PlayerInfo{});
     ReleaseSRWLockExclusive(&g_lock);
 }
 void ApplyOnGameThread(std::uintptr_t base) {
@@ -222,8 +269,17 @@ void ApplyOnGameThread(std::uintptr_t base) {
     }
     for(unsigned n=0;n<8&&!commands.empty()&&g_fleet.Submit(commands.front(),now);++n)commands.pop_front();
     g_fleet.Update(env,now);
+    PlayerPublication player;
+    if(ready&&settled&&!flags){
+        motion::Target target;motion::BodySample body;
+        const auto reason=PlayerBody(&target,&body,false);
+        if(!reason)player={scope,Stamp(g_current.actors.pawn_identity),now,g_current.save,g_current.map,{{body.position.x,body.position.y,body.position.z},body.radius,body.half,body.hp}};
+        static const char* previous=nullptr;static unsigned logged=0;
+        if(input::Router().owner()==protocol::InputOwner::Sifu&&!hooks::PoseActive()&&reason!=previous&&logged<32){previous=reason;++logged;SC_LOG("[world-player] eligibility=%s pawn=%d/%d",reason?reason:"ready",g_current.actors.pawn_identity.index,g_current.actors.pawn_identity.serial);}
+    }
     AcquireSRWLockExclusive(&g_lock);
     if(g_io_native==scope.native_session&&g_io_peer==scope.peer_session) {
+        g_player_publication=player;
         // Any unaccepted commands precede the next runtime batch.
         while(!commands.empty()){g_commands.push_front(commands.back());commands.pop_back();}
         Reply reply;

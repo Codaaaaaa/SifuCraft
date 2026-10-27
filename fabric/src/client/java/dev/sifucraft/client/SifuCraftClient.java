@@ -113,6 +113,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private dev.sifucraft.combat.EnvironmentPathCheck environmentPathCheck;
     private PistonTicketsCheck pistonTicketsCheck;
     private NativeFluidCheck nativeFluidCheck;
+    private NativePlayerMotionCheck nativePlayerMotionCheck;
     private NativeLiftCheck nativeLiftCheck;
     private MachineProjectileCheck machineProjectileCheck;
     private NativeMachineCheck nativeMachineCheck;
@@ -391,6 +392,10 @@ public final class SifuCraftClient implements ClientModInitializer {
             nativeFluidCheck=new NativeFluidCheck();ServerTickEvents.END_SERVER_TICK.register(nativeFluidCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(nativeFluidCheck::restore);
         }
+        if(Boolean.getBoolean("sifucraft.nativePlayerMotionSelfTest")){
+            nativePlayerMotionCheck=new NativePlayerMotionCheck();ServerTickEvents.END_SERVER_TICK.register(nativePlayerMotionCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(nativePlayerMotionCheck::restore);
+        }
         if(Boolean.getBoolean("sifucraft.nativeLiftSelfTest")){
             nativeLiftCheck=new NativeLiftCheck();ServerTickEvents.END_SERVER_TICK.register(nativeLiftCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(nativeLiftCheck::restore);
@@ -635,6 +640,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(environmentPathCheck!=null)environmentPathCheck.clientTick(minecraft);
         if(pistonTicketsCheck!=null)pistonTicketsCheck.clientTick(minecraft);
         if(nativeFluidCheck!=null)nativeFluidCheck.clientTick(minecraft,frame);
+        if(nativePlayerMotionCheck!=null)nativePlayerMotionCheck.clientTick(minecraft,frame);
         if(nativeLiftCheck!=null)nativeLiftCheck.clientTick(minecraft,frame);
         if(machineProjectileCheck!=null)machineProjectileCheck.clientTick(minecraft,frame);
         if(nativeMachineCheck!=null)nativeMachineCheck.clientTick(minecraft,frame);
