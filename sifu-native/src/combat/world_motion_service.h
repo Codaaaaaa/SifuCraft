@@ -14,4 +14,6 @@ bool Skip(std::uintptr_t component,combat::motion::Part part);
 void AfterOriginal(std::uintptr_t component,combat::motion::Part part);
 void PoseOwnedMovement(std::uintptr_t component);
 void BeforeOriginalMovement(std::uintptr_t component);
+struct PublishedTargets {std::vector<std::uint64_t> active,retained;};
+PublishedTargets RetainedTargets(std::uint32_t world,std::uint64_t now);
 }

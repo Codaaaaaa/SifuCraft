@@ -8,6 +8,7 @@
 #include "combat/base_sync.h"
 #include "combat/damage.h"
 #include "combat/world_motion_engine.h"
+#include "combat/target_retention.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "probe/combat_sample.h"
@@ -18,6 +19,7 @@ namespace {
 namespace motion=combat::motion;
 namespace off=gen::off;
 SRWLOCK g_lock=SRWLOCK_INIT;
+TargetRetention g_retained;
 Context g_published,g_current;
 std::deque<Command> g_commands;
 std::deque<Reply> g_replies;
@@ -60,6 +62,9 @@ public:
         token_=Hash(identity,sizeof(identity));if(!token_)token_=1;
         g_wrong_thread[slot_].store(0);g_watches[slot_][0].store(movement);g_watches[slot_][1].store(peers_.ai.pointer);g_watches[slot_][2].store(peers_.behavior.pointer);
         if(!Convert(sample_,out))return false;
+        retained_world_=g_current.actors.scope.generation;
+        AcquireSRWLockExclusive(&g_lock);const bool retained=g_retained.Keep(retained_world_,target_.id,target_.spawn,GetTickCount64());ReleaseSRWLockExclusive(&g_lock);
+        if(!retained)return false;
         SC_LOG("[world-motion] observe target=%u/%u/%d token=%016llX thread=%lu",target_.id,target_.spawn,target_.serial,token_,GetCurrentThreadId());
         return true;
     }
@@ -120,6 +125,7 @@ public:
         return out;
     }
     void Forget()override {
+        AcquireSRWLockExclusive(&g_lock);g_retained.Release(retained_world_,target_.id,target_.spawn,GetTickCount64());ReleaseSRWLockExclusive(&g_lock);retained_world_=0;
         for(auto& watch:g_watches[slot_])watch.store(0);
         if(gate_){gate_=false;if(g_gate_users&&!--g_gate_users&&!combat::ai_gate::Uninstall())SC_LOG("[world-motion] cleanup slot changed; all filters cleared");}
         target_={};peers_={};sample_={};token_=0;hit_=0;hit_id_={};
@@ -143,7 +149,7 @@ private:
             {s.position.x-position.x,s.position.y-position.y,s.position.z-position.z},s.radius,s.half};return true;
     }
     motion::Target target_;motion::Peers peers_;motion::BodySample sample_;std::uint64_t token_=0;std::size_t slot_=0;bool gate_=false;int mode_=-1;
-    std::uintptr_t hit_=0;ue::ObjectIdentity hit_id_;
+    std::uintptr_t hit_=0;ue::ObjectIdentity hit_id_;std::uint32_t retained_world_=0;
 };
 std::array<NativeBackend,kTargets> g_backends;
 std::array<Backend*,kTargets> BackendPointers(){
@@ -160,11 +166,14 @@ std::uint32_t Flags(const motion::Context& c) {
     return reason?kScripted:0;
 }
 }
+PublishedTargets RetainedTargets(std::uint32_t world,std::uint64_t now){
+    AcquireSRWLockShared(&g_lock);PublishedTargets targets{g_retained.Active(world),g_retained.Snapshot(world,now)};ReleaseSRWLockShared(&g_lock);return targets;
+}
 void Exchange(Context context,Mailbox& mailbox) {
     const auto scope=context.actors.scope;
     AcquireSRWLockExclusive(&g_lock);
     const bool changed=g_io_native!=scope.native_session||g_io_peer!=scope.peer_session;
-    if(changed){g_commands.clear();g_replies.clear();g_io_native=scope.native_session;g_io_peer=scope.peer_session;}
+    if(changed){g_commands.clear();g_replies.clear();g_retained.Reset();g_io_native=scope.native_session;g_io_peer=scope.peer_session;}
     g_published=std::move(context);
     if(!scope.peer_session){mailbox.Close();g_ready.store(false);ReleaseSRWLockExclusive(&g_lock);return;}
     if(!mailbox.Open(scope.peer_session,scope.native_session)){ReleaseSRWLockExclusive(&g_lock);return;}

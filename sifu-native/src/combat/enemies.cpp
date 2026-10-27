@@ -7,6 +7,7 @@
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "probe/combat_sample.h"
+#include "combat/world_motion_service.h"
 #include "ue/transform.h"
 
 namespace sifucraft::combat {
@@ -84,6 +85,10 @@ void Enemies::Update(std::uintptr_t world, std::uint32_t generation, std::uintpt
         next_scan_ms_ = now_ms + 500;
         Scan(world, pawn);
     }
+    const auto retained=world_motion::RetainedTargets(generation,now_ms);
+    const auto priority=[&](std::uint32_t id,std::uint32_t spawn){const auto key=(std::uint64_t(id)<<32)|spawn;
+        if(std::find(retained.active.begin(),retained.active.end(),key)!=retained.active.end())return 2;
+        return std::find(retained.retained.begin(),retained.retained.end(),key)!=retained.retained.end()?1:0;};
     for (const auto& candidate : candidates_) {
         const auto actor = candidate.actor;
         const auto id = static_cast<std::uint32_t>(candidate.identity.index);
@@ -115,7 +120,7 @@ void Enemies::Update(std::uintptr_t world, std::uint32_t generation, std::uintpt
             !ue::ReadWorldTransform(capsule, &location, &rotation) || !Finite(location) || location.z < -100000) continue;
         const float dx = location.x - player_location.x, dy = location.y - player_location.y;
         const float dz = location.z - player_location.z;
-        if (dx * dx + dy * dy + dz * dz > kRadiusCm * kRadiusCm) continue;
+        if (dx * dx + dy * dy + dz * dz > kRadiusCm * kRadiusCm && !priority(id,spawn)) continue;
         const float scale = transform.MinAxisScale();
         const float radius = mem::ReadOr<float>(capsule + off::UCapsuleComponent::CapsuleRadius, NAN) * scale;
         const float half = mem::ReadOr<float>(capsule + off::UCapsuleComponent::CapsuleHalfHeight, NAN) * scale;
@@ -140,6 +145,7 @@ void Enemies::Update(std::uintptr_t world, std::uint32_t generation, std::uintpt
         return dx * dx + dy * dy + dz * dz;
     };
     std::sort(entries_.begin(), entries_.end(), [&](const auto& a, const auto& b) {
+        const auto ar=priority(a.id,a.spawn),br=priority(b.id,b.spawn);if(ar!=br)return ar>br;
         const float da = distance(a), db = distance(b);
         return da != db ? da < db : a.id < b.id;
     });

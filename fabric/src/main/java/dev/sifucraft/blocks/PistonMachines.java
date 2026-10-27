@@ -127,6 +127,8 @@ public final class PistonMachines {
         var bodies=contacts(view,preview);
         if(bodies.isEmpty()){originals(level,members);token.lastCommitTick=level.getGameTime();return;}
         if(!fresh(view)||!view.shapesCurrent()||(view.nativeStatus().capabilities()&MOTION_CAPABILITY)==0||flights.size()>=128)return;
+        boolean yielding=false;for(var key:bodies.keySet())yielding|=dev.sifucraft.combat.FluidMotion.yieldToMachine(key);
+        if(yielding){for(var member:members)PistonTimeline.track(member,view.scope());return;}
         flight=new Flight(level,piston,members,token,view.scope(),now);for(var member:members){flights.put(member,flight);PistonTimeline.track(member,view.scope());}activeServer=level.getServer();
         for(var key:bodies.keySet()){
             var source=preview.moves().stream().filter(m->key.equals(m.enemy())).findFirst().orElseThrow().source();

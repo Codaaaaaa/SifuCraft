@@ -31,6 +31,7 @@ public final class PistonPreview {
         final Vec3 initial;Vec3 position,velocity;AABB box;PistonMotionLimit.State budget;
         Shadow(Entity e,Map<EnemyFrame.Key,PistonMotionLimit.State> budgets,Map<EnemyFrame.Key,Reply> bindings){
             position=e.position();velocity=e.getDeltaMovement();box=e.getBoundingBox();
+            if(e instanceof EnemyProxy proxy)velocity=dev.sifucraft.combat.FluidMotion.pistonVelocity(proxy.sifuKey(),velocity);
             budget=e instanceof EnemyProxy proxy?budgets.getOrDefault(proxy.sifuKey(),PistonMotionLimit.State.empty()):PistonMotionLimit.State.empty();
             var binding=e instanceof EnemyProxy proxy?bindings.get(proxy.sifuKey()):null;
             if(binding!=null){

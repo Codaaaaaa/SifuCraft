@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <cstring>
 #include "combat/world_motion_engine.h"
+#include "combat/target_retention.h"
 using namespace sifucraft::world_motion;
 namespace {
 unsigned checks=0;
@@ -194,6 +195,39 @@ void FluidRenewal(){
     Case machine;machine.Acquire();machine.Send(machine.CommandFor(Op::Renew));machine.Pop(Status::Invalid);
     Require(machine.engine.Skip(machine.now),"machine cannot use fluid renewal to evade its contact budget");machine.now+=500;machine.Tick();machine.Restore();
 }
+void RenewalDuringPublication(){
+    Case c;auto reserve=c.CommandFor();reserve.source=Source::Fluid;c.Send(reserve);
+    for(auto part:{1u,2u,4u})c.engine.Original(part);
+    c.Tick();c.Pop(Status::Prepared);
+    c.now+=250;c.env.settled=false;c.env.revision++;c.Tick();
+    auto renewal=c.CommandFor(Op::Renew);renewal.source=Source::Fluid;renewal.shape_revision--;
+    c.Send(renewal);c.Pop(Status::Applied);
+    Require(c.backend.moves==0&&c.engine.Skip(c.now),"fresh identity heartbeat survives an unsettled collision epoch without movement");
+    auto step=c.CommandFor(Op::Step);step.source=Source::Fluid;c.Send(step);c.Pop(Status::Busy);
+    Require(c.backend.moves==0&&c.engine.Skip(c.now),"heartbeat does not enable movement before exact geometry is settled");
+    c.now+=450;c.env.revision++;c.Tick();Require(c.engine.Skip(c.now),"publication can span the old lease while fresh bounded heartbeat is present");
+    renewal=c.CommandFor(Op::Renew);renewal.source=Source::Fluid;renewal.shape_revision=1;c.Send(renewal);c.Pop(Status::Applied);
+    c.now+=500;c.Tick();Require(!c.engine.Skip(c.now),"no geometry-independent heartbeat evades its absolute 500ms deadline");c.Restore();
+    Case changed;reserve=changed.CommandFor();reserve.source=Source::Fluid;changed.Send(reserve);
+    for(auto part:{1u,2u,4u})changed.engine.Original(part);
+    changed.Tick();changed.Pop(Status::Prepared);changed.env.settled=false;changed.backend.body.health--;
+    renewal=changed.CommandFor(Op::Renew);renewal.source=Source::Fluid;changed.Send(renewal);changed.Pop(Status::TargetLost);
+    Require(!changed.engine.Skip(changed.now),"publication heartbeat cannot retain an actor with changed HP");changed.Restore();
+}
+void RetainedPublication(){
+    TargetRetention retained;Require(!retained.Keep(0,3,4,1000),"publication requires a live world identity");
+    Require(retained.Keep(2,3,4,1000),"lease retains its exact activation");
+    Require(retained.Snapshot(2,100000)==std::vector<std::uint64_t>{TargetRetention::Key(3,4)},"active publication is independent of distance and time");
+    Require(retained.Snapshot(3,1000).empty(),"retained targets do not cross worlds");
+    retained.Release(2,3,5,1000);Require(retained.Snapshot(2,1600).size()==1,"different pool activation cannot release the live target");
+    retained.Release(2,3,4,1000);retained.Release(2,3,4,1500);
+    Require(retained.Active(2).empty()&&retained.Snapshot(2,1500).size()==1,"active targets and handoff grace have distinct publication priorities");
+    Require(retained.Snapshot(2,1599).size()==1&&retained.Snapshot(2,1600).empty(),"handoff grace expires exactly and a repeated release never extends it");
+    for(unsigned i=1;i<=TargetRetention::kCapacity;i++)Require(retained.Keep(2,i+10,1,2000),"bounded retained publication slots");
+    Require(!retained.Keep(2,900,1,2000)&&retained.Snapshot(2,2000).size()==TargetRetention::kCapacity,"capacity pressure cannot evict any active lease");
+    retained.Release(2,11,1,2000);Require(!retained.Keep(2,900,1,2599),"unexpired handoff remains protected under pressure");
+    Require(retained.Keep(2,900,1,2600),"expired handoff slot can be reused");retained.Reset();Require(retained.Snapshot(2,2600).empty(),"peer replacement clears retained publication");
+}
 void MachinePriority(){
     Case c;auto reserve=c.CommandFor();reserve.source=Source::Fluid;c.Send(reserve);
     for(auto part:{1u,2u,4u})c.engine.Original(part);c.Tick();c.Pop(Status::Prepared);
@@ -219,4 +253,4 @@ void ContactNormals(){
     damage.Restore();auto final=damage.Pop(Status::Released);Require(final.restored==7&&final.health==45,"handback queued before world damage confirms actual HP and original ticks after the native hit");
 }
 }
-int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();MachinePriority();ContactNormals();std::printf("world motion arbiter PASS %u assertions\n",checks);}
+int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();std::printf("world motion arbiter PASS %u assertions\n",checks);}

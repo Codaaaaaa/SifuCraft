@@ -123,17 +123,21 @@ public:
             release_=command;BeginRelease(command.op==Op::Cancel?Status::Cancelled:Status::Released);return true;
         }
         if(phase_!=Phase::Owned) {Finish(command,Status::Busy,now);return true;}
-        if(!env_.settled){Finish(command,Status::Busy,now);return true;}
         Body current;
         if(now>=deadline_||!backend_.Check(&current)||!SameBody(current,body_)) {
             BeginRelease(now>=deadline_?Status::TimedOut:Status::TargetLost);Finish(command,reason_,now);return true;
         }
-        if(command.shape_revision!=env_.revision||command.tick<last_tick_||command.progress<last_progress_||!Expected(command,current)) {Finish(command,Status::Stale,now);return true;}
+        if(command.tick<last_tick_||command.progress<last_progress_||!Expected(command,current)) {Finish(command,Status::Stale,now);return true;}
         if(command.op==Op::Renew){
+            // Identity/HP/actual pose and a fresh heartbeat retain authority.
+            // This operation performs no sweep and need not wait for collision
+            // publication. Movement still requires the exact settled epoch below.
             if(command.source!=Source::Fluid||now-command.issued_ms>=command.duration_ms){Finish(command,Status::Stale,now);return true;}
             deadline_=std::max(deadline_,command.issued_ms+command.duration_ms);last_tick_=command.tick;
             Finish(command,Status::Applied,now);return true;
         }
+        if(!env_.settled){Finish(command,Status::Busy,now);return true;}
+        if(command.shape_revision!=env_.revision){Finish(command,Status::Stale,now);return true;}
         const double requested=Length(command.delta);
         if(command.source==Source::Machine&&spent_+requested>101.0001) {Finish(command,Status::Invalid,now);BeginRelease(Status::Invalid);return true;}
         // Book the request before the engine call. A partial sweep never refunds or retries it.
