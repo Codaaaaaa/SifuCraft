@@ -3,6 +3,7 @@
 #include "bridge/world_reader.h"
 #include "render/com_ptr.h"
 #include "render/world_scene.h"
+#include "render/gpu_timer.h"
 namespace sifucraft::render {
 class WorldCompositor {
 public:
@@ -12,6 +13,13 @@ public:
     std::size_t pixels() const { return pixel_count_; }
     std::size_t patches() const { return points_.size(); }
     std::size_t missing_depth() const { return missing_depth_; }
+    GpuTimer::Stats gpuStats()const{return gpu_timer_.stats();}
+#ifdef SIFUCRAFT_GEOMETRY_DIAGNOSTICS
+    std::uint64_t geometryHash()const{
+        std::uint64_t hash=0xcbf29ce484222325ull;const auto* data=reinterpret_cast<const std::uint8_t*>(points_.data());
+        for(std::size_t i=0;i<points_.size()*sizeof(Point);i++){hash^=data[i];hash*=0x100000001b3ull;}return hash;
+    }
+#endif
 private:
     struct Point { float x, y, width, height; float corners[4]; };
     struct Corner { float depths[4]{}; std::uint32_t stamp = 0; };
@@ -46,5 +54,6 @@ private:
     Com<ID3D11BlendState> blend_;
     Com<ID3D11RasterizerState> raster_;
     Com<ID3D11DepthStencilState> depth_;
+    GpuTimer gpu_timer_;
 };
 }

@@ -7,6 +7,9 @@
 #include <cstring>
 #include <limits>
 #include <d3dcompiler.h>
+#if !defined(SIFUCRAFT_SCALAR_PREPARE) && (defined(__SSE2__) || defined(_M_X64))
+#include <emmintrin.h>
+#endif
 #include "generated/sifu_build.g.h"
 
 namespace sifucraft::render {
@@ -116,6 +119,7 @@ HRESULT Compile(const char* entry, const char* profile, Com<ID3DBlob>& result) {
 }
 }
 void WorldCompositor::ResetGpu() {
+    gpu_timer_.Reset();
     instances_.reset(); constants_buffer_.reset(); depth_.reset(); raster_.reset(); blend_.reset(); layout_.reset();
     pixel_.reset(); vertex_.reset(); context_.reset(); device_.reset(); capacity_ = 0; upload_ = true;
     color_view_.reset(); color_texture_.reset(); color_width_ = color_height_ = 0;
@@ -150,11 +154,31 @@ HRESULT WorldCompositor::Prepare(const world_image::Frame& frame) {
         float z;std::memcpy(&z,frame.pixels.data()+plane+at,4);
         return std::isfinite(z)&&z>0&&z<=1;
     };
-    for(UINT y=0;y<h.height;++y)for(UINT x=0;x<h.width;++x){
+    for(UINT y=0;y<h.height;++y){
+        UINT x=0;
+#if !defined(SIFUCRAFT_SCALAR_PREPARE) && (defined(__SSE2__) || defined(_M_X64))
+        // One tile is a multiple of four pixels. Ordered SIMD comparisons have
+        // exactly the scalar finite/(0,1] validity rule, including NaN/Inf.
+        constexpr unsigned popcount[]={0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4};
+        for(;x+4<=h.width;x+=4){
+            const auto at=std::size_t(y)*h.stride+x*4;__m128i rgba;std::memcpy(&rgba,frame.pixels.data()+at,sizeof(rgba));
+            const auto absent=_mm_cmpeq_epi32(_mm_srli_epi32(rgba,24),_mm_setzero_si128());
+            const auto alpha=(~unsigned(_mm_movemask_ps(_mm_castsi128_ps(absent))))&15u;if(!alpha)continue;
+            __m128i bits;std::memcpy(&bits,frame.pixels.data()+plane+at,sizeof(bits));
+            const auto nonfinite=_mm_cmpeq_epi32(_mm_and_si128(bits,_mm_set1_epi32(0x7f800000)),_mm_set1_epi32(0x7f800000));
+            const auto z=_mm_castsi128_ps(_mm_andnot_si128(nonfinite,bits)); // avoid even signalling-NaN FP comparisons
+            const auto validDepth=_mm_and_ps(_mm_cmpgt_ps(z,_mm_setzero_ps()),_mm_cmple_ps(z,_mm_set1_ps(1.f)));
+            const auto present=unsigned(_mm_movemask_ps(validDepth))&alpha;
+            missing_depth_+=popcount[alpha]-popcount[present];pixel_count_+=popcount[present];
+            occupied[std::size_t(y/tile)*columns+x/tile]+=popcount[present];
+        }
+#endif
+        for(;x<h.width;++x){
         const auto at=std::size_t(y)*h.stride+x*4;
         if(!frame.pixels[at+3])continue;
         if(!valid(x,y)){++missing_depth_;continue;}
         ++pixel_count_;++occupied[std::size_t(y/tile)*columns+x/tile];
+        }
     }
     if(!pixel_count_){source_color_.clear();prepared_id_=h.frame_id;return S_OK;}
     source_color_.assign(frame.pixels.begin(),frame.pixels.begin()+plane);
@@ -227,12 +251,33 @@ HRESULT WorldCompositor::Prepare(const world_image::Frame& frame) {
             for(int i=0;i<4;++i){const auto r=ray(float(x+(i&1)*w),float(y+(i>>1)*height),p.corners[i]);
                 if(!i)first_w=r[3];else if(first_w*r[3]<=0)merge=false;
                 min_w=std::min(min_w,std::abs(r[3]));max_w=std::max(max_w,std::abs(r[3]));max_ray=std::max(max_ray,std::sqrt(r[0]*r[0]+r[1]*r[1]+r[2]*r[2]));}
-            for(UINT iy=0;iy<height;++iy)for(UINT ix=0;ix<w;++ix){
+#if !defined(SIFUCRAFT_SCALAR_PREPARE) && (defined(__SSE2__) || defined(_M_X64))
+            __m128 residual=_mm_setzero_ps();
+            const auto halfPixels=_mm_set_ps(3.5f,2.5f,1.5f,.5f),vDx=_mm_set1_ps(dx),vDepth=_mm_set1_ps(p.corners[0]);
+#endif
+            for(UINT iy=0;iy<height;++iy){
+                UINT ix=0;
+#if !defined(SIFUCRAFT_SCALAR_PREPARE) && (defined(__SSE2__) || defined(_M_X64))
+                const auto vDy=_mm_set1_ps(dy*(iy+.5f));
+                for(;ix+4<=w;ix+=4){
+                    __m128 z;std::memcpy(&z,frame.pixels.data()+plane+std::size_t(y+iy)*h.stride+(x+ix)*4,sizeof(z));
+                    if(!(h.flags&world_image::kZeroToOne))z=_mm_sub_ps(_mm_mul_ps(z,_mm_set1_ps(2.f)),_mm_set1_ps(1.f));
+                    const auto px=_mm_add_ps(_mm_set1_ps(float(ix)),halfPixels);
+                    const auto expected=_mm_add_ps(_mm_add_ps(vDepth,_mm_mul_ps(vDx,px)),vDy);
+                    const auto difference=_mm_andnot_ps(_mm_set1_ps(-0.f),_mm_sub_ps(z,expected));
+                    residual=_mm_max_ps(residual,difference);
+                }
+#endif
+                for(;ix<w;++ix){
                 float z;std::memcpy(&z,frame.pixels.data()+plane+std::size_t(y+iy)*h.stride+(x+ix)*4,4);
                 if(!(h.flags&world_image::kZeroToOne))z=2*z-1;
                 const float expected=p.corners[0]+dx*(ix+.5f)+dy*(iy+.5f);
                 error=std::max(error,std::abs(z-expected));
+                }
             }
+#if !defined(SIFUCRAFT_SCALAR_PREPARE) && (defined(__SSE2__) || defined(_M_X64))
+            float lanes[4];std::memcpy(lanes,&residual,sizeof(residual));for(float value:lanes)error=std::max(error,value);
+#endif
             // Homogeneous coordinates are affine over the candidate rectangle; corner
             // extrema plus the measured depth residual bound every interior denominator.
             error+=corner_error;min_w-=std::abs(m[14])*error;max_w+=std::abs(m[14])*error;max_ray+=column_z*error;
@@ -321,7 +366,9 @@ HRESULT WorldCompositor::Draw(ID3D11Device* device, ID3D11Texture2D* backbuffer,
     auto* cb = constants_buffer_.get(); context_->VSSetConstantBuffers(0, 1, &cb); context_->PSSetConstantBuffers(0, 1, &cb);
     ID3D11ShaderResourceView* views[] = {scene.depth(), scene.parameters(),color_view_.get()};
     context_->VSSetShaderResources(0, 3, views); context_->PSSetShaderResources(0, 3, views);
+    const bool timed=gpu_timer_.Begin(device,context_.get());
     context_->DrawInstanced(6, UINT(points_.size()), 0, 0);
+    if(timed)gpu_timer_.End(context_.get());
     return S_OK;
 }
 }

@@ -189,7 +189,7 @@ struct Probe {
     WorldCompositor world_renderer;
     world_image::Reader world_reader;
     world_image::Frame world_frame;
-    std::uint64_t scene_ms = 0, verified_last_ms = 0, world_retry_ms = 0, world_error_log_ms = 0, world_wait_log_ms = 0;
+    std::uint64_t scene_ms = 0, verified_last_ms = 0, world_retry_ms = 0, world_error_log_ms = 0, world_wait_log_ms = 0, world_gpu_log_ms = 0;
     bool world_active = false;
     ParameterReadback parameters;
     Com<ID3D11Device> pending_device;
@@ -418,6 +418,12 @@ void DrawWorld(ID3D11Device* device, ID3D11Texture2D* backbuffer, const Scope& s
         if (world_draws.fetch_add(1) == 0) SC_LOG("[world-image] first native draw world=%u epoch=%u source=%ux%u visible=%llu no_depth=%llu",
             scope.world, scope.epoch, probe.world_frame.header.width, probe.world_frame.header.height,
             static_cast<unsigned long long>(world_pixels.load()), static_cast<unsigned long long>(world_no_depth.load()));
+        if(now>=probe.world_gpu_log_ms){
+            probe.world_gpu_log_ms=now+2000;const auto gpu=probe.world_renderer.gpuStats();
+            SC_LOG("[world-gpu] frame=%llu pixels=%llu patches=%llu n=%llu total_ns=%llu peak_ns=%llu disjoint=%llu skipped=%llu errors=%llu prepare_n=%llu prepare_total_us=%llu submit_n=%llu submit_total_us=%llu",
+                probe.world_frame.header.frame_id,world_pixels.load(),world_patches.load(),gpu.samples,gpu.total_ns,gpu.peak_ns,gpu.disjoint,gpu.skipped,gpu.errors,
+                prepare_cpu.samples.load(),prepare_cpu.total_us.load(),submit_cpu.samples.load(),submit_cpu.total_us.load());
+        }
     } else if (FAILED(result)) {
         ++world_errors; probe.world_retry_ms = now + 1000;
         if (now >= probe.world_error_log_ms) {
@@ -428,6 +434,7 @@ void DrawWorld(ID3D11Device* device, ID3D11Texture2D* backbuffer, const Scope& s
     }
 }
 std::string TakeStats() {
+    const auto gpu=probe.world_renderer.gpuStats();
     return FormatString("polls=%llu metadata=%llu copied=%llu missing=%llu failures=%llu stale=%llu saved=%llu",
         static_cast<unsigned long long>(polls.load()), static_cast<unsigned long long>(metadata_ok.load()), static_cast<unsigned long long>(found.load()),
         static_cast<unsigned long long>(missing.load()), static_cast<unsigned long long>(failures.load()), static_cast<unsigned long long>(stale.load()), static_cast<unsigned long long>(saved.load())) +
@@ -439,6 +446,9 @@ std::string TakeStats() {
         FormatString(" | world_cpu prepare_n=%llu prepare_avg_us=%llu prepare_peak_us=%llu submit_n=%llu submit_avg_us=%llu submit_peak_us=%llu patches=%llu",
             static_cast<unsigned long long>(prepare_cpu.samples.load()), static_cast<unsigned long long>(prepare_cpu.Average()),
             static_cast<unsigned long long>(prepare_cpu.peak_us.load()), static_cast<unsigned long long>(submit_cpu.samples.load()),
-            static_cast<unsigned long long>(submit_cpu.Average()), static_cast<unsigned long long>(submit_cpu.peak_us.load()),static_cast<unsigned long long>(world_patches.load()));
+            static_cast<unsigned long long>(submit_cpu.Average()), static_cast<unsigned long long>(submit_cpu.peak_us.load()),static_cast<unsigned long long>(world_patches.load()))+
+        FormatString(" | world_gpu_draw n=%llu avg_us=%llu peak_us=%llu disjoint=%llu skipped=%llu errors=%llu",
+            static_cast<unsigned long long>(gpu.samples),static_cast<unsigned long long>(gpu.samples?gpu.total_ns/gpu.samples/1000:0),static_cast<unsigned long long>(gpu.peak_ns/1000),
+            static_cast<unsigned long long>(gpu.disjoint),static_cast<unsigned long long>(gpu.skipped),static_cast<unsigned long long>(gpu.errors));
 }
 }

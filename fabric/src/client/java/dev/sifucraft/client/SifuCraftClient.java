@@ -97,6 +97,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private final dev.sifucraft.bridge.WorldMotionRequests worldMotion=new dev.sifucraft.bridge.WorldMotionRequests();
     private BlockModelCheck blockModelCheck;
     private FluidRenderCheck fluidRenderCheck;
+    private WorldGpuCheck worldGpuCheck;
     private PistonStressCheck pistonStressCheck;
     private ShapeUpdateCheck shapeUpdateCheck;
     private PistonTransactionCheck pistonTransactionCheck;
@@ -321,6 +322,9 @@ public final class SifuCraftClient implements ClientModInitializer {
             fluidRenderCheck = new FluidRenderCheck();
             ServerLifecycleEvents.SERVER_STOPPING.register(fluidRenderCheck::restore);
         }
+        if(Boolean.getBoolean("sifucraft.worldGpuSelfTest")){
+            worldGpuCheck=new WorldGpuCheck();ServerLifecycleEvents.SERVER_STOPPING.register(worldGpuCheck::restore);
+        }
         if (Boolean.getBoolean("sifucraft.pistonStressSelfTest")) {
             pistonStressCheck = new PistonStressCheck();
             ServerTickEvents.END_SERVER_TICK.register(pistonStressCheck::serverTick);
@@ -393,6 +397,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
             if (blockModelCheck != null) blockModelCheck.restoreClient(client);
             if (fluidRenderCheck != null) fluidRenderCheck.restoreClient(client);
+            if (worldGpuCheck != null) worldGpuCheck.restoreClient(client);
             if (worldStressCheck != null) worldStressCheck.restoreClient(client);
             if (avatarCheck != null) avatarCheck.restoreClient(client);
             if (worldAudioCheck != null) worldAudioCheck.close();
@@ -569,7 +574,9 @@ public final class SifuCraftClient implements ClientModInitializer {
         shieldAnimation.pump(minecraft, bridge, frame != null && respawn.ready() && space.anchoredTo(frame));
         if (frame == null) space.reset();
         input.setOwner(frame != null && frame.minecraftOwnsInput() && respawn.ready());
-        input.applyMotion(frame);
+        // This disposable benchmark owns a fixed camera. Native cursor jitter
+        // must not change the input between its water and solid controls.
+        if (worldGpuCheck == null) input.applyMotion(frame);
         overlay.updateViewport(minecraft);
         if (inventoryCheck != null) inventoryCheck.tick(minecraft, input, guiAvailable(frame));
         if (devItemCheck != null) devItemCheck.tick(minecraft, input, guiAvailable(frame));
@@ -582,6 +589,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (worldEffectsCheck != null) worldEffectsCheck.tick(minecraft, input, guiAvailable(frame));
         if (blockModelCheck != null) blockModelCheck.tick(minecraft,guiAvailable(frame));
         if (fluidRenderCheck != null) fluidRenderCheck.tick(minecraft,guiAvailable(frame));
+        if (worldGpuCheck != null) worldGpuCheck.tick(minecraft,guiAvailable(frame));
         if (pistonStressCheck != null) pistonStressCheck.clientTick(minecraft,guiAvailable(frame));
         if(shapeUpdateCheck!=null)shapeUpdateCheck.clientTick(minecraft,guiAvailable(frame));
         if(pistonTransactionCheck!=null)pistonTransactionCheck.clientTick(minecraft,guiAvailable(frame));

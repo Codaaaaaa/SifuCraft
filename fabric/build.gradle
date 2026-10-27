@@ -51,6 +51,7 @@ loom {
 			property "sifucraft.blockShapes", providers.gradleProperty("sifucraft.blockShapes").getOrElse("true")
 			property "sifucraft.blockModelSelfTest", providers.gradleProperty("sifucraft.blockModelSelfTest").getOrElse("false")
 			property "sifucraft.fluidRenderSelfTest", providers.gradleProperty("sifucraft.fluidRenderSelfTest").getOrElse("false")
+			property "sifucraft.worldGpuSelfTest", providers.gradleProperty("sifucraft.worldGpuSelfTest").getOrElse("false")
 			property "sifucraft.pistonStressSelfTest", providers.gradleProperty("sifucraft.pistonStressSelfTest").getOrElse("false")
 			property "sifucraft.shapeUpdateSelfTest", providers.gradleProperty("sifucraft.shapeUpdateSelfTest").getOrElse("false")
 			property "sifucraft.pistonTransactionSelfTest", providers.gradleProperty("sifucraft.pistonTransactionSelfTest").getOrElse("false")
