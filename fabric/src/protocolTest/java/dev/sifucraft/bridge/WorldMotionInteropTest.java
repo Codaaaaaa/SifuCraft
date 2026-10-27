@@ -26,7 +26,10 @@ public final class WorldMotionInteropTest {
             Thread.sleep(100); // let the reverse ring fill before any receipt is consumed
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(15);boolean statusSeen=false;
             while(received<64&&System.nanoTime()<deadline){
-                var status=mailbox.status(WorldWriter.clockMillis());if(status!=null){check(status.world()==7&&status.playerStamp()==73,"native scoped status");statusSeen=true;}
+                var status=mailbox.status(WorldWriter.clockMillis());if(status!=null){
+                    check(status.world()==7&&status.playerStamp()==((73L<<32)|19)&&(status.capabilities()&PLAYER_MACHINE_CAPABILITY)!=0,"native scoped player stamp/capability");
+                    check(status.player()!=null&&status.player().position().equals(new SifuFrame.Vec3(101,-202,303))&&status.player().radius()==35&&status.player().halfHeight()==90&&status.player().health()==180,"C++ publishes exact player metadata read independently by Java");statusSeen=true;
+                }
                 if(sent<64&&mailbox.publish(command(sent+1),WorldWriter.clockMillis()))sent++;
                 var reply=mailbox.poll();
                 if(reply!=null){

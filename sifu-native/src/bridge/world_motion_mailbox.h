@@ -15,7 +15,7 @@ public:
     bool Read(Command* out,bool* valid);
     bool Write(const Reply& reply);
     bool CanReply();
-    void Status(std::uint32_t world,std::uint64_t capabilities,std::uint64_t now,std::uint64_t player_stamp,std::uint64_t shape_revision,std::uint32_t flags=0);
+    void Status(std::uint32_t world,std::uint64_t capabilities,std::uint64_t now,std::uint64_t player_stamp,std::uint64_t shape_revision,std::uint32_t flags=0,PlayerInfo player={});
     void Close();
 private:
     bridge::SharedMapping mapping_;

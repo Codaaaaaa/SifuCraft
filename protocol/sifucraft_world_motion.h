@@ -5,7 +5,7 @@
 
 // Independent reliable commands. Module-owned shared memory, never a game UObject layout.
 namespace sifucraft::world_motion {
-inline constexpr std::uint32_t kMagic=0x4D574353,kVersion=4,kSlots=32,kSlotBytes=256,kHeaderBytes=128;
+inline constexpr std::uint32_t kMagic=0x4D574353,kVersion=5,kSlots=32,kSlotBytes=256,kHeaderBytes=128;
 inline constexpr std::uint32_t kMappingBytes=kHeaderBytes+2*kSlots*kSlotBytes;
 enum SlotState:std::uint32_t { Free,Writing,Ready,Reading };
 enum class Op:std::uint32_t { Reserve=1,Step,Release,Cancel,Damage,Renew };
@@ -14,12 +14,19 @@ enum class Status:std::uint32_t { Pending,Prepared,Applied,Released,Blocked,Part
 inline constexpr std::uint32_t kPlayer=1;
 inline constexpr std::uint32_t kStepNotExecuted=8; // rejected Fresh STEP, before any backend.Move; never a retired ledger id
 inline constexpr std::uint32_t kPaused=1,kScripted=2;
-inline constexpr std::uint64_t kMotionCapability=1,kDamageCapability=2,kPauseCapability=4;
+inline constexpr std::uint64_t kMotionCapability=1,kDamageCapability=2,kPauseCapability=4,kPlayerMachineCapability=8;
+struct PlayerInfo {float position[3]{},radius=0,half_height=0,health=0;};
+static_assert(sizeof(PlayerInfo)==24);
+inline bool Valid(const PlayerInfo& p){
+    return std::isfinite(p.position[0])&&std::isfinite(p.position[1])&&std::isfinite(p.position[2])&&
+        std::isfinite(p.radius)&&p.radius>=10&&p.radius<=100&&std::isfinite(p.half_height)&&p.half_height>=p.radius&&p.half_height<=200&&std::isfinite(p.health)&&p.health>0;
+}
 struct Header {
     std::uint32_t magic,version,mapping_bytes,slot_bytes;
     std::uint64_t mc_session,native_session,layout_hash,capabilities,native_ms;
     std::uint32_t world,world_flags;
-    std::uint64_t reply_sequence,mc_ms,status_sequence,player_stamp,shape_revision,reserved_tail[3];
+    std::uint64_t reply_sequence,mc_ms,status_sequence,player_stamp,shape_revision;
+    PlayerInfo player;
 };
 struct Command {
     Op op;Source source;
@@ -45,6 +52,7 @@ struct Reply {
 struct alignas(64) CommandSlot { std::uint32_t state,reserved;std::uint64_t sequence;Command value;std::uint8_t pad[32]; };
 struct alignas(64) ReplySlot { std::uint32_t state,reserved;std::uint64_t sequence;Reply value;std::uint8_t pad[112]; };
 static_assert(sizeof(Header)==128&&sizeof(Command)==208&&sizeof(Reply)==128);
+static_assert(offsetof(Header,player)==104&&offsetof(PlayerInfo,radius)==12&&offsetof(PlayerInfo,half_height)==16&&offsetof(PlayerInfo,health)==20);
 static_assert(sizeof(CommandSlot)==256&&sizeof(ReplySlot)==256);
 static_assert(offsetof(Command,position)==104&&offsetof(Command,flags)==140&&offsetof(Command,actor_stamp)==184&&offsetof(Command,payload_hash)==200);
 static_assert(offsetof(Reply,position)==72&&offsetof(Reply,root_radius)==112&&offsetof(Reply,payload_hash)==120&&offsetof(Header,status_sequence)==80);
@@ -52,7 +60,7 @@ inline constexpr std::uint32_t kLayout[]={kMagic,kVersion,kSlots,kSlotBytes,kHea
     0,4,8,12,16,24,32,40,48,56,60,64,72,80,88,96,104,
     0,4,8,16,24,32,40,48,56,64,72,80,88,92,96,100,104,116,128,132,136,140,144,156,160,164,168,176,184,192,200,
     0,8,16,24,32,36,40,44,48,52,56,64,72,84,96,100,104,112,116,120,Free,Writing,Ready,Reading,
-    1,2,3,4,5,6,1,2,3,0,1,2,3,4,5,6,7,8,9,10,11,12,13,kPlayer,kPaused,kScripted,1,2,4,kStepNotExecuted};
+    1,2,3,4,5,6,1,2,3,0,1,2,3,4,5,6,7,8,9,10,11,12,13,kPlayer,kPaused,kScripted,1,2,4,kStepNotExecuted,8,104,108,112,116,120,124};
 inline constexpr std::uint64_t kLayoutHash=[] {
     std::uint64_t h=14695981039346656037ull;
     for(auto v:kLayout)for(int shift=0;shift<32;shift+=8){h^=(v>>shift)&255u;h*=1099511628211ull;}

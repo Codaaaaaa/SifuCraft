@@ -9,6 +9,7 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
+import static java.lang.foreign.ValueLayout.JAVA_FLOAT;
 
 public final class WorldMotionProtocolTest {
     private static void check(boolean ok,String why){if(!ok)throw new AssertionError(why);}
@@ -61,6 +62,17 @@ public final class WorldMotionProtocolTest {
             check(mailbox.status(1000)==null,"no ready before Native status");
             memory.set(JAVA_LONG,40,3);memory.set(JAVA_LONG,48,1000);memory.set(JAVA_INT,56,7);memory.set(JAVA_LONG,80,2);memory.set(JAVA_LONG,88,73);
             check(mailbox.status(1200).playerStamp()==73&&mailbox.status(1600)==null,"fresh native world and player lifetime");
+            memory.set(JAVA_LONG,40,MOTION_CAPABILITY|PLAYER_MACHINE_CAPABILITY);memory.set(JAVA_LONG,88,(73L<<32)|19);
+            for(int i=0;i<6;i++)memory.set(JAVA_FLOAT,104+i*4,new float[]{101,-202,303,35,90,180}[i]);
+            var playerStatus=mailbox.status(1200);check(playerStatus!=null&&playerStatus.player().position().equals(new SifuFrame.Vec3(101,-202,303))&&playerStatus.player().radius()==35&&playerStatus.player().halfHeight()==90&&playerStatus.player().health()==180,"atomic original player root/geometry/HP metadata");
+            for(int offset:new int[]{104,108,112,116,120,124}){float original=memory.get(JAVA_FLOAT,offset);memory.set(JAVA_FLOAT,offset,Float.NaN);check(mailbox.status(1200)==null,"nonfinite player metadata fails closed");memory.set(JAVA_FLOAT,offset,original);}
+            memory.set(JAVA_FLOAT,120,34);check(mailbox.status(1200)==null,"invalid player capsule ratio");memory.set(JAVA_FLOAT,120,90);
+            memory.set(JAVA_FLOAT,124,0);check(mailbox.status(1200)==null,"dead player cannot advertise ready mechanics");memory.set(JAVA_FLOAT,124,180);
+            memory.set(JAVA_LONG,88,19);check(mailbox.status(1200)==null,"player index is part of ready metadata");memory.set(JAVA_LONG,88,(73L<<32)|19);
+            memory.set(JAVA_LONG,88,(-1L<<32)|19);check(mailbox.status(1200)==null,"negative native player object index fails closed");memory.set(JAVA_LONG,88,(73L<<32)|19);
+            memory.set(JAVA_LONG,80,3);check(mailbox.status(1200)==null,"player metadata cannot escape the shared status seqlock");memory.set(JAVA_LONG,80,4);
+            memory.set(JAVA_INT,4,4);check(mailbox.status(1200)==null&&!mailbox.publish(reserve,1200),"old world-motion version cannot exchange commands/status");memory.set(JAVA_INT,4,VERSION);
+            memory.set(JAVA_LONG,40,3);memory.set(JAVA_LONG,88,73);
             memory.set(JAVA_INT,60,PAUSED);check(mailbox.status(1200).flags()==PAUSED,"true pause has a world flag separate from input ownership");
             memory.set(JAVA_INT,60,4);check(mailbox.status(1200)==null,"unknown world flags fail closed");memory.set(JAVA_INT,60,0);
             memory.set(JAVA_LONG,80,3);check(mailbox.status(1200)==null,"torn native status rejected");memory.set(JAVA_LONG,80,4);

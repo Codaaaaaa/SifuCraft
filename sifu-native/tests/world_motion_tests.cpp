@@ -25,7 +25,7 @@ int Echo(std::uint64_t mc,std::uint64_t native,unsigned count){
     Mailbox mailbox;Ledger ledger;const auto end=GetTickCount64()+15000;unsigned received=0,effects=0;
     while(received<count&&GetTickCount64()<end){
         if(!mailbox.Open(mc,native)){Sleep(1);continue;}
-        mailbox.Status(7,0,GetTickCount64(),73,5);
+        mailbox.Status(7,kMotionCapability|kPlayerMachineCapability,GetTickCount64(),(73ull<<32)|19,5,0,PlayerInfo{{101,-202,303},35,90,180});
         if(!mailbox.CanReply()){Sleep(1);continue;}
         Command command{};bool valid=false;
         if(!mailbox.Read(&command,&valid)){Sleep(1);continue;}
@@ -45,6 +45,14 @@ int Echo(std::uint64_t mc,std::uint64_t native,unsigned count){
 int main(int argc,char** argv){try{
     if(argc==5&&std::strcmp(argv[1],"--echo")==0)return Echo(std::strtoull(argv[2],nullptr,10),std::strtoull(argv[3],nullptr,10),static_cast<unsigned>(std::strtoul(argv[4],nullptr,10)));
     auto c=Sample();Check(Valid(c),"golden reserve");Check(argc==3,"two golden fixture paths");
+    const PlayerInfo player_info{{101,-202,303},35,90,180};Check(Valid(player_info),"actual-sized player root metadata");
+    for(int failure=0;failure<6;++failure){auto bad=player_info;
+        if(failure<3)bad.position[failure]=std::numeric_limits<float>::quiet_NaN();
+        if(failure==3)bad.radius=9;
+        if(failure==4)bad.half_height=34;
+        if(failure==5)bad.health=0;
+        Check(!Valid(bad),"malformed player geometry/health cannot advertise ready");
+    }
     auto bytes=Hex(argv[1]);Check(bytes.size()==sizeof(c)&&std::memcmp(bytes.data(),&c,sizeof(c))==0,"independent command golden bytes");
     for(int i=0;i<9;++i){auto bad=c;
         switch(i){
@@ -85,6 +93,7 @@ int main(int argc,char** argv){try{
     auto& h=*reinterpret_cast<Header*>(memory.data());h.magic=kMagic;h.version=kVersion;h.mapping_bytes=kMappingBytes;h.slot_bytes=kSlotBytes;
     h.mc_session=11;h.native_session=22;h.layout_hash=kLayoutHash;
     Check(Matches(memory.data(),11,22)&&!Matches(memory.data(),12,22),"mailbox session boundary");
+    h.version=4;Check(!Matches(memory.data(),11,22),"old protocol rejected despite unchanged mapping size");h.version=kVersion;
     auto slots=reinterpret_cast<CommandSlot*>(memory.data()+kHeaderBytes);
     for(unsigned i=0;i<kSlots;++i){slots[i].state=Ready;slots[i].sequence=kSlots-i;slots[i].value=c;slots[i].value.id=kSlots-i;Seal(slots[i].value);}
     bool valid=false;Command received{};
