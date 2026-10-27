@@ -366,6 +366,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         }
         if(Boolean.getBoolean("sifucraft.machineInventorySelfTest")){
             machineInventoryCheck=new MachineInventoryCheck();ServerTickEvents.END_SERVER_TICK.register(machineInventoryCheck::tick);
+            ServerLifecycleEvents.SERVER_STARTED.register(machineInventoryCheck::serverStarted);
             ServerLifecycleEvents.SERVER_STOPPING.register(machineInventoryCheck::restore);
         }
         if(Boolean.getBoolean("sifucraft.playerEnvironmentSelfTest")){
