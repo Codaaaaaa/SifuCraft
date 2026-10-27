@@ -10,6 +10,7 @@
 		"BucketSceneMixin",
 		"DispenserSourceMixin",
 		"EntityMixin",
+		"EnvironmentPathMixin",
 		"FlowingFluidMixin",
 		"LevelMixin",
 		"PlayerAttackMixin",

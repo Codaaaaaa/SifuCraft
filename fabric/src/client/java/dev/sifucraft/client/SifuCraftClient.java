@@ -107,6 +107,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private NativePauseCheck nativePauseCheck;
     private FluidMotionCheck fluidMotionCheck;
     private FluidPartialCheck fluidPartialCheck;
+    private dev.sifucraft.combat.EnvironmentPathCheck environmentPathCheck;
     private NativeFluidCheck nativeFluidCheck;
     private NativeLiftCheck nativeLiftCheck;
     private MachineProjectileCheck machineProjectileCheck;
@@ -362,6 +363,10 @@ public final class SifuCraftClient implements ClientModInitializer {
             fluidPartialCheck=new FluidPartialCheck();ServerTickEvents.END_SERVER_TICK.register(fluidPartialCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(fluidPartialCheck::restore);
         }
+        if(Boolean.getBoolean("sifucraft.environmentPathSelfTest")){
+            environmentPathCheck=new dev.sifucraft.combat.EnvironmentPathCheck(DevWorld.LEVEL_ID);ServerTickEvents.END_SERVER_TICK.register(environmentPathCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(environmentPathCheck::restore);
+        }
         if(Boolean.getBoolean("sifucraft.nativeFluidSelfTest")){
             nativeFluidCheck=new NativeFluidCheck();ServerTickEvents.END_SERVER_TICK.register(nativeFluidCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(nativeFluidCheck::restore);
@@ -599,6 +604,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(nativePauseCheck!=null)nativePauseCheck.clientTick(minecraft);
         if(fluidMotionCheck!=null)fluidMotionCheck.clientTick(minecraft);
         if(fluidPartialCheck!=null)fluidPartialCheck.clientTick(minecraft);
+        if(environmentPathCheck!=null)environmentPathCheck.clientTick(minecraft);
         if(nativeFluidCheck!=null)nativeFluidCheck.clientTick(minecraft,frame);
         if(nativeLiftCheck!=null)nativeLiftCheck.clientTick(minecraft,frame);
         if(machineProjectileCheck!=null)machineProjectileCheck.clientTick(minecraft,frame);

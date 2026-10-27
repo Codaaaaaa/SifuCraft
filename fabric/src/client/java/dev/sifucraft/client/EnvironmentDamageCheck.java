@@ -21,7 +21,7 @@ import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.LoggerFactory;
 
-/** Vanilla final environment damage -> reliable OS channel -> physical endpoint health. */
+/** Isolated NativeFree damage/F8/pause fixture; continuous movement is checked separately. */
 final class EnvironmentDamageCheck {
     private static final class Reference extends Cow {
         Reference(ServerLevel level){super(EntityTypes.COW,level);setNoGravity(true);setSilent(true);getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH).setBaseValue(20);setHealth(20);refreshDimensions();}

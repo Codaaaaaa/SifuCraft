@@ -250,6 +250,7 @@ public final class PistonMachines {
     private static void updateProxy(WorldMotionWorld.View view,Target target,Reply reply){
         var proxy=EnemyMirrors.hitAttacker(target.key.id(),target.key.spawn());if(proxy==null)return;var p=reply.position();
         proxy.setPos(view.placement().mcX(p.x()),view.placement().mcY(p.z()-target.entry.halfHeight()),view.placement().mcZ(p.y()));proxy.updateSignals();
+        dev.sifucraft.combat.WorldEffects.moved(proxy,view.scope(),view.placement(),target.entry.halfHeight(),reply);
     }
     private static boolean done(CompletableFuture<?> future){return future!=null&&future.isDone();}
     private static Reply result(CompletableFuture<Reply> future){if(!done(future)||future.isCompletedExceptionally()||future.isCancelled())return null;return future.getNow(null);}

@@ -276,6 +276,7 @@ public final class FluidMotion {
                 var r=result(future);if(!binding(f,r)||(r.status()!=2&&r.status()!=4&&r.status()!=5&&r.status()!=8&&r.status()!=9)){cancel(v,f,now);return;}
                 f.last=r;applied(v,f,r);
                 if(r.status()==8||r.status()==9){rejected=true;continue;}
+                WorldEffects.moved(proxy,f.scope,v.placement(),f.initial.halfHeight(),r);
                 steps++;completed++;
                 if(r.status()!=2){blocked++;f.partial=true;f.nativeGround=(r.flags()&4)!=0;f.contactNormal=normal(r);}
             }

@@ -74,7 +74,8 @@ final class FluidMotionCheck implements FluidMotion.Observer {
             if(stage==2){
                 if(FluidMotion.stats().active()!=0||!view.shapesCurrent())return;
                 var stats=FluidMotion.stats();require(stats.released()==2&&stats.failed()==0,"both actual endpoints fell to support and restored original ticks: "+stats);
-                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p9-fluid-motion.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(Map.of("result","PASS","backend","OS AABB fake, not UE capsule","compared_ticks",compared,"max_plan_error",maxPlanError,"max_actual_error",maxActualError,"stats",stats),out));
+                var contacts=dev.sifucraft.combat.WorldEffects.stats();require(contacts.pathSegments()>0&&contacts.pathDropped()==0,"actual receipts reached environment collection without stale paths: "+contacts);
+                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p9-fluid-motion.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(Map.of("result","PASS","backend","OS AABB fake, not UE capsule","compared_ticks",compared,"max_plan_error",maxPlanError,"max_actual_error",maxActualError,"stats",stats,"contacts",contacts),out));
                 LoggerFactory.getLogger("sifucraft").info("[fluid-motion-test] PASS {} original ticks, plan error={}, physical endpoint error={}, {}",compared,maxPlanError,maxActualError,stats);restore(server);stage=3;return;
             }
             if(stage==3&&view.shapesCurrent())finished=true;

@@ -22,7 +22,11 @@ public final class SifuCraftMod implements ModInitializer {
         }
         ServerTickEvents.START_SERVER_TICK.register(EnemyMirrors::tick);
         ServerTickEvents.END_SERVER_TICK.register(dev.sifucraft.blocks.PistonMachines::update);
-        ServerTickEvents.END_SERVER_TICK.register(dev.sifucraft.combat.FluidMotion::tick);
+        // The explicit environment fixture tests NativeFree H7/F8/pause against
+        // a stationary reference. Continuous motion has separate differential
+        // and real-capsule fixtures; letting it float this reference target away
+        // would change the damage fixture's prescribed input.
+        if(!Boolean.getBoolean("sifucraft.environmentDamageSelfTest"))ServerTickEvents.END_SERVER_TICK.register(dev.sifucraft.combat.FluidMotion::tick);
         ServerTickEvents.START_SERVER_TICK.register(dev.sifucraft.blocks.PlayerSignalContacts::tick);
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PlayerSignalContacts.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> EnemyMirrors.stop());

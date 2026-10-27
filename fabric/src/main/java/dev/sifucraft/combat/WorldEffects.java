@@ -8,6 +8,13 @@ import dev.sifucraft.blocks.WorldBlocks;
 import dev.sifucraft.blocks.WorldMotionWorld;
 import dev.sifucraft.bridge.ShapeProtocol;
 import dev.sifucraft.bridge.WorldWriter;
+import dev.sifucraft.bridge.WorldMotionRequests;
+import dev.sifucraft.collision.MapPlacement;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.WeakHashMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.server.level.ServerLevel;
@@ -17,9 +24,6 @@ import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
-import net.minecraft.world.entity.InsideBlockEffectApplier;
-import net.minecraft.world.phys.shapes.BooleanOp;
-import net.minecraft.world.phys.shapes.Shapes;
 import org.slf4j.LoggerFactory;
 
 /** Only actual vanilla environment hurt callbacks can issue a world-scoped damage event. */
@@ -28,6 +32,11 @@ public final class WorldEffects {
     private record Evidence(String type,BlockPos pos,MachineProjectiles.Origin machine,java.util.UUID causal){Evidence(String type,BlockPos pos){this(type,pos,null,null);}Evidence(String type,BlockPos pos,MachineProjectiles.Origin machine){this(type,pos,machine,null);}}
     private record LandingProof(EnemyProxy target,dev.sifucraft.bridge.WorldMotionRequests.Scope scope,BlockPos pos,java.util.UUID source){}
     private static final ThreadLocal<LandingProof> landing=new ThreadLocal<>();
+    private record TimedMovement(BlockEnvironment.Movement movement,long at){}
+    private record ContactPath(WorldMotionRequests.Scope scope,List<TimedMovement> movements){}
+    private record PathProof(EnemyProxy target,WorldMotionRequests.Scope scope,Map<String,BlockEnvironment.Contact> contacts){}
+    private static final Map<EnemyProxy,ContactPath> paths=new WeakHashMap<>(); // server thread; removed activations are not retained
+    private static final ThreadLocal<PathProof> pathProof=new ThreadLocal<>();
     /** The caller has reconciled an actual physical endpoint. Vanilla resolves
      * the landing block, fall multiplier, armor, effects and hurt immunity. */
     public static void landed(EnemyProxy target,dev.sifucraft.bridge.WorldMotionRequests.Scope scope,VanillaFluidBody.Landing contact,java.util.UUID source){
@@ -36,24 +45,54 @@ public final class WorldEffects {
         try{var state=target.level().getBlockState(contact.pos());state.getBlock().fallOn(target.level(),state,contact.pos(),target,contact.distance());}
         finally{if(previous==null)landing.remove();else landing.set(previous);}
     }
-    private static long sent,applied,rejected,lost;private static int logged;
-    public record Stats(long sent,long applied,long rejected,long lost){}
-    public static Stats stats(){return new Stats(sent,applied,rejected,lost);}
+    private static long sent,applied,rejected,lost,pathSegments,pathDropped;private static int logged,pathLogs;
+    public record Stats(long sent,long applied,long rejected,long lost,long pathSegments,long pathDropped){}
+    public static Stats stats(){return new Stats(sent,applied,rejected,lost,pathSegments,pathDropped);}
+    public static void moved(EnemyProxy target,WorldMotionRequests.Scope scope,MapPlacement placement,float halfHeight,Reply reply){
+        if(!(target.level() instanceof ServerLevel))return;
+        if(reply.target()!=target.sifuKey().id()||reply.spawn()!=target.sifuKey().spawn()||reply.world()!=scope.world()||
+            (reply.status()!=2&&reply.status()!=4&&reply.status()!=5)||reply.actorSerial()<=0||reply.componentToken()==0)return;
+        var p=reply.position();var d=reply.delta();
+        var from=new net.minecraft.world.phys.Vec3(placement.mcX(p.x()-d.x()),placement.mcY(p.z()-d.z()-halfHeight),placement.mcZ(p.y()-d.y()));
+        var to=new net.minecraft.world.phys.Vec3(placement.mcX(p.x()),placement.mcY(p.z()-halfHeight),placement.mcZ(p.y()));
+        if(from.distanceToSqr(to)>.101*.101){pathDropped++;return;}
+        receipted(target,scope,new BlockEnvironment.Movement(from,to),reply.atMs());
+    }
+    /** Only the verified STEP caller supplies actual hit-capsule feet, never a prediction. */
+    static void receipted(EnemyProxy target,WorldMotionRequests.Scope scope,BlockEnvironment.Movement movement,long at){
+        if(!(target.level() instanceof ServerLevel))return;
+        if(movement.from().distanceToSqr(movement.to())<1e-12)return;
+        var path=paths.get(target);
+        if(path==null||!path.scope.equals(scope)){if(path!=null)pathDropped+=path.movements.size();path=new ContactPath(scope,new ArrayList<>());paths.put(target,path);}
+        path.movements.add(new TimedMovement(movement,at));pathSegments++;
+    }
     /** NativeFree has no vanilla Entity.move block effects (noPhysics). Invoke
      * only the installed fluid/fire callbacks at its actual snapshot body, using
      * vanilla's own ordered/deduplicated effect collector. Never run portals or
      * unrelated block actions through this observation path. */
     public static void touch(EnemyProxy proxy){
-        if(view(proxy)==null)return;
-        var level=proxy.level();var box=proxy.getBoundingBox().deflate(1e-5);var collector=new InsideBlockEffectApplier.StepBasedCollector();collector.advanceStep(0);
-        for(var pos:BlockPos.betweenClosed(BlockPos.containing(box.minX,box.minY,box.minZ),BlockPos.containing(box.maxX,box.maxY,box.maxZ))){
-            if(!level.hasChunkAt(pos))continue;var state=level.getBlockState(pos);var fluid=state.getFluidState();
-            if((fluid.is(FluidTags.WATER)||fluid.is(FluidTags.LAVA))&&SceneFluidGeometry.canOccupy(level,pos)&&
-                box.intersects(new AABB(pos.getX(),pos.getY(),pos.getZ(),pos.getX()+1,pos.getY()+fluid.getHeight(level,pos),pos.getZ()+1)))fluid.entityInside(level,pos,proxy,collector);
-            if((state.is(Blocks.FIRE)||state.is(Blocks.SOUL_FIRE))&&SceneFluidGeometry.canOccupy(level,pos)&&
-                Shapes.joinIsNotEmpty(Shapes.create(box),state.getEntityInsideCollisionShape(level,pos,proxy).move(pos.getX(),pos.getY(),pos.getZ()),BooleanOp.AND))state.entityInside(level,pos,proxy,collector,false);
+        // Client and server copies compare equal by entity id. The client copy
+        // must never remove the server's pending physical contact path.
+        if(!(proxy.level() instanceof ServerLevel))return;
+        var path=paths.remove(proxy);var view=view(proxy);
+        if(view==null){if(path!=null){pathDropped+=path.movements.size();unavailable(proxy,path);}return;}
+        var movements=new ArrayList<BlockEnvironment.Movement>();long now=WorldWriter.clockMillis();
+        if(path!=null)for(var timed:path.movements){
+            if(!path.scope.equals(view.scope())||timed.at>now||now-timed.at>200){pathDropped++;if(pathLogs++<8)LoggerFactory.getLogger("sifucraft").info("[world-contacts] rejected path target={} age={} same_scope={}",proxy.sifuKey(),now-timed.at,path.scope.equals(view.scope()));continue;}
+            movements.add(timed.movement);
         }
-        collector.applyAndClear(proxy);
+        movements.add(new BlockEnvironment.Movement(proxy.position(),proxy.position()));
+        var proof=new PathProof(proxy,view.scope(),new HashMap<>());var previous=pathProof.get();pathProof.set(proof);
+        try{BlockEnvironment.apply(proxy,movements,contact->proof.contacts.putIfAbsent(contact.type(),contact));}
+        finally{if(previous==null)pathProof.remove();else pathProof.set(previous);}
+    }
+    private static void unavailable(EnemyProxy proxy,ContactPath path){
+        if(pathLogs++>=8)return;
+        var v=WorldMotionWorld.current();var status=v==null?null:v.nativeStatus();long clock=WorldWriter.clockMillis();
+        LoggerFactory.getLogger("sifucraft").info("[world-contacts] unavailable target={} segments={} native_age={} enemy_age={} flags={} caps={} pending={} same_scope={} proxy_current={} alive={} removed={}",
+            proxy.sifuKey(),path.movements.size(),status==null?-1:clock-status.atMs(),v==null||v.enemies()==null?-1:System.currentTimeMillis()-v.enemies().receivedMs(),
+            status==null?-1:status.flags(),status==null?-1:status.capabilities(),v==null?-1:v.requests().pending(),v!=null&&path.scope.equals(v.scope()),
+            EnemyMirrors.hitAttacker(proxy.sifuKey().id(),proxy.sifuKey().spawn())==proxy,proxy.isAlive(),proxy.isRemoved());
     }
     private static WorldMotionWorld.View view(EnemyProxy proxy){
         if(!(proxy.level() instanceof ServerLevel level)||level.dimension()!=Level.OVERWORLD||proxy.isRemoved()||!proxy.isAlive())return null;
@@ -74,6 +113,12 @@ public final class WorldEffects {
         var machine=MachineProjectiles.evidence(proxy,source);
         if(machine!=null)return new Evidence(source.typeHolder().unwrapKey().orElseThrow().identifier().toString(),machine.pos(),machine);
         if(source.getEntity()!=null||source.getDirectEntity()!=null)return null; // machine projectiles need their separate origin credential
+        var path=pathProof.get();
+        if(path!=null&&path.target==proxy&&WorldMotionWorld.current()!=null&&path.scope.equals(WorldMotionWorld.current().scope())){
+            String type=source.is(DamageTypes.LAVA)?"minecraft:lava":source.is(DamageTypes.IN_FIRE)?"minecraft:in_fire":null;
+            var contact=path.contacts.get(type);
+            if(contact!=null&&proxy.level().getBlockState(contact.pos())==contact.state())return new Evidence(contact.type(),contact.pos());
+        }
         var level=proxy.level();var box=proxy.getBoundingBox();
         if(source.is(DamageTypes.ON_FIRE))return proxy.getRemainingFireTicks()>0?new Evidence("minecraft:on_fire",proxy.blockPosition()):null;
         if(source.is(DamageTypes.DROWN)){

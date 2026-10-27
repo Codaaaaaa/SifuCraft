@@ -94,6 +94,7 @@ public final class EnemyProxy extends Mob {
 
     /** Native snapshots own lifetime; MC distance/difficulty must not discard a live mirror. */
     @Override public void checkDespawn() {}
+    @Override protected boolean isAffectedByBlocks(){return BlockEnvironment.active(this)?!isRemoved():super.isAffectedByBlocks();}
 
     @Override public boolean isPickable() { return !isRemoved() && isAlive(); }
     @Override public float getSecondsToDisableBlocking() { return ShieldBlocks.secondsToDisable(this); }

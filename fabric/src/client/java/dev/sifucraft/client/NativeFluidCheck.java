@@ -41,6 +41,7 @@ final class NativeFluidCheck {
         if(stage==0&&v.enemies().entries().isEmpty()&&walked<4){var before=mc.player.position();mc.player.move(MoverType.SELF,new Vec3(.6*dt,0,.8*dt));walked+=mc.player.position().distanceTo(before);}
     }
     private void set(BlockPos pos,BlockState state){require(!level.getBlockState(pos).hasBlockEntity(),"no saved BE replaced");originals.putIfAbsent(pos.immutable(),level.getBlockState(pos));level.setBlockAndUpdate(pos,state);}
+    private void bed(BlockState state){for(int x=-1;x<=1;x++)for(int z=-1;z<=1;z++)set(base.offset(x,0,z),state);}
     private void drain(){for(var pos:BlockPos.betweenClosed(base.offset(-12,-1,-12),base.offset(12,14,12)))if(!level.getFluidState(pos).isEmpty())level.setBlockAndUpdate(pos,Blocks.AIR.defaultBlockState());}
     void tick(MinecraftServer server){
         if(finished||!ready)return;
@@ -54,6 +55,11 @@ final class NativeFluidCheck {
                     for(var pos:BlockPos.betweenClosed(origin.offset(-1,0,-1),origin.offset(1,11,1)))if(!level.getBlockState(pos).isAir()||!SceneBlockSupport.nativeShape(level,pos).isEmpty()){clear=false;break;}
                     if(!clear)continue;
                     target=candidate;base=origin;startY=proxy.getY();deadline=System.currentTimeMillis()+45000;
+                    // Hold horizontal input constant. An open water column can
+                    // carry the target into a neighbouring ordinary-water cell
+                    // before the bubble formation delay has elapsed.
+                    for(var pos:BlockPos.betweenClosed(base.offset(-2,0,-2),base.offset(2,11,2)))if(Math.abs(pos.getX()-base.getX())==2||Math.abs(pos.getZ()-base.getZ())==2)set(pos,Blocks.GLASS.defaultBlockState());
+                    for(int x=-1;x<=1;x++)for(int z=-1;z<=1;z++)set(base.offset(x,-1,z),Blocks.STONE.defaultBlockState());
                     for(var pos:BlockPos.betweenClosed(base.offset(-1,0,-1),base.offset(1,11,1)))set(pos,Blocks.WATER.defaultBlockState());
                     stage=1;LoggerFactory.getLogger("sifucraft").info("[native-fluid-test] water target={}/{} HP={} base={} start_y={} approached={}m",target.id(),target.spawn(),target.health(),base,startY,walked);return;
                 }
@@ -66,19 +72,19 @@ final class NativeFluidCheck {
             double feet=v.placement().mcY(current.location().z()-current.halfHeight());
             if(stage==1){
                 require(FluidMotion.stats().failed()==0,"initial fluid lease qualifies without restarting: "+FluidMotion.stats());
-                if(feet-startY<1.3)return;waterY=feet;set(base,Blocks.SOUL_SAND.defaultBlockState());phaseTick=level.getGameTime();stage=2;
+                if(feet-startY<1.3)return;waterY=feet;bed(Blocks.SOUL_SAND.defaultBlockState());phaseTick=level.getGameTime();stage=2;
                 LoggerFactory.getLogger("sifucraft").info("[native-fluid-test] ordinary water rose {}m; soul-sand base placed below actual body",feet-startY);return;
             }
             var proxy=EnemyMirrors.hitAttacker(target.id(),target.spawn());require(proxy!=null,"same live hit mirror");var bodyCell=proxy.blockPosition();var state=level.getBlockState(bodyCell);
             if(stage==2){
                 if(!state.is(Blocks.BUBBLE_COLUMN)||state.getValue(BubbleColumnBlock.DRAG_DOWN))return;
                 if(feet-waterY<1||level.getGameTime()-phaseTick<15)return;
-                upY=feet;peakY=feet;set(base,Blocks.MAGMA_BLOCK.defaultBlockState());stage=3;phaseTick=level.getGameTime();
+                upY=feet;peakY=feet;bed(Blocks.MAGMA_BLOCK.defaultBlockState());stage=3;phaseTick=level.getGameTime();
                 LoggerFactory.getLogger("sifucraft").info("[native-fluid-test] real upward bubble {}m; changed base to magma",feet-waterY);return;
             }
             if(stage==3){
-                peakY=Math.max(peakY,feet);if(!state.is(Blocks.BUBBLE_COLUMN)||!state.getValue(BubbleColumnBlock.DRAG_DOWN)||peakY-feet<.35)return;
-                downY=feet;set(base,Blocks.AIR.defaultBlockState());drain();stage=4;
+                peakY=Math.max(peakY,feet);if(!state.is(Blocks.BUBBLE_COLUMN)||!state.getValue(BubbleColumnBlock.DRAG_DOWN)||peakY-feet<.35||feet>startY+1.5)return;
+                downY=feet;bed(Blocks.AIR.defaultBlockState());drain();stage=4;
                 LoggerFactory.getLogger("sifucraft").info("[native-fluid-test] real downward bubble {}m; drained medium and removed base while safely above floor",peakY-feet);return;
             }
             if(stage==4){
@@ -88,8 +94,8 @@ final class NativeFluidCheck {
             }
             if(stage==5){
                 if(System.currentTimeMillis()-settled<3000)return;require(Math.abs(feet-startY)<.06,"three seconds no vertical pullback/drift");
-                var stats=FluidMotion.stats();restore(server);stage=7;
-                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p9-native-fluid.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(Map.of("result","PASS","target",target.id(),"spawn",target.spawn(),"water_rise_m",waterY-startY,"up_bubble_rise_m",upY-waterY,"down_bubble_drop_m",peakY-downY,"native_health",target.health(),"stable_ms",3000,"stats",stats),out));
+                var stats=FluidMotion.stats();var contacts=dev.sifucraft.combat.WorldEffects.stats();require(contacts.pathSegments()>0&&contacts.pathDropped()==0,"actual UE receipt paths collected without stale loss: "+contacts);restore(server);stage=7;
+                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p9-native-fluid.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(Map.of("result","PASS","target",target.id(),"spawn",target.spawn(),"water_rise_m",waterY-startY,"up_bubble_rise_m",upY-waterY,"down_bubble_drop_m",peakY-downY,"native_health",target.health(),"stable_ms",3000,"stats",stats,"contacts",contacts),out));
                 LoggerFactory.getLogger("sifucraft").info("[native-fluid-test] PASS actual water/up/down bubble and safe landing/three originals/HP/3s; {}",stats);
             }
         }catch(Exception|AssertionError e){LoggerFactory.getLogger("sifucraft").error("[native-fluid-test] FAIL",e);restore(server);finished=true;Minecraft.getInstance().execute(()->{throw new AssertionError(e);});}
