@@ -64,6 +64,8 @@ loom {
 			property "sifucraft.fluidGeometryLoadDelayMs", providers.gradleProperty("sifucraft.fluidGeometryLoadDelayMs").getOrElse("0")
 			property "sifucraft.fluidReconnectSelfTest", providers.gradleProperty("sifucraft.fluidReconnectSelfTest").getOrElse("false")
 			property "sifucraft.fluidPersistenceSelfTest", providers.gradleProperty("sifucraft.fluidPersistenceSelfTest").getOrElse("false")
+			property "sifucraft.circuitScaleSelfTest", providers.gradleProperty("sifucraft.circuitScaleSelfTest").getOrElse("false")
+			property "sifucraft.circuitScaleLive", providers.gradleProperty("sifucraft.circuitScaleLive").getOrElse("false")
 			property "sifucraft.catalogContainerSelfTest", providers.gradleProperty("sifucraft.catalogContainerSelfTest").getOrElse("false")
 			property "sifucraft.catalogLogicSelfTest", providers.gradleProperty("sifucraft.catalogLogicSelfTest").getOrElse("false")
 			property "sifucraft.catalogModelSelfTest", providers.gradleProperty("sifucraft.catalogModelSelfTest").getOrElse("false")
