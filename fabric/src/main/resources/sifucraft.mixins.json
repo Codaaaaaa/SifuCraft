@@ -13,6 +13,7 @@
 		"EnvironmentPathMixin",
 		"FlowingFluidMixin",
 		"LevelMixin",
+		"LavaSceneMixin",
 		"LiquidContactMixin",
 		"PlayerAttackMixin",
 		"PlayerPredictionMixin",

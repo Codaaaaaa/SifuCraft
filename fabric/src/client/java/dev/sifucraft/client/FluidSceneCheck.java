@@ -120,6 +120,54 @@ final class FluidSceneCheck {
             }
         }finally{player.setPos(originalPos);player.setYRot(yaw);player.setXRot(pitch);player.setItemInHand(InteractionHand.MAIN_HAND,hand);}
     }
+    private long randomFireSample(SifuCollision.Active scene,BlockPos source,List<BlockPos> area,long seed,int[] fires){
+        for(var pos:area)if(level.getBlockState(pos).is(Blocks.FIRE))level.setBlock(pos,Blocks.AIR.defaultBlockState(),2);
+        var random=net.minecraft.util.RandomSource.create(seed);
+        SceneBlockSupport.withScene(scene,()->{level.getFluidState(source).randomTick(level,source,random);return null;});
+        for(var pos:area)if(level.getBlockState(pos).is(Blocks.FIRE))fires[0]++;
+        return random.nextLong();
+    }
+    private void randomFire(){
+        var active=SifuCollision.active();var open=new SifuCollision.Active(active.grid(),active.placement());
+        var touched=new java.util.LinkedHashSet<BlockPos>();var samples=new ArrayList<BlockPos>();
+        java.util.function.BiConsumer<BlockPos,BlockState> put=(pos,state)->{touched.add(pos.immutable());set(pos,state);};
+        var air=Blocks.AIR.defaultBlockState();var lava=Blocks.LAVA.defaultBlockState();
+        int[] closedFires={0},openFires={0},boundaryFires={0},ordinaryFires={0},unavailableFires={0};
+        try{
+            for(int x=3;x<=8;x++)for(int y=64;y<=67;y++)for(int z=2;z<=6;z++){
+                var pos=new BlockPos(x,y,z);put.accept(pos,air);samples.add(pos);
+            }
+            for(int y=64;y<=66;y++)for(int z=3;z<=5;z++)put.accept(new BlockPos(7,y,z),Blocks.OAK_PLANKS.defaultBlockState());
+            var source=new BlockPos(5,64,4);put.accept(source,lava);
+            require(level.canSpreadFireAround(source),"original lava random-fire gamerule enabled");
+            for(int seed=0;seed<128;seed++){
+                long closed=randomFireSample(active,source,samples,seed,closedFires),opened=randomFireSample(open,source,samples,seed,openFires);
+                require(closed==opened,"Native fire output guard preserves original random sampling seed="+seed);
+            }
+            require(closedFires[0]==0&&openFires[0]>0,"Native closed gate blocks random lava ignition, open gate permits it: closed="+closedFires[0]+" open="+openFires[0]);
+            for(var pos:samples)if(level.getBlockState(pos).is(Blocks.FIRE))level.setBlock(pos,air,2);
+            samples.clear();
+            var boundary=new SifuCollision.Active(active.grid(),new MapPlacement("Boundary",-2046,64,0));
+            for(int x=-1;x<=4;x++)for(int y=70;y<=73;y++)for(int z=38;z<=42;z++){
+                var pos=new BlockPos(x,y,z);put.accept(pos,air);samples.add(pos);
+            }
+            var local=new BlockPos(1,70,40);var foreign=local.east();
+            for(int y=70;y<=72;y++)for(int z=39;z<=41;z++)put.accept(new BlockPos(2,y,z),Blocks.OAK_PLANKS.defaultBlockState());
+            put.accept(local,lava);
+            for(int seed=0;seed<128;seed++){
+                randomFireSample(boundary,local,samples,seed,boundaryFires);
+                randomFireSample(active,local,samples,seed,ordinaryFires);
+                final int selected=seed;SceneFluidGeometry.withUnavailableGeometry(()->randomFireSample(active,local,samples,selected,unavailableFires));
+            }
+            require(boundaryFires[0]==0&&ordinaryFires[0]>0&&unavailableFires[0]==0,"foreign fuel and pending geometry cannot cause lava fire; same-map positive control ignites");
+            for(var pos:samples)put.accept(pos,air);
+            for(int y=70;y<=72;y++)for(int z=39;z<=41;z++)put.accept(new BlockPos(1,y,z),Blocks.OAK_PLANKS.defaultBlockState());
+            put.accept(foreign,lava);
+            for(int seed=0;seed<128;seed++)randomFireSample(boundary,foreign,samples,seed,boundaryFires);
+            require(boundaryFires[0]==0,"foreign lava cannot ignite the active map");
+        }finally{for(var pos:touched){var old=originals.remove(pos);if(old!=null)level.setBlock(pos,old,2);}}
+        LoggerFactory.getLogger("sifucraft").info("[fluid-scene-test] lava random fire PASS: closed={} open={} boundary={} same_map={} unavailable={} RNG=128 equal seed pairs",closedFires[0],openFires[0],boundaryFires[0],ordinaryFires[0],unavailableFires[0]);
+    }
     private void bucket(int offset,Item input,Item output){
         var originalPos=player.position();float yaw=player.getYRot(),pitch=player.getXRot();var hand=player.getItemInHand(InteractionHand.MAIN_HAND).copy();
         try{
@@ -150,7 +198,7 @@ final class FluidSceneCheck {
         if(finished||stage==0&&!ready||stage==8&&!ready)return;
         try{
             if(stage==0){
-                level=server.overworld();if(server.getPlayerList().getPlayers().isEmpty()||SceneFluidGeometry.canOccupy(level,GATE))return;player=server.getPlayerList().getPlayers().getFirst();started=System.currentTimeMillis();boundaries();revalidation();
+                level=server.overworld();if(server.getPlayerList().getPlayers().isEmpty()||SceneFluidGeometry.canOccupy(level,GATE))return;player=server.getPlayerList().getPlayers().getFirst();started=System.currentTimeMillis();boundaries();randomFire();revalidation();
                 for(int offset:new int[]{0,20})for(int y=62;y<=66;y++)for(int z=1;z<=7;z++)for(int x=1;x<=15;x++)set(new BlockPos(x+offset,y,z),Blocks.AIR.defaultBlockState());
                 for(int z=2;z<=6;z++)for(int x=2;x<=6;x++){
                     set(new BlockPos(x+20,63,z),Blocks.STONE.defaultBlockState());
@@ -230,6 +278,7 @@ final class FluidSceneCheck {
     private void complete(MinecraftServer server)throws java.io.IOException{
         restore(server);stage=8;
         var report=new LinkedHashMap<String,Object>(Map.of("result","PASS","scheduled_ticks",compared,"bucket_conversions",6,"native_wall_bucket_rejected",true,"native_gate_open_close_reopen",true,"map_boundaries",true,"foreign_tick_preserved_and_resumed",true,"boundary_mix_contacts",true,"pending_geometry_preserves_fluid_and_buckets",true,"trace",trace));
+        report.put("lava_random_fire_seed_pairs",128);
         if(reconnect)report.put("native_reconnect",Map.of("disconnected_ticks",disconnectedTicks,"first_session",Long.toUnsignedString(firstNativeSession),"next_session",Long.toUnsignedString(nextNativeSession)));
         AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p9-fluid-scene.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(report,out));
         LoggerFactory.getLogger("sifucraft").info("[fluid-scene-test] PASS {} scheduled ticks equal ordinary vanilla pool; bucket source/pickup/inventory, no floor/wall leak, Native gate open/close/reopen; reconnect={}",compared,reconnect);

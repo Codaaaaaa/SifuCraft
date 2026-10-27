@@ -41,6 +41,12 @@ public final class SceneFluidGeometry {
         var query=view(level);if(!query.ready)return false;var scene=query.scene;return scene==null||scene.placement().containsX(pos.getX())&&scene.fluidCell(pos);
     }
     public static boolean available(BlockGetter level){return view(level).ready;}
+    /** Native heat cannot cross a map boundary or an imported wall. */
+    public static boolean canEmitTo(BlockGetter level,BlockPos source,BlockPos target){
+        var query=view(level);if(!query.ready)return false;var scene=query.scene;if(scene==null)return true;
+        if(!scene.placement().containsX(source.getX())||!scene.placement().containsX(target.getX())||!scene.fluidCell(source)||!scene.fluidCell(target))return false;
+        return scene.clip(net.minecraft.world.phys.Vec3.atCenterOf(source),net.minecraft.world.phys.Vec3.atCenterOf(target))==null;
+    }
     public static boolean inActiveMap(BlockGetter level,BlockPos pos){
         var query=view(level);if(!query.ready)return false;var scene=query.scene;return scene==null||scene.placement().containsX(pos.getX());
     }
