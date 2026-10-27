@@ -19,6 +19,14 @@ public final class WorldMotionWorld {
         }
     }
     private static volatile View current;
-    public static View current(){return current;}
+    private static final ThreadLocal<View> diagnosticView=new ThreadLocal<>();
+    public static View current(){var diagnostic=diagnosticView.get();return diagnostic==null?current:diagnostic;}
     public static void offer(View view){current=view;PistonMachines.offered(view);}
+    /** One server-thread-only seqlock miss, without changing client publication. */
+    public static void withUnavailableStatus(Runnable action){
+        if(!Boolean.getBoolean("sifucraft.bubbleMatrixSelfTest"))throw new IllegalStateException("isolated fixture only");
+        var view=current();if(view==null)throw new IllegalStateException("missing world");
+        var old=diagnosticView.get();diagnosticView.set(new View(view.requests(),view.scope(),view.placement(),view.enemies(),view.scene(),null,view.geometry()));
+        try{action.run();}finally{if(old==null)diagnosticView.remove();else diagnosticView.set(old);}
+    }
 }

@@ -34,6 +34,10 @@ public final class VanillaFluidBody extends Cow {
     @Override public void gameEvent(Holder<GameEvent> event,Entity source){}
     @Override public void gameEvent(Holder<GameEvent> event){}
     @Override protected void checkFallDamage(double dy,boolean ground,BlockState state,BlockPos pos){
+        // LivingEntity refreshes fluid contact here when a move re-enters water.
+        // Preserve that timing (including vanilla splash RNG) before deferring
+        // the landing callback; waiting for baseTick changes the next FloatGoal.
+        if(!isInWater())updateFluidInteraction();
         // Prediction cannot stomp farmland, play a landing event or cause damage.
         // Keep vanilla's accumulated fall state; actual landing is handled only
         // after the physical receipt, never at the speculative endpoint.

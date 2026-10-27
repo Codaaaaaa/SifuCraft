@@ -104,6 +104,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private NativePistonCheck nativePistonCheck;
     private AirEnvironmentCheck airEnvironmentCheck;
     private HotFloorCheck hotFloorCheck;
+    private BubbleMatrixCheck bubbleMatrixCheck;
     private FluidSceneCheck fluidSceneCheck;
     private EnvironmentDamageCheck environmentDamageCheck;
     private NativePauseCheck nativePauseCheck;
@@ -370,6 +371,10 @@ public final class SifuCraftClient implements ClientModInitializer {
             hotFloorCheck=new HotFloorCheck();ServerTickEvents.END_SERVER_TICK.register(hotFloorCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(hotFloorCheck::restore);
         }
+        if(Boolean.getBoolean("sifucraft.bubbleMatrixSelfTest")){
+            bubbleMatrixCheck=new BubbleMatrixCheck();ServerTickEvents.END_SERVER_TICK.register(bubbleMatrixCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(bubbleMatrixCheck::restore);
+        }
         if(Boolean.getBoolean("sifucraft.fluidPartialSelfTest")){
             fluidPartialCheck=new FluidPartialCheck();ServerTickEvents.END_SERVER_TICK.register(fluidPartialCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(fluidPartialCheck::restore);
@@ -620,6 +625,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(fluidMotionCheck!=null)fluidMotionCheck.clientTick(minecraft);
         if(airEnvironmentCheck!=null)airEnvironmentCheck.clientTick(minecraft);
         if(hotFloorCheck!=null)hotFloorCheck.clientTick(minecraft);
+        if(bubbleMatrixCheck!=null)bubbleMatrixCheck.clientTick(minecraft);
         if(fluidPartialCheck!=null)fluidPartialCheck.clientTick(minecraft);
         if(environmentPathCheck!=null)environmentPathCheck.clientTick(minecraft);
         if(pistonTicketsCheck!=null)pistonTicketsCheck.clientTick(minecraft);

@@ -89,7 +89,16 @@ public final class WorldEffects {
         // must never remove the server's pending physical contact path.
         if(!(proxy.level() instanceof ServerLevel))return;
         var path=paths.remove(proxy);var view=view(proxy);
-        if(view==null){if(path!=null){pathDropped+=path.movements.size();unavailable(proxy,path);}return;}
+        if(view==null){
+            // A single unavailable seqlock snapshot carries no new authority,
+            // but must not discard a still-fresh actual sweep before the next tick.
+            var current=WorldMotionWorld.current();long now=WorldWriter.clockMillis();
+            if(path!=null&&current!=null&&current.nativeStatus()==null&&path.scope.equals(current.scope())&&
+                current.scope().equals(current.requests().scope())&&current.scope().save()==PistonMovePlans.saveKey((ServerLevel)proxy.level())&&
+                !proxy.isRemoved()&&proxy.isAlive()&&EnemyMirrors.hitAttacker(proxy.sifuKey().id(),proxy.sifuKey().spawn())==proxy&&
+                path.movements.stream().allMatch(p->p.at<=now&&now-p.at<=200))paths.put(proxy,path);
+            else if(path!=null){pathDropped+=path.movements.size();unavailable(proxy,path);}return;
+        }
         var movements=new ArrayList<BlockEnvironment.Movement>();long now=WorldWriter.clockMillis();
         if(path!=null)for(var timed:path.movements){
             if(!path.scope.equals(view.scope())||timed.at>now||now-timed.at>200){pathDropped++;if(pathLogs++<8)LoggerFactory.getLogger("sifucraft").info("[world-contacts] rejected path target={} age={} same_scope={}",proxy.sifuKey(),now-timed.at,path.scope.equals(view.scope()));continue;}
@@ -158,7 +167,7 @@ public final class WorldEffects {
     public static void record(EnemyProxy proxy,DamageSource source,float amount){
         var view=view(proxy);var proof=evidence(proxy,source);if(view==null||proof==null||!Float.isFinite(amount)||amount<=0)return;
         var entry=view.enemies().entries().stream().filter(e->e.key().equals(proxy.sifuKey())&&e.alive()).findFirst().orElse(null);if(entry==null||entry.radius()<10||entry.radius()>100||entry.halfHeight()>200)return;
-        FluidMotion.beforeDamage(proxy);
+        FluidMotion.beforeDamage(proxy,view);
         var pos=proof.pos;var section=WorldBlocks.index().snapshot(SectionPos.of(pos).asLong());
         long state=ShapeProtocol.mapHash(BlockStateKey.encode(proxy.level().getBlockState(pos)));if(state==0)state=1;
         long revision=proof.machine==null?(section==null?0:section.revision()):proof.machine.revision(),stateKey=proof.machine==null?state:proof.machine.state(),now=WorldWriter.clockMillis();var origin=proof.causal!=null?proof.causal:proof.machine==null?proxy.getUUID():proof.machine.action();sent++;
