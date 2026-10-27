@@ -80,6 +80,10 @@ final class NativePistonCheck {
         // The first MC anchor is needed before WorldMotionWorld can exist.
         // Seed ordinary F8 here rather than waiting on that dependent view.
         if(lift&&stage==-3&&mc.player!=null&&frame!=null&&!frame.minecraftOwnsInput())f8Control("1:mc");
+        if(lift&&stage<0&&frame!=null&&frame.minecraftOwnsInput()){
+            try{if(java.nio.file.Files.exists(f8File)&&java.nio.file.Files.readString(f8File).equals("1:mc"))f8Control("0:idle");}
+            catch(java.io.IOException e){throw new java.io.UncheckedIOException(e);}
+        }
         if(pauseRequested!=0&&mc.isPaused()&&pauseAt==0){pauseAt=System.currentTimeMillis();mc.getSingleplayerServer().execute(()->pausedTick=level.getGameTime());}
         if(pauseAt!=0&&!resumed&&System.currentTimeMillis()-pauseAt>=1200){resumed=true;mc.getSingleplayerServer().execute(()->{require(level.getGameTime()<=pausedTick+1,"actual Native pause froze MC world time");pauseChecked=true;});pauseControl("0");}
         var view=WorldMotionWorld.current();ready=view!=null&&view.shapesCurrent()&&view.nativeStatus()!=null&&(view.nativeStatus().capabilities()&1)!=0&&view.nativeStatus().flags()==0&&
@@ -184,7 +188,8 @@ final class NativePistonCheck {
         require(System.currentTimeMillis()<deadline,"bounded platform handover stage="+stage);
         if(stage==-2){
             if(!frame.minecraftOwnsInput()||!mcReady||!view.shapesCurrent()||nativeFeet(view,frame).distanceToSqr(setupPosition)>.0009){platformSettled=0;return;}
-            if(platformSettled==0)platformSettled=System.currentTimeMillis();if(System.currentTimeMillis()-platformSettled<300)return;
+            long dwell=Math.max(300,Math.min(15000,Long.getLong("sifucraft.nativePlayerPistonDwellMs",300L)));
+            if(platformSettled==0)platformSettled=System.currentTimeMillis();if(System.currentTimeMillis()-platformSettled<dwell)return;
             stage=-1;f8Control("2:native");return;
         }
         if(!frame.minecraftOwnsInput()&&NativeMotionSubjects.playerReady(view))stage=0;

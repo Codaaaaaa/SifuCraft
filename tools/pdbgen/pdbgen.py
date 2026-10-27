@@ -20,8 +20,11 @@ from pathlib import Path
 EXE_NAME = "Sifu-Win64-Shipping.exe"
 
 # Global variables whose RVA the native module reads.
-SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData", "GD3D11RHI", "GDynamicRHI", "InternationalizationStore", "LevelStreamingManager", "InteractionKey", "SceneRenderTargets", "DepthTextureVtable"]
-SIZED_SYMBOLS = {"DepthTextureVtable": ("TD3D11Texture2D<FD3D11BaseTexture2D>::`vftable'", 88)}
+SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData", "GD3D11RHI", "GDynamicRHI", "InternationalizationStore", "LevelStreamingManager", "InteractionKey", "SceneRenderTargets", "DepthTextureVtable", "FidgetResetTimer", "FidgetStartTimer", "FidgetProcessVtable"]
+SIZED_SYMBOLS = {"DepthTextureVtable": ("TD3D11Texture2D<FD3D11BaseTexture2D>::`vftable'", 88),
+                 "FidgetResetTimer": ("FFidgetPlayerHandler::ResetFidgetTimer", 90),
+                 "FidgetStartTimer": ("FFidgetPlayerHandler::TryToStartLaunchFidgetTimer", 429),
+                 "FidgetProcessVtable": ("APFidget::`vftable'", 72)}
 SYMBOL_MATCHES = {"InternationalizationStore": ("*FInternationalization*Singleton", "::Singleton"),
                   "LevelStreamingManager": ("FSCLevelStreamingManager::s_Instance", "::s_Instance"),
                   "InteractionKey": ("EKeys::Q", "::Q"),
@@ -151,6 +154,13 @@ MEMBERS = {
     "AAIController": ["BrainComponent"],
     "USCAIComponent": ["m_CachedBehaviorTreeComponent"],
     "UAIFightingComponent": ["m_bIsOutOfIdle", "m_bForceActionHandlerTick"],
+    "FFidgetPlayerHandler": ["m_ComponentOwner", "m_GameInstance", "m_LaunchFidgetTimerHandle"],
+    "UASMComponent": ["m_ActionStateManager"],
+    "SCActionStateManager": ["m_currentState", "m_PreState", "m_PostState"],
+    "ActionStateManager": ["m_Owner"],
+    "SCActionState": ["m_actionProcesses", "m_owner"],
+    "SCActionProcess": ["m_Owner"],
+    "APFidget": ["m_MovementComponent", "m_fidgetPlayerHandler"],
     "USCBehaviorTreeComponent": ["m_OwnerAiComponent"],
     "UAIBehaviorTreeComponent": ["m_CharacterOwner"],
     "ABaseCharacter": ["m_OrderComponent"],
@@ -201,7 +211,7 @@ MEMBERS = {
     "ASCCharacter": ["m_bIsPooled", "m_bPooledActorActive"],
     "AFightingCharacter": ["m_HealthComponent", "m_eFaction", "m_HitComponent", "m_DefenseComponent",
                            "m_AttackComponent", "m_HitCapsule", "m_AvoidCapsule", "m_AbilityComponent",
-                           "m_bHasJustBeenHitted", "m_HittedDescription", "m_AIComponent"],
+                           "m_bHasJustBeenHitted", "m_HittedDescription", "m_AIComponent", "m_ASMComponent"],
     "UHealthComponent": ["m_fHealth", "m_fMaxHealth", "m_bCanBeDamaged", "m_bCanDieByDamage",
                          "m_bForceDeathOnApplyDamage"],
     "UCharacterHealthComponent": ["m_fMaxHealthMultiplier", "m_bIsDown", "m_eDownState"],

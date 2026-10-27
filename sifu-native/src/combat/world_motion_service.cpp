@@ -7,6 +7,7 @@
 #include "combat/ai_tick_gate.h"
 #include "combat/base_sync.h"
 #include "combat/player_world_probe.h"
+#include "combat/player_idle_gate.h"
 #include "combat/damage.h"
 #include "combat/world_motion_engine.h"
 #include "combat/target_retention.h"
@@ -276,7 +277,30 @@ void ApplyOnGameThread(std::uintptr_t base) {
         const auto reason=PlayerBody(&target,&body,false);
         if(!reason)player={scope,Stamp(g_current.actors.pawn_identity),now,g_current.save,g_current.map,{{body.position.x,body.position.y,body.position.z},body.radius,body.half,body.hp}};
         static const char* previous=nullptr;static unsigned logged=0;
-        if(input::Router().owner()==protocol::InputOwner::Sifu&&!hooks::PoseActive()&&reason!=previous&&logged<32){previous=reason;++logged;SC_LOG("[world-player] eligibility=%s pawn=%d/%d",reason?reason:"ready",g_current.actors.pawn_identity.index,g_current.actors.pawn_identity.serial);}
+        if(input::Router().owner()==protocol::InputOwner::Sifu&&!hooks::PoseActive()&&reason!=previous&&logged<32){
+            previous=reason;++logged;SC_LOG("[world-player] eligibility=%s pawn=%d/%d",reason?reason:"ready",g_current.actors.pawn_identity.index,g_current.actors.pawn_identity.serial);
+            // Read-only, opt-in diagnosis of a real command interrupting a player
+            // lease. PDB: m_OrderList is TArray<TSharedPtr<OrderBase,1>> (16B).
+            if(g_current.observe_player&&reason&&std::strcmp(reason,"orders")==0){
+                const auto order=mem::ReadPtr(g_current.actors.pawn+off::ABaseCharacter::m_OrderComponent);
+                if(ue::IsLive(order)&&mem::ReadPtr(order+off::UActorComponent::OwnerPrivate)==g_current.actors.pawn){
+                    // Local PDB DelayedOrderCommand: 48B; m_Order+8,
+                    // m_OrderType+24 (FOrderType.m_eOrderType+0), command byte+0.
+                    const std::uint32_t lists[]={off::OrderManager::m_OrderList,off::OrderManager::m_DelayedOrderCommand,off::OrderManager::m_DelayedOrderCommandDuringPrediction};
+                    for(int kind=0;kind<3;++kind){
+                        mem::RawArray list{};
+                        if(!mem::ReadArray(order+off::UOrderComponent::m_OrderManager+lists[kind],&list)||list.num>64)continue;
+                        for(int i=0;i<std::min(list.num,3);++i){
+                            const auto entry=list.data+std::uintptr_t(i)*(kind?48:16);
+                            const auto item=mem::ReadPtr(entry+(kind?8:0)),vtable=mem::ReadPtr(item);
+                            SC_LOG("[world-player-order] list=%d count=%d index=%d command=%u type=%u order=%llX vtable_rva=%llX",kind,list.num,i,
+                                kind?mem::ReadOr<std::uint8_t>(entry,255):255,kind?mem::ReadOr<std::uint8_t>(entry+24,255):255,
+                                static_cast<unsigned long long>(item),static_cast<unsigned long long>(vtable>=base?vtable-base:0));
+                        }
+                    }
+                }
+            }
+        }
     }
     AcquireSRWLockExclusive(&g_lock);
     if(g_io_native==scope.native_session&&g_io_peer==scope.peer_session) {
@@ -290,6 +314,11 @@ void ApplyOnGameThread(std::uintptr_t base) {
         }
     }
     ReleaseSRWLockExclusive(&g_lock);
+    const auto movement=mem::ReadPtr(g_current.actors.pawn+off::ACharacter::CharacterMovement);
+    bool leased=false;
+    for(std::size_t i=0;i<kTargets;++i)if(movement&&g_watches[i][PartIndex(motion::Part::Movement)].load()==movement&&g_fleet.at(i).phase()!=Engine::Phase::Free)leased=true;
+    const bool fresh=g_current.actors.updated_ms<=now&&now-g_current.actors.updated_ms<=200;
+    player_idle::Update(base,g_current.actors,g_current.enabled&&g_current.actors.enabled&&fresh&&(hooks::PoseActive()||leased));
 }
 bool Skip(std::uintptr_t component,motion::Part part) {
     if(!component)return false;

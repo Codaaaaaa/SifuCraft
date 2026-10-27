@@ -22,6 +22,9 @@ inline constexpr std::uintptr_t LevelStreamingManager = 0x5C7EBF0;
 inline constexpr std::uintptr_t InteractionKey = 0x5D8AE10;
 inline constexpr std::uintptr_t SceneRenderTargets = 0x5A55318;
 inline constexpr std::uintptr_t DepthTextureVtable = 0x4B7E440;
+inline constexpr std::uintptr_t FidgetResetTimer = 0x18995F0;
+inline constexpr std::uintptr_t FidgetStartTimer = 0x189E7E0;
+inline constexpr std::uintptr_t FidgetProcessVtable = 0x486E7A8;
 }  // namespace rva
 
 namespace off {
@@ -275,6 +278,33 @@ namespace UAIFightingComponent {
 inline constexpr std::uint32_t m_bIsOutOfIdle = 0x934;
 inline constexpr std::uint32_t m_bForceActionHandlerTick = 0x935;
 }
+namespace FFidgetPlayerHandler {
+inline constexpr std::uint32_t m_ComponentOwner = 0x20;
+inline constexpr std::uint32_t m_GameInstance = 0x28;
+inline constexpr std::uint32_t m_LaunchFidgetTimerHandle = 0x90;
+}
+namespace UASMComponent {
+inline constexpr std::uint32_t m_ActionStateManager = 0x108;
+}
+namespace SCActionStateManager {
+inline constexpr std::uint32_t m_currentState = 0x50;
+inline constexpr std::uint32_t m_PreState = 0x28;
+inline constexpr std::uint32_t m_PostState = 0x58;
+}
+namespace ActionStateManager {
+inline constexpr std::uint32_t m_Owner = 0xF0;
+}
+namespace SCActionState {
+inline constexpr std::uint32_t m_actionProcesses = 0x8;
+inline constexpr std::uint32_t m_owner = 0x20;
+}
+namespace SCActionProcess {
+inline constexpr std::uint32_t m_Owner = 0x8;
+}
+namespace APFidget {
+inline constexpr std::uint32_t m_MovementComponent = 0x18;
+inline constexpr std::uint32_t m_fidgetPlayerHandler = 0x38;
+}
 namespace USCBehaviorTreeComponent {
 inline constexpr std::uint32_t m_OwnerAiComponent = 0x310;
 }
@@ -500,6 +530,7 @@ inline constexpr std::uint32_t m_AbilityComponent = 0x12B0;
 inline constexpr std::uint32_t m_bHasJustBeenHitted = 0xCF8;
 inline constexpr std::uint32_t m_HittedDescription = 0xD00;
 inline constexpr std::uint32_t m_AIComponent = 0x1338;
+inline constexpr std::uint32_t m_ASMComponent = 0x1378;
 }
 namespace UHealthComponent {
 inline constexpr std::uint32_t m_fHealth = 0x138;
