@@ -149,6 +149,25 @@ void MovingSurface(ID3D11Device* device, ID3D11DeviceContext* context) {
     for(UINT y=2;y<height-2;++y)for(UINT x=2;x<width-2;++x){const auto at=(y*width+x)*4;
         if(std::abs(int(pixels[at])-int(16*(x%7)+25))>2||std::abs(int(pixels[at+1])-int(16*(y%7)+51))>2||std::abs(int(pixels[at+2])-76)>2)++texture_errors;}
     Check(texture_errors==0,"coalesced translucent patches retain every source texel and blend only once");
+    // Both surfaces and a genuine opening sit inside each original 16px tile.
+    // Subdivision should recover the small planar regions without joining them.
+    for(UINT y=0;y<height;++y)for(UINT x=0;x<width;++x){
+        const auto at=(std::size_t(y)*width+x)*4;
+        const bool hole=x%16>=6&&x%16<10&&y%16>=6&&y%16<10;
+        frame.pixels[at]=16*(x%7);frame.pixels[at+1]=16*(y%7);frame.pixels[at+2]=0;frame.pixels[at+3]=hole?0:128;
+        const float z=((x/8+y/8)&1)?.04f:.08f;
+        std::memcpy(frame.pixels.data()+width*height*4+at,&z,4);
+    }
+    ++h.frame_id;world.Prepare(frame);
+    Check(world.patches()<world.pixels()/4,"subdivision coalesces small surfaces inside mixed tiles");
+    context->ClearRenderTargetView(rtv.get(),background);world.Draw(device,image.get(),scene);pixels=Read(device,context,image.get());
+    unsigned mixed_errors=0;
+    for(UINT y=2;y<height-2;++y)for(UINT x=2;x<width-2;++x){
+        const auto at=(y*width+x)*4;const bool hole=frame.pixels[at+3]==0;
+        const int r=hole?51:int(16*(x%7)+25),g=hole?102:int(16*(y%7)+51),b=hole?153:76;
+        if(std::abs(int(pixels[at])-r)>2||std::abs(int(pixels[at+1])-g)>2||std::abs(int(pixels[at+2])-b)>2)++mixed_errors;
+    }
+    Check(mixed_errors==0,"subdivided depth steps keep every texel, transparent opening and single alpha blend");
 }
 int Benchmark(const char* path) {
     world_image::Frame frame;std::ifstream input(path,std::ios::binary);
@@ -163,7 +182,7 @@ int Benchmark(const char* path) {
         const double ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
         if(i>=2){total+=ms;peak=std::max(peak,ms);}
     }
-    std::printf("CPU world Prepare: source=%ux%u pixels=%zu average_ms=%.3f peak_ms=%.3f (30 warm samples)\n",frame.header.width,frame.header.height,world.pixels(),total/30,peak);
+    std::printf("CPU world Prepare: source=%ux%u pixels=%zu patches=%zu average_ms=%.3f peak_ms=%.3f (30 warm samples)\n",frame.header.width,frame.header.height,world.pixels(),world.patches(),total/30,peak);
     return 0;
 }
 }

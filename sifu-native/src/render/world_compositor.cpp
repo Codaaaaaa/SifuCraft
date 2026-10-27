@@ -163,7 +163,7 @@ void WorldCompositor::ResetGpu() {
     pixel_.reset(); vertex_.reset();fog_vertex_.reset();fog_pixel_.reset(); context_.reset(); device_.reset(); capacity_ = 0; upload_ = true;
     color_view_.reset(); color_texture_.reset(); color_width_ = color_height_ = 0;
 }
-void WorldCompositor::Reset() { ResetGpu(); points_.clear(); source_corners_.clear(); source_distances_.clear(); source_color_.clear(); prepared_id_ = 0; pixel_count_ = missing_depth_ = 0; constants_ = {}; }
+void WorldCompositor::Reset() { ResetGpu(); points_.clear(); source_corners_.clear(); source_distances_.clear(); source_depths_.clear(); source_color_.clear(); prepared_id_ = 0; pixel_count_ = missing_depth_ = 0; constants_ = {}; }
 HRESULT WorldCompositor::Prepare(const world_image::Frame& frame) {
     const auto& h = frame.header;
     if (h.frame_id == prepared_id_) return S_OK;
@@ -179,21 +179,17 @@ HRESULT WorldCompositor::Prepare(const world_image::Frame& frame) {
     constexpr UINT tile=16;
     const UINT columns=(h.width+tile-1)/tile,rows=(h.height+tile-1)/tile;
     std::vector<UINT> occupied(std::size_t(columns)*rows);
+    source_depths_.resize(std::size_t(h.width)*h.height);
     auto depth=[&](int x,int y) {
         if(x<0||y<0||x>=int(h.width)||y>=int(h.height))return 0.f;
-        const auto at=std::size_t(y)*h.stride+x*4;
-        if(!frame.pixels[at+3])return 0.f;
-        float z;std::memcpy(&z,frame.pixels.data()+plane+at,4);
-        if(!std::isfinite(z)||z<=0||z>1)return 0.f;
+        const float z=source_depths_[std::size_t(y)*h.width+x];
+        if(z<=0)return 0.f;
         return (h.flags&world_image::kZeroToOne)?z:2*z-1;
     };
     // A separate validity check keeps legitimate negative NDC depths distinct from absent pixels.
     auto valid=[&](int x,int y) {
         if(x<0||y<0||x>=int(h.width)||y>=int(h.height))return false;
-        const auto at=std::size_t(y)*h.stride+x*4;
-        if(!frame.pixels[at+3])return false;
-        float z;std::memcpy(&z,frame.pixels.data()+plane+at,4);
-        return std::isfinite(z)&&z>0&&z<=1;
+        return source_depths_[std::size_t(y)*h.width+x]>0;
     };
     for(UINT y=0;y<h.height;++y){
         UINT x=0;
@@ -204,11 +200,14 @@ HRESULT WorldCompositor::Prepare(const world_image::Frame& frame) {
         for(;x+4<=h.width;x+=4){
             const auto at=std::size_t(y)*h.stride+x*4;__m128i rgba;std::memcpy(&rgba,frame.pixels.data()+at,sizeof(rgba));
             const auto absent=_mm_cmpeq_epi32(_mm_srli_epi32(rgba,24),_mm_setzero_si128());
-            const auto alpha=(~unsigned(_mm_movemask_ps(_mm_castsi128_ps(absent))))&15u;if(!alpha)continue;
+            const auto alpha=(~unsigned(_mm_movemask_ps(_mm_castsi128_ps(absent))))&15u;
+            auto* cached=source_depths_.data()+std::size_t(y)*h.width+x;
+            if(!alpha){_mm_storeu_ps(cached,_mm_setzero_ps());continue;}
             __m128i bits;std::memcpy(&bits,frame.pixels.data()+plane+at,sizeof(bits));
             const auto nonfinite=_mm_cmpeq_epi32(_mm_and_si128(bits,_mm_set1_epi32(0x7f800000)),_mm_set1_epi32(0x7f800000));
             const auto z=_mm_castsi128_ps(_mm_andnot_si128(nonfinite,bits)); // avoid even signalling-NaN FP comparisons
             const auto validDepth=_mm_and_ps(_mm_cmpgt_ps(z,_mm_setzero_ps()),_mm_cmple_ps(z,_mm_set1_ps(1.f)));
+            _mm_storeu_ps(cached,_mm_and_ps(z,_mm_andnot_ps(_mm_castsi128_ps(absent),validDepth)));
             const auto present=unsigned(_mm_movemask_ps(validDepth))&alpha;
             missing_depth_+=popcount[alpha]-popcount[present];pixel_count_+=popcount[present];
             occupied[std::size_t(y/tile)*columns+x/tile]+=popcount[present];
@@ -216,8 +215,11 @@ HRESULT WorldCompositor::Prepare(const world_image::Frame& frame) {
 #endif
         for(;x<h.width;++x){
         const auto at=std::size_t(y)*h.stride+x*4;
+        auto& cached=source_depths_[std::size_t(y)*h.width+x];cached=0;
         if(!frame.pixels[at+3])continue;
-        if(!valid(x,y)){++missing_depth_;continue;}
+        float z;std::memcpy(&z,frame.pixels.data()+plane+at,4);
+        if(!std::isfinite(z)||z<=0||z>1){++missing_depth_;continue;}
+        cached=z;
         ++pixel_count_;++occupied[std::size_t(y/tile)*columns+x/tile];
         }
     }
@@ -272,9 +274,8 @@ HRESULT WorldCompositor::Prepare(const world_image::Frame& frame) {
             corner(x,y+height).depths[1],corner(x+w,y+height).depths[0]}};
     };
     const float column_z=std::sqrt(m[2]*m[2]+m[6]*m[6]+m[10]*m[10]);
-    for(UINT ty=0;ty<rows;++ty)for(UINT tx=0;tx<columns;++tx){
-        const auto count=occupied[std::size_t(ty)*columns+tx];if(!count)continue;
-        UINT x=tx*tile,y=ty*tile,w=std::min(tile,h.width-x),height=std::min(tile,h.height-y);
+    auto emit=[&](auto&& self,UINT x,UINT y,UINT w,UINT height,UINT count)->void{
+        if(!count)return;
         if(count<w*height){
             UINT x0=x+w,y0=y+height,x1=x,y1=y;
             for(UINT iy=y;iy<y+height;++iy)for(UINT ix=x;ix<x+w;++ix)if(valid(ix,iy)){x0=std::min(x0,ix);y0=std::min(y0,iy);x1=std::max(x1,ix);y1=std::max(y1,iy);}
@@ -324,8 +325,24 @@ HRESULT WorldCompositor::Prepare(const world_image::Frame& frame) {
             error+=corner_error;min_w-=std::abs(m[14])*error;max_w+=std::abs(m[14])*error;max_ray+=column_z*error;
             merge=merge&&min_w>1e-8f&&error*(column_z*max_w+std::abs(m[14])*max_ray)*h.cm_per_block/(min_w*min_w)<=.05f;
         }
-        if(merge)points_.push_back(p);
-        else for(UINT iy=y;iy<y+height;++iy)for(UINT ix=x;ix<x+w;++ix)if(valid(ix,iy))points_.push_back(patch(ix,iy,1,1));
+        if(merge){points_.push_back(p);return;}
+        // A silhouette or two different surfaces need not force all 256 source
+        // pixels to become instances. Reuse the same conservative plane test on
+        // smaller rectangles, retaining canonical corners and every source texel.
+        if(w==1||height==1||(w<=2&&height<=2)){
+            for(UINT iy=y;iy<y+height;++iy)for(UINT ix=x;ix<x+w;++ix)if(valid(ix,iy))points_.push_back(patch(ix,iy,1,1));
+            return;
+        }
+        const UINT left=w>1?w/2:w,top=height>1?height/2:height;
+        for(UINT oy=0;oy<height;oy+=top)for(UINT ox=0;ox<w;ox+=left){
+            const UINT cw=std::min(left,w-ox),ch=std::min(top,height-oy);UINT present=0;
+            for(UINT iy=y+oy;iy<y+oy+ch;++iy)for(UINT ix=x+ox;ix<x+ox+cw;++ix)present+=valid(ix,iy);
+            self(self,x+ox,y+oy,cw,ch,present);
+        }
+    };
+    for(UINT ty=0;ty<rows;++ty)for(UINT tx=0;tx<columns;++tx){
+        const UINT x=tx*tile,y=ty*tile;
+        emit(emit,x,y,std::min(tile,h.width-x),std::min(tile,h.height-y),occupied[std::size_t(ty)*columns+tx]);
     }
     prepared_id_=h.frame_id;return S_OK;
 }

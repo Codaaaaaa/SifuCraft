@@ -36,6 +36,7 @@ private:
     HRESULT Initialize(ID3D11Device* device);
     std::vector<Point> points_;
     std::vector<Distance> source_distances_;
+    std::vector<float> source_depths_;
     std::vector<Corner> source_corners_;
     std::vector<std::uint8_t> source_color_;
     std::uint32_t corner_stamp_ = 0;
