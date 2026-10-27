@@ -13,6 +13,7 @@
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "hooks/game_hooks.h"
+#include "input/input_router.h"
 #include "probe/combat_sample.h"
 #include "probe/probe.h"
 #include "ue/function_call.h"
@@ -113,16 +114,18 @@ const char* WorldSafe(const Context& c,std::uint64_t now) {
     return g_enabled.load()?WorldSafeImpl(g_base,c,now):"disabled";
 }
 using Sample=BodySample;
-const char* Inspect(const Context& c,const Target& t,Sample* s,bool geometry,bool ground=true) {
-    if(!Same(t) || !CurrentTarget(c,t) || t.actor==c.pawn || !ue::IsLive(t.actor) || !ue::IsLive(t.movement)) return "identity";
+bool CurrentPlayer(const Context& c,const Target& t){return t.actor==c.pawn&&ue::ObjectIdentity{static_cast<int>(t.id),t.serial}==c.pawn_identity;}
+const char* Inspect(const Context& c,const Target& t,Sample* s,bool geometry,bool ground=true,bool player=false) {
+    if(!Same(t) || (player?!CurrentPlayer(c,t):!CurrentTarget(c,t)||t.actor==c.pawn) || !ue::IsLive(t.actor) || !ue::IsLive(t.movement)) return "identity";
+    if(player&&(input::Router().owner()!=protocol::InputOwner::Sifu||hooks::PoseActive()))return "player-input-owner";
     const auto cls=ue::ClassName(t.actor);
-    if(cls!="BP_AICharacter_Grunt_M_HD1_Fighter_21_C" && cls!="BP_AICharacter_Grunt_M_HD1_Fighter_11_C") return "class-not-allowed";
+    if(player?cls!="BP_FightingPlayer_C":cls!="BP_AICharacter_Grunt_M_HD1_Fighter_21_C" && cls!="BP_AICharacter_Grunt_M_HD1_Fighter_11_C") return "class-not-allowed";
     const auto pooled=mem::ReadOr<std::uint8_t>(t.actor+off::ASCCharacter::m_bIsPooled,255);
     const auto active=mem::ReadOr<std::uint8_t>(t.actor+off::ASCCharacter::m_bPooledActorActive,255);
     if(pooled>1 || active>1 || (pooled && !active)) return "pooled";
     const auto faction=mem::ReadOr<std::uint8_t>(t.actor+off::AFightingCharacter::m_eFaction,255);
-    if(faction>=gen::value::EFactionsEnums::Count || faction==gen::value::EFactionsEnums::TMP_Neutral ||
-       faction==mem::ReadOr<std::uint8_t>(c.pawn+off::AFightingCharacter::m_eFaction,255)) return "faction";
+    if(faction>=gen::value::EFactionsEnums::Count || (!player&&
+       (faction==gen::value::EFactionsEnums::TMP_Neutral||faction==mem::ReadOr<std::uint8_t>(c.pawn+off::AFightingCharacter::m_eFaction,255)))) return "faction";
     s->health=mem::ReadPtr(t.actor+off::AFightingCharacter::m_HealthComponent);
     probe::HealthSample health;
     if(!ue::IsLive(s->health) || !probe::ReadHealthSample(s->health,&health) || health.health<=0 || health.down) return "health";
@@ -151,6 +154,7 @@ const char* Inspect(const Context& c,const Target& t,Sample* s,bool geometry,boo
     }
     s->mode=mem::ReadOr<std::uint8_t>(t.movement+off::UCharacterMovementComponent::MovementMode,255);
     if(s->mode>2 || mem::ReadOr<std::uint8_t>(t.movement+off::UFightingMovementComponent::m_bIsRushing,255)) return "mode-or-rush";
+    if(player&&s->mode!=1&&s->mode!=2)return "player-not-walking";
     const auto order=mem::ReadPtr(t.actor+off::ABaseCharacter::m_OrderComponent);
     if(!ue::IsLive(order)) return "order-component";
     const auto manager=order+off::UOrderComponent::m_OrderManager;
@@ -175,6 +179,13 @@ const char* Inspect(const Context& c,const Target& t,Sample* s,bool geometry,boo
        !std::isfinite(s->rotation.pitch) || !std::isfinite(s->rotation.yaw) || !std::isfinite(s->rotation.roll) ||
        !ue::ReadComponentToWorld(s->root,&transform) || !mem::Read(t.movement+off::UMovementComponent::Velocity,&s->velocity) ||
        !Finite(s->velocity) || std::fabs(s->velocity.x)+std::fabs(s->velocity.y)+std::fabs(s->velocity.z)>1) return "pose-or-velocity";
+    if(player){
+        ue::FVector acceleration{},last{};
+        if(!mem::Read(t.movement+off::UCharacterMovementComponent::Acceleration,&acceleration)||!Finite(acceleration)||
+           !mem::Read(t.actor+off::APawn::LastControlInputVector,&last)||!Finite(last)||
+           std::fabs(acceleration.x)+std::fabs(acceleration.y)+std::fabs(acceleration.z)>1||
+           std::fabs(last.x)+std::fabs(last.y)+std::fabs(last.z)>1e-5f)return "player-locomotion-input";
+    }
     const float scale=transform.MinAxisScale();
     s->radius=mem::ReadOr<float>(s->root+off::UCapsuleComponent::CapsuleRadius,NAN)*scale;
     s->half=mem::ReadOr<float>(s->root+off::UCapsuleComponent::CapsuleHalfHeight,NAN)*scale;
@@ -365,8 +376,9 @@ void Move(const Command& cmd,const Context& c,const Target& target,const Sample&
 
 const char* CheckWorld(std::uintptr_t base,const Context& c,std::uint64_t now) { return WorldSafeImpl(base,c,now); }
 const char* CheckBody(const Context& c,const Target& t,BodySample* s,bool geometry,bool ground) { return Inspect(c,t,s,geometry,ground); }
+const char* CheckPlayerBody(const Context& c,const Target& t,BodySample* s,bool geometry) { return Inspect(c,t,s,geometry,false,true); }
 const char* CheckPeers(std::uintptr_t base,const Context& c,const Target& t,Peers* p,bool idle) { return InspectPeers(base,c,t,p,idle); }
-bool SweepBody(const Context& c,const Target& t,const BodySample& before,const ue::FVector& delta,SweepResult* result) {
+bool SweepBody(const Context& c,const Target& t,const BodySample& before,const ue::FVector& delta,SweepResult* result,bool player) {
     *result={};
     const float length=Distance(delta,{});
     if(!Finite(delta)||length<=0||length>10.0001f||!Same(t)||!ResolveMove())return false;
@@ -396,7 +408,7 @@ bool SweepBody(const Context& c,const Target& t,const BodySample& before,const u
        std::fabs(after.rotation.pitch-before.rotation.pitch)>0.01f||
        std::fabs(after.rotation.yaw-before.rotation.yaw)>0.01f||
        std::fabs(after.rotation.roll-before.rotation.roll)>0.01f)return false;
-    return CurrentTarget(c,t);
+    return player?CurrentPlayer(c,t):CurrentTarget(c,t);
 }
 void Configure(bool enabled,bool ai_enabled) {
     g_motion_startup=enabled;g_ai_startup=ai_enabled;

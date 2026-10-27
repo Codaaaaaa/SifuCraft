@@ -37,6 +37,7 @@ public:
     virtual bool Bind(const Command&,Body*)=0;
     virtual bool Check(Body*)=0;
     virtual bool Observe(Body* body){return Check(body);} // final original-Tick pose, without requiring an idle AI
+    virtual bool SupportsPlayer(Source)const{return false;}
     virtual Sweep Move(const Body&,const std::array<float,3>&)=0;
     virtual Effect Hurt(const Command&){return {};}
     // Clears only this service's filters. It never rewrites an actor's old pose/state.
@@ -60,7 +61,7 @@ public:
             if(!backend_.Check(&current)||!SameBody(current,body_))BeginRelease(Status::TargetLost);
             else body_=current;
         }
-        if(phase_==Phase::Acquiring&&observed_==7&&reserve_&&Room()) {
+        if(phase_==Phase::Acquiring&&observed_==Parts()&&reserve_&&Room()) {
             phase_=Phase::Owned;Finish(*reserve_,Status::Prepared,now);reserve_.reset();
         }
         if(phase_==Phase::Releasing&&reserve_&&Room()) {Finish(*reserve_,reason_,now);reserve_.reset();}
@@ -72,10 +73,10 @@ public:
             else if(restore_paused_){restore_deadline_=now+500;restore_paused_=false;}
         }
         const bool restore_timeout=phase_==Phase::Releasing&&!(env_.flags&kPaused)&&now>=restore_deadline_;
-        if(phase_==Phase::Releasing&&(restored_==7||restore_timeout)&&(!release_||Room())) {
-            if(restore_timeout&&restored_!=7)reason_=Status::TimedOut;
+        if(phase_==Phase::Releasing&&(restored_==Parts()||restore_timeout)&&(!release_||Room())) {
+            if(restore_timeout&&restored_!=Parts())reason_=Status::TimedOut;
             bool observed=false;
-            if(restored_==7){
+            if(restored_==Parts()){
                 Body sample;
                 if(!identity_lost_&&backend_.Observe(&sample)&&ValidBody(sample)&&sample.serial==body_.serial&&sample.token==body_.token){body_=sample;observed=true;}
                 else reason_=Status::TargetLost;
@@ -105,7 +106,7 @@ public:
             release_=command;BeginRelease(command.op==Op::Cancel?Status::Cancelled:Status::Released);return true;
         }
         if(!env_.ready||env_.flags) {Reject(command,Status::Busy,now);return true;}
-        if(command.flags&kPlayer) {Reject(command,Status::Unsupported,now);return true;}
+        if((command.flags&kPlayer)&&!backend_.SupportsPlayer(command.source)) {Reject(command,Status::Unsupported,now);return true;}
         if(command.op==Op::Damage){
             if(command.source!=Source::WorldEffect||!EnvironmentEffect(command.action)){Reject(command,Status::Unsupported,now);return true;}
             const auto effect=backend_.Hurt(command);
@@ -183,11 +184,12 @@ public:
     }
     void Original(unsigned part) {
         if(part!=1&&part!=2&&part!=4)return;
+        if(!(part&Parts()))return;
         if(phase_==Phase::Acquiring)observed_|=part;
         else if(phase_==Phase::Releasing)restored_|=part;
     }
     // Destroyed/replaced components cannot produce their old original Tick again.
-    void Lost() {BeginRelease(Status::TargetLost);identity_lost_=true;restored_=7;}
+    void Lost() {BeginRelease(Status::TargetLost);identity_lost_=true;restored_=Parts();}
     void CallbackThreadLost(){BeginRelease(Status::TargetLost);}
     bool Pop(Reply* reply){if(out_.empty())return false;*reply=out_.front();out_.pop_front();return true;}
     bool Room()const{return out_.size()<60;}
@@ -196,6 +198,7 @@ public:
     const Body& body()const{return body_;}
     bool Target(const Command& command)const{return phase_!=Phase::Free&&source_.target==command.target&&source_.spawn==command.spawn&&source_.flags==command.flags;}
 private:
+    unsigned Parts()const{return source_.flags&kPlayer?1u:7u;}
     static double Length(const float* value){double n=0;for(int i=0;i<3;++i)n+=double(value[i])*value[i];return std::sqrt(n);}
     static double Distance(const std::array<float,3>& a,const std::array<float,3>& b,const float* delta=nullptr){float d[3];for(int i=0;i<3;++i)d[i]=a[i]-b[i]-(delta?delta[i]:0);return Length(d);}
     static bool ValidBody(const Body& b){
@@ -209,7 +212,10 @@ private:
         std::fabs(a.radius-b.radius)<0.5&&std::fabs(a.half-b.half)<0.5&&Distance(a.position,b.position)<=1&&
         std::fabs(a.root_radius-b.root_radius)<0.5&&std::fabs(a.root_half-b.root_half)<0.5&&Distance(a.root_offset,b.root_offset)<=.1;}
     static bool Expected(const Command& c,const Body& b){
-        return ValidBody(b)&&(!c.actor_stamp||c.actor_stamp==static_cast<std::uint64_t>(b.serial))&&(!c.component_token||c.component_token==b.token)&&
+        // Player reserve binds the complete header stamp (index/serial) in the
+        // backend. Later commands use its serial plus the opaque binding token.
+        const auto stamp=(c.flags&kPlayer)&&c.op==Op::Reserve?static_cast<std::uint32_t>(c.actor_stamp):c.actor_stamp;
+        return ValidBody(b)&&(!c.actor_stamp||stamp==static_cast<std::uint64_t>(b.serial))&&(!c.component_token||c.component_token==b.token)&&
             c.health==b.health&&std::fabs(c.radius-b.radius)<0.5&&std::fabs(c.half_height-b.half)<0.5&&Distance(b.position,{c.position[0],c.position[1],c.position[2]})<=1;
     }
     bool Scope(const Command& c)const{return env_.native&&env_.peer&&c.world==env_.world&&c.save==env_.save&&c.map==env_.map;}

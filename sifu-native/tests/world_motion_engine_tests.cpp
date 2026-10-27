@@ -10,9 +10,10 @@ void Require(bool value,const char* label){++checks;if(!value){std::fprintf(stde
 struct Fake final:Backend {
     Body body{19,818,{0,0,90},60,30,90};
     int binds=0,moves=0,forgets=0,hurts=0;bool valid=true,bind=true,block=false,penetrate=false,returned=true,read=true,effects=false;
-    float fraction=1;bool invoked=true;
+    float fraction=1;bool invoked=true,player=false;
     std::array<float,3> normal{};
-    bool Bind(const Command&,Body* out)override{++binds;*out=body;return bind;}
+    bool Bind(const Command& c,Body* out)override{++binds;*out=body;return bind&&(!(c.flags&kPlayer)||c.actor_stamp==((73ull<<32)|static_cast<std::uint32_t>(body.serial)));}
+    bool SupportsPlayer(Source source)const override{return player&&source==Source::Machine;}
     bool Check(Body* out)override{*out=body;return valid;}
     Sweep Move(const Body&,const std::array<float,3>& d)override{++moves;if(invoked)for(int i=0;i<3;++i)body.position[i]+=d[i]*fraction;return {body,invoked,read,returned,block,penetrate,normal};}
     Effect Hurt(const Command& c)override{if(!effects)return {};hurts++;body.health=std::max(0.f,body.health-c.amount*3);return {Status::Applied,true,body.serial,body.health,body.position,0};}
@@ -289,5 +290,38 @@ void ContactNormals(){
     damage.backend.effects=true;auto hurt=damage.CommandFor(Op::Damage);hurt.source=Source::WorldEffect;hurt.action=EffectTag("minecraft:fall");damage.Send(hurt);damage.Pop(Status::Applied);
     damage.Restore();auto final=damage.Pop(Status::Released);Require(final.restored==7&&final.health==45,"handback queued before world damage confirms actual HP and original ticks after the native hit");
 }
+void PlayerMovementOnly(){
+    Case denied;auto command=denied.CommandFor();command.flags=kPlayer;command.target=command.spawn=0;command.actor_stamp=(73ull<<32)|19;
+    denied.Send(command);denied.Pop(Status::Unsupported);Require(denied.backend.binds==0,"backend must explicitly support a player source before binding");
+    for(auto source:{Source::Fluid,Source::WorldEffect}){
+        Case restricted;restricted.backend.player=true;auto c=restricted.CommandFor();c.flags=kPlayer;c.target=c.spawn=0;c.actor_stamp=(73ull<<32)|19;c.source=source;
+        restricted.Send(c);restricted.Pop(Status::Unsupported);Require(restricted.backend.binds==0,"machine permission does not admit player fluids or damage");
+    }
+    Case c;c.backend.player=true;
+    auto playerCommand=[&](Op op){auto value=c.CommandFor(op);value.flags=kPlayer;value.target=value.spawn=0;if(op==Op::Reserve)value.actor_stamp=(73ull<<32)|19;return value;};
+    c.Send(playerCommand(Op::Reserve));c.engine.Original(2);c.engine.Original(4);c.Tick();c.Empty();
+    Require(!c.engine.Skip(c.now),"unrelated AI ticks cannot satisfy player preflight");
+    c.engine.Original(1);c.Tick();c.Pop(Status::Prepared);Require(c.engine.Skip(c.now),"only original player movement is required to acquire");
+    auto forged=playerCommand(Op::Step);forged.actor_stamp=(73ull<<32)|19;c.Send(forged);c.Pop(Status::Stale);Require(c.backend.moves==0,"later player commands require the actual bound serial/token, not an initial stamp replay");
+    auto step=playerCommand(Op::Step);c.Send(step);auto applied=c.Pop(Status::Applied);Require(applied.delta[0]==10&&c.backend.moves==1,"player uses the same bounded actual sweep");
+    c.env.revision++;c.Tick();c.Send(playerCommand(Op::Release));c.engine.Original(2);c.engine.Original(4);c.Tick();c.Empty();
+    Require(!c.engine.Skip(c.now),"player release forwards movement immediately");
+    c.engine.Original(1);c.Tick();auto reply=c.Pop(Status::Released);Require(reply.restored==1&&c.engine.phase()==Engine::Phase::Free,"player confirms movement without waiting for nonexistent AI components");
+    Case wrong;wrong.backend.player=true;command=wrong.CommandFor();command.flags=kPlayer;command.target=command.spawn=0;command.actor_stamp=(74ull<<32)|19;
+    wrong.Send(command);wrong.Pop(Status::TargetLost);Require(wrong.engine.phase()==Engine::Phase::Free,"backend rejects a changed player index even with the same serial");
+    for(int failure=0;failure<3;++failure){
+        Case lost;lost.backend.player=true;auto reserve=lost.CommandFor();reserve.flags=kPlayer;reserve.target=reserve.spawn=0;reserve.actor_stamp=(73ull<<32)|19;
+        lost.Send(reserve);lost.engine.Original(1);lost.Tick();lost.Pop(Status::Prepared);
+        if(failure==0)lost.now+=501;else if(failure==1)lost.backend.body.health--;else lost.backend.valid=false;
+        lost.Tick();Require(!lost.engine.Skip(lost.now)&&lost.engine.phase()==Engine::Phase::Releasing,"player timeout/HP/identity changes immediately stop filtering");
+        lost.engine.Original(2);lost.engine.Original(4);lost.Tick();Require(lost.engine.phase()==Engine::Phase::Releasing,"unrelated component callbacks cannot claim player restoration");
+        lost.engine.Original(1);lost.Tick();Require(lost.engine.phase()==Engine::Phase::Free,"player restoration frees its slot without AI state writes");
+    }
+    Case paused;paused.backend.player=true;auto reserve=paused.CommandFor();reserve.flags=kPlayer;reserve.target=reserve.spawn=0;reserve.actor_stamp=(73ull<<32)|19;
+    paused.Send(reserve);paused.engine.Original(1);paused.Tick();paused.Pop(Status::Prepared);paused.env.flags=kPaused;paused.Tick();
+    auto release=paused.CommandFor(Op::Release);release.flags=kPlayer;release.target=release.spawn=0;paused.Send(release);paused.Empty();
+    paused.now+=5000;paused.Tick();Require(!paused.engine.Skip(paused.now)&&paused.engine.phase()==Engine::Phase::Releasing,"a true player pause retains only observation, never movement authority");
+    paused.env.flags=0;paused.Tick();paused.engine.Original(1);paused.Tick();Require(paused.Pop(Status::Released).restored==1,"player resumes and proves its one original tick after pause");
 }
-int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();UnexecutedCredits();Lifetime();PausedHandback();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();std::printf("world motion arbiter PASS %u assertions\n",checks);}
+}
+int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();UnexecutedCredits();Lifetime();PausedHandback();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();PlayerMovementOnly();std::printf("world motion arbiter PASS %u assertions\n",checks);}

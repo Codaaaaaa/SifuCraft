@@ -17,7 +17,7 @@ struct Sample {
     ue::FVector pending{},last{},acceleration{},velocity{},position{};
     ue::FRotator rotation{};
     int mode=0;
-    float hp=0;
+    float hp=0,radius=0,half=0;const char* qualification="unobserved";
 };
 Sample pending;
 combat::motion::Scope scope;
@@ -50,6 +50,10 @@ void Before(std::uintptr_t base,const combat::motion::Context& c,std::uintptr_t 
     if(!probe::ReadHealthSample(mem::ReadPtr(c.pawn+off::AFightingCharacter::m_HealthComponent),&health))return;
     s.component=component;s.pawn=c.pawn_identity;s.movement=ue::IdentityOf(component);s.hp=health.health;
     s.mode=mem::ReadOr<std::uint8_t>(component+off::UCharacterMovementComponent::MovementMode,255);
+    const combat::motion::Target target{c.pawn,component,static_cast<std::uint32_t>(s.pawn.index),1,s.pawn.serial,s.movement.index,s.movement.serial};
+    combat::motion::BodySample body;
+    const auto reason=combat::motion::CheckPlayerBody(c,target,&body,true);
+    s.qualification=reason?reason:"ready";s.radius=body.radius;s.half=body.half;
     if(s.movement.valid())pending=s;
 }
 void After(std::uintptr_t base,const combat::motion::Context& c,std::uintptr_t component,bool enabled){
@@ -63,9 +67,9 @@ void After(std::uintptr_t base,const combat::motion::Context& c,std::uintptr_t c
         !mem::Read(c.pawn+off::APawn::ControlInputVector,&input)||!Finite(input)||
         !probe::ReadHealthSample(mem::ReadPtr(c.pawn+off::AFightingCharacter::m_HealthComponent),&health))return;
     ++samples;
-    SC_LOG("[player-world-observe] n=%u pawn=%d/%d mode=%d->%u hp=%.3f->%.3f yaw=%.3f pending=(%.4f,%.4f,%.4f)->(%.4f,%.4f,%.4f) last=(%.4f,%.4f,%.4f) accel=(%.3f,%.3f,%.3f) velocity=(%.3f,%.3f,%.3f)->(%.3f,%.3f,%.3f) actual=(%.5f,%.5f,%.5f)",
+    SC_LOG("[player-world-observe] n=%u pawn=%d/%d mode=%d->%u hp=%.3f->%.3f yaw=%.3f pending=(%.4f,%.4f,%.4f)->(%.4f,%.4f,%.4f) last=(%.4f,%.4f,%.4f) accel=(%.3f,%.3f,%.3f) velocity=(%.3f,%.3f,%.3f)->(%.3f,%.3f,%.3f) actual=(%.5f,%.5f,%.5f) eligibility=%s radius=%.3f half=%.3f",
         samples,s.pawn.index,s.pawn.serial,s.mode,mem::ReadOr<std::uint8_t>(component+off::UCharacterMovementComponent::MovementMode,255),s.hp,health.health,s.rotation.yaw,
         s.pending.x,s.pending.y,s.pending.z,input.x,input.y,input.z,s.last.x,s.last.y,s.last.z,s.acceleration.x,s.acceleration.y,s.acceleration.z,
-        s.velocity.x,s.velocity.y,s.velocity.z,velocity.x,velocity.y,velocity.z,position.x-s.position.x,position.y-s.position.y,position.z-s.position.z);
+        s.velocity.x,s.velocity.y,s.velocity.z,velocity.x,velocity.y,velocity.z,position.x-s.position.x,position.y-s.position.y,position.z-s.position.z,s.qualification,s.radius,s.half);
 }
 }
