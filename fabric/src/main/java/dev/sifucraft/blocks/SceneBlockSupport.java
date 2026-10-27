@@ -21,6 +21,7 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 public final class SceneBlockSupport {
     private static final ThreadLocal<SifuCollision.Active> QUERY_SCENE = new ThreadLocal<>();
     private SceneBlockSupport() {}
+    static SifuCollision.Active scopedScene(){return QUERY_SCENE.get();}
 
     public static <T> T withScene(SifuCollision.Active scene, Supplier<T> query) {
         var previous=QUERY_SCENE.get();QUERY_SCENE.set(scene);
@@ -72,6 +73,7 @@ public final class SceneBlockSupport {
             }
             long loaded=index.loadedRevision();
             if(loaded!=loadedRevision){enqueue(index.loadedAfter(loadedRevision),null,next);loadedRevision=loaded;}
+            if(!SceneFluidGeometry.available(level))return;
             for(int count=0;count<128&&!pending.isEmpty();count++) {
                 var item=pending.pollFirstEntry();var pos=item.getKey();var before=item.getValue();var state=level.getBlockState(pos);
                 if(!state.getFluidState().isEmpty()){

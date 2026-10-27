@@ -80,6 +80,10 @@ public final class CollisionLoader {
     private void load(CollisionManifest manifest) {
         long start = System.nanoTime();
         try {
+            if(Boolean.getBoolean("sifucraft.fluidSceneSelfTest")){
+                long delay=Long.getLong("sifucraft.fluidGeometryLoadDelayMs",0);
+                if(delay>0&&delay<=2000)try{Thread.sleep(delay);}catch(InterruptedException e){Thread.currentThread().interrupt();return;}
+            }
             CollisionGrid loaded = CollisionGrid.read(Path.of(manifest.path()));
             if (loaded.blockCount() != manifest.blockCount() || loaded.cellCount() != manifest.cellCount()) {
                 failedGeneration = manifest.generation();

@@ -127,6 +127,8 @@ public final class SifuCraftClient implements ClientModInitializer {
     private boolean crosshair;
     private CollisionLoader collision;
     private CollisionLoader doors;
+    private Object fluidWorldLife;
+    private boolean fluidWorldAttached;
     private final UnrealSpace space = new UnrealSpace();
     private final RespawnHandshake respawn = new RespawnHandshake();
     private final dev.sifucraft.combat.ShieldBlockAnimation shieldAnimation = new dev.sifucraft.combat.ShieldBlockAnimation();
@@ -440,6 +442,7 @@ public final class SifuCraftClient implements ClientModInitializer {
             worldLayers.close();
             blockShapes.close();
             dev.sifucraft.blocks.WorldMotionWorld.offer(null);
+            dev.sifucraft.blocks.SceneFluidGeometry.publish(false,true,null);
             worldMotion.close();
             collision.close();
             doors.close();
@@ -591,6 +594,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         input.syncMouseMode();
         placeIfNeeded(previous);
         publishCollision();
+        publishFluidGeometry(previous);
         blockShapes.update(minecraft, bridge, space.placement());
         WorldTerrain.update(minecraft);
         publishBlocks(previous);
@@ -889,6 +893,21 @@ public final class SifuCraftClient implements ClientModInitializer {
 
     private static String fmt(double value) {
         return String.format("%.1f", value);
+    }
+
+    private void publishFluidGeometry(SifuFrame frame){
+        var server=minecraft.getSingleplayerServer();
+        if(fluidWorldLife!=server){fluidWorldLife=server;fluidWorldAttached=false;}
+        if(server!=null&&bridge.peerConnected()&&frame!=null&&frame.hasPawn())fluidWorldAttached=true;
+        boolean required=server!=null&&fluidWorldAttached;
+        var scene=SifuCollision.active();var manifest=bridge.collisionManifest();var dynamic=bridge.doors();
+        boolean ready=required&&bridge.peerConnected()&&frame!=null&&manifest.generation()!=0&&
+                manifest.worldGeneration()==frame.worldGeneration()&&collision.loadedGeneration()==manifest.generation()&&
+                scene!=null&&scene.grid()==collision.grid()&&scene.matchesScope(bridge.peerSession(),frame.worldGeneration())&&
+                scene.placement().map().equals(UnrealSpace.mapName(frame.worldPath()))&&
+                (dynamic.generation()==0||dynamic.worldGeneration()==frame.worldGeneration()&&doors.loadedGeneration()==dynamic.generation()&&
+                        scene.doors()!=null&&scene.doors()==doors.grid()&&scene.doors().map().equals(scene.placement().map()));
+        dev.sifucraft.blocks.SceneFluidGeometry.publish(required,ready,scene);
     }
 
     private void publishEnemies(SifuFrame frame) {

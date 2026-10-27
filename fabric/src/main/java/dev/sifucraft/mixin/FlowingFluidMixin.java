@@ -19,7 +19,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class FlowingFluidMixin {
     @Inject(method="tick",at=@At("HEAD"),cancellable=true)
     private void sifucraft$deferOtherMap(ServerLevel level,BlockPos pos,BlockState block,FluidState fluid,CallbackInfo ci){
-        if(!SceneFluidGeometry.inActiveMap(level,pos)){level.scheduleTick(pos,fluid.getType(),20);ci.cancel();}
+        if(!SceneFluidGeometry.inActiveMap(level,pos)){level.scheduleTick(pos,fluid.getType(),SceneFluidGeometry.available(level)?20:1);ci.cancel();}
     }
     // Run after the original state-only cache. Native results never enter that
     // cache, so two AIR/AIR pairs with different scene geometry stay independent.

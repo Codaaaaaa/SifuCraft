@@ -2,6 +2,7 @@ package dev.sifucraft.blocks;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import dev.sifucraft.collision.SifuCollision;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
@@ -14,11 +15,34 @@ import net.minecraft.world.phys.shapes.Shapes;
 /** Native geometry supplements vanilla fluid rules; it never creates saved wall blocks. */
 public final class SceneFluidGeometry {
     private SceneFluidGeometry(){}
-    public static boolean canOccupy(BlockGetter level,BlockPos pos){
-        var scene=WorldBlocks.ENABLED?SceneBlockSupport.scene(level):null;return scene==null||scene.placement().containsX(pos.getX())&&scene.fluidCell(pos);
+    private record View(boolean required,boolean ready,SifuCollision.Active scene){}
+    private static final View VANILLA=new View(false,true,null);
+    private static volatile View published=VANILLA;
+    private static volatile long retainedPending;
+    private static final ThreadLocal<View> diagnostic=new ThreadLocal<>();
+    /** One coherent render-thread publication, also read by the integrated server. */
+    public static void publish(boolean required,boolean ready,SifuCollision.Active scene){
+        published=new View(required,ready,scene);
+        if(required&&!ready&&scene!=null&&Boolean.getBoolean("sifucraft.fluidSceneSelfTest"))retainedPending++;
     }
+    public static long retainedPendingPublications(){return retainedPending;}
+    private static View view(BlockGetter level){
+        if(!WorldBlocks.ENABLED||!(level instanceof Level world)||world.dimension()!=Level.OVERWORLD)return VANILLA;
+        var test=diagnostic.get();if(test!=null)return test;
+        var scoped=SceneBlockSupport.scopedScene();if(scoped!=null)return new View(true,true,scoped);
+        var current=published;return current.required?current:new View(false,true,SceneBlockSupport.scene(level));
+    }
+    public static <T> T withUnavailableGeometry(java.util.function.Supplier<T> action){
+        if(!Boolean.getBoolean("sifucraft.fluidSceneSelfTest"))throw new IllegalStateException("isolated fluid scene only");
+        var old=diagnostic.get();diagnostic.set(new View(true,false,null));
+        try{return action.get();}finally{if(old==null)diagnostic.remove();else diagnostic.set(old);}
+    }
+    public static boolean canOccupy(BlockGetter level,BlockPos pos){
+        var query=view(level);if(!query.ready)return false;var scene=query.scene;return scene==null||scene.placement().containsX(pos.getX())&&scene.fluidCell(pos);
+    }
+    public static boolean available(BlockGetter level){return view(level).ready;}
     public static boolean inActiveMap(BlockGetter level,BlockPos pos){
-        var scene=WorldBlocks.ENABLED?SceneBlockSupport.scene(level):null;return scene==null||scene.placement().containsX(pos.getX());
+        var query=view(level);if(!query.ready)return false;var scene=query.scene;return scene==null||scene.placement().containsX(pos.getX());
     }
     /** Contact with water or blue ice is tested against Native geometry only. */
     public static boolean canContact(BlockGetter level,BlockPos from,BlockPos to){
@@ -29,7 +53,7 @@ public final class SceneFluidGeometry {
         return canPass(Direction.getNearest(dx,dy,dz,null),level,from,air,to,air);
     }
     public static boolean canPass(Direction face,BlockGetter level,BlockPos from,BlockState a,BlockPos to,BlockState b){
-        var scene=WorldBlocks.ENABLED?SceneBlockSupport.scene(level):null;if(scene==null)return true;
+        var query=view(level);if(!query.ready)return false;var scene=query.scene;if(scene==null)return true;
         if(!scene.placement().containsX(from.getX())||!scene.placement().containsX(to.getX()))return false;
         if(!scene.fluidCell(from)||!scene.fluidCell(to))return false;
         var source=scene.shapeAt(from);var destination=scene.shapeAt(to);if(source.isEmpty()&&destination.isEmpty())return true;
@@ -37,8 +61,9 @@ public final class SceneFluidGeometry {
         return !Shapes.mergedFaceOccludes(source,destination,face);
     }
     public static BlockHitResult bucketRay(Level level,Player player,BlockHitResult vanilla){
-        var scene=WorldBlocks.ENABLED?SceneBlockSupport.scene(level):null;if(scene==null)return vanilla;
         var eye=player.getEyePosition();var end=eye.add(player.getViewVector(1).scale(player.blockInteractionRange()));
+        var query=view(level);if(!query.ready)return BlockHitResult.miss(end,Direction.getApproximateNearest(player.getViewVector(1)),BlockPos.containing(end));
+        var scene=query.scene;if(scene==null)return vanilla;
         var nativeHit=scene.clip(eye,end);if(nativeHit==null||vanilla.getType()!=HitResult.Type.MISS&&eye.distanceToSqr(vanilla.getLocation())<=eye.distanceToSqr(nativeHit.getLocation())+1e-9)return vanilla;
         // BlockItem uses the replaceable front cell; BucketItem adds the face
         // itself, so name the virtual backing cell to obtain that same target.
