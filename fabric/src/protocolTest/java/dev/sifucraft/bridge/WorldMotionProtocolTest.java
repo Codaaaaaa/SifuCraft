@@ -43,6 +43,8 @@ public final class WorldMotionProtocolTest {
         check(encode(sample(STEP,FLUID,new SifuFrame.Vec3(6,0,6),100,0,42,2)).length==COMMAND_BYTES,"fluid vector length rather than per-axis clamp");
         check(encode(sample(DAMAGE,WORLD_EFFECT,SifuFrame.Vec3.ZERO,0,0,42,2)).length==COMMAND_BYTES,"world source damage");
         check(encode(sample(RENEW,FLUID,SifuFrame.Vec3.ZERO,500,0,42,2)).length==COMMAND_BYTES,"bounded fresh fluid heartbeat");
+        check(encode(sample(RENEW,EXPLOSION,SifuFrame.Vec3.ZERO,500,0,42,2)).length==COMMAND_BYTES,"bounded independent explosion heartbeat");
+        check(encode(sample(STEP,EXPLOSION,new SifuFrame.Vec3(6,0,6),0,0,42,2)).length==COMMAND_BYTES,"explosion keeps bounded original 3D direction");
         invalid(()->encode(sample(RENEW,MACHINE,SifuFrame.Vec3.ZERO,500,0,42,2)));
         invalid(()->encode(sample(RENEW,FLUID,SifuFrame.Vec3.ZERO,0,0,42,2)));
         invalid(()->encode(sample(RENEW,FLUID,new SifuFrame.Vec3(1,0,0),500,0,42,2)));

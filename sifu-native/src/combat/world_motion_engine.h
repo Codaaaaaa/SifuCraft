@@ -118,7 +118,7 @@ public:
         }
         if(command.op==Op::Reserve) {
             if(phase_!=Phase::Free) {
-                if(source_.source==Source::Fluid&&command.source==Source::Machine&&command.target==source_.target&&command.spawn==source_.spawn&&command.flags==source_.flags)
+                if(Continuous(source_.source)&&command.source==Source::Machine&&command.target==source_.target&&command.spawn==source_.spawn&&command.flags==source_.flags)
                     BeginRelease(Status::Cancelled);
                 Reject(command,Status::Busy,now);return true;
             }
@@ -143,7 +143,7 @@ public:
             // Identity/HP/actual pose and a fresh heartbeat retain authority.
             // This operation performs no sweep and need not wait for collision
             // publication. Movement still requires the exact settled epoch below.
-            if(command.source!=Source::Fluid||now-command.issued_ms>=command.duration_ms){Reject(command,Status::Stale,now);return true;}
+            if(!Continuous(command.source)||now-command.issued_ms>=command.duration_ms){Reject(command,Status::Stale,now);return true;}
             deadline_=std::max(deadline_,command.issued_ms+command.duration_ms);last_tick_=command.tick;
             Finish(command,Status::Applied,now);return true;
         }
@@ -171,7 +171,7 @@ public:
         Finish(command,status,now,delta,contact);
         // Continuous media reconcile a valid blocked/partial sweep and retain
         // their short heartbeat lease. Machines cannot commit through a blocker.
-        if(status!=Status::Applied&&(command.source!=Source::Fluid||status==Status::TargetLost))BeginRelease(status);
+        if(status!=Status::Applied&&(!Continuous(command.source)||status==Status::TargetLost))BeginRelease(status);
         return true;
     }
     // Called before each hooked Tick. A world/identity/HP change releases immediately.

@@ -88,7 +88,11 @@ final class IsolatedSystemsCheck {
         var center = new Vec3(4.5,202,.5);
         float exposure = ServerExplosion.getSeenPercent(center,cow);
         level.getRandom().setSeed(0x503130);
-        new ServerExplosion(level,null,null,null,center,4,false,Explosion.BlockInteraction.DESTROY).explode();
+        var explosion=new ServerExplosion(level,null,null,null,center,4,false,Explosion.BlockInteraction.DESTROY);
+        explosion.explode();
+        float healthAfter=cow.getHealth();var velocityAfter=cow.getDeltaMovement();
+        explosion.explode();
+        require(cow.getHealth()==healthAfter&&cow.getDeltaMovement().equals(velocityAfter),"the same explosion object cannot apply damage or impulse twice");
         var states = new ArrayList<String>();
         for (int x = 9; x <= 11; x++) for (int z = -2; z <= 2; z++)
             states.add(level.getBlockState(new BlockPos(x,201,z)).toString());
@@ -141,10 +145,12 @@ final class IsolatedSystemsCheck {
 
     private void tick(MinecraftServer server) {
         if (finished || stage != 0 || server.getPlayerList().getPlayers().isEmpty()) return;
+        if (!server.overworld().isPositionEntityTicking(new BlockPos(24,201,8))) return;
         stage = 1;
         try {
             explosions(server.overworld());
             tntLifecycle(server.overworld());
+            reports.addAll(BoatBaselineCheck.run(server.overworld()));
             var report = new LinkedHashMap<String,Object>(); report.put("passed",true); report.put("bridge_connected",false); report.put("cases",reports);
             AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("sifucraft-isolated-systems-report.json"),
                     out -> new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(report,out));

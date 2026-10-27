@@ -4,6 +4,7 @@
 #include "combat/world_motion_engine.h"
 #include "combat/target_retention.h"
 #include "combat/pose_fall_origin.h"
+#include "combat/explosion_ledger.h"
 using namespace sifucraft::world_motion;
 namespace {
 unsigned checks=0;
@@ -234,6 +235,41 @@ void FluidRenewal(){
     Case machine;machine.Acquire();machine.Send(machine.CommandFor(Op::Renew));machine.Pop(Status::Invalid);
     Require(machine.engine.Skip(machine.now),"machine cannot use fluid renewal to evade its contact budget");machine.now+=500;machine.Tick();machine.Restore();
 }
+void ExplosionMotion(){
+    Case c;auto reserve=c.CommandFor();reserve.source=Source::Explosion;c.Send(reserve);
+    for(auto part:{1u,2u,4u})c.engine.Original(part);c.Tick();c.Pop(Status::Prepared);
+    for(int i=0;i<20;i++){
+        auto step=c.CommandFor(Op::Step);step.source=Source::Explosion;
+        step.delta[0]=6;step.delta[2]=6;c.Send(step);auto reply=c.Pop(Status::Applied);
+        Require(reply.delta[2]==6,"explosion retains vertical force, not horizontal-only feedback");
+        c.Send(step);c.Pop(Status::Applied);
+    }
+    Require(c.backend.moves==20&&c.backend.body.position[0]==120&&c.backend.body.position[2]==210,"explosion trajectory has no machine-contact 101cm cap and no replay displacement");
+    c.now+=250;auto renewal=c.CommandFor(Op::Renew);renewal.source=Source::Explosion;c.Send(renewal);c.Pop(Status::Applied);
+    Require(c.engine.Skip(c.now),"explosion uses the same bounded physical/AI lease and fresh renewals");
+    c.backend.block=true;c.backend.fraction=0;auto step=c.CommandFor(Op::Step);step.source=Source::Explosion;c.Send(step);c.Pop(Status::Blocked);
+    Require(c.engine.Skip(c.now),"collision retains the continuous authority for original velocity reconciliation");
+    c.now+=500;c.Tick();Require(!c.engine.Skip(c.now),"missing explosion heartbeat always releases by its deadline");c.Restore();
+    Case damage;damage.backend.effects=true;auto hurt=damage.CommandFor(Op::Damage);hurt.source=Source::WorldEffect;hurt.action=EffectTag("minecraft:explosion");
+    damage.Send(hurt);damage.Pop(Status::Applied);damage.Send(hurt);damage.Pop(Status::Applied);
+    Require(damage.backend.hurts==1&&damage.backend.body.health==45,"explosion final damage has an independent replay-protected HP result");
+}
+void ExplosionEventIdentity(){
+    ExplosionLedger ledger;ledger.World(100,2);Case c;
+    auto command=c.CommandFor(Op::Damage);command.source=Source::WorldEffect;command.action=EffectTag("minecraft:explosion");
+    Effect result;Require(ledger.Begin(command,&result)==ExplosionLedger::Decision::Fresh,"one blast effect is reserved before native damage");
+    Require(!ledger.Motion(command,19),"no impulse before its HP decision");
+    Effect applied{Status::Applied,true,19,45,{0,0,90},0};ledger.Complete(command,applied);
+    command.id+=100; // a restarted MC transport has new ids, but the TNT UUID is unchanged
+    Require(ledger.Begin(command,&result)==ExplosionLedger::Decision::Cached&&!result.invoked&&result.health==45,"new transport id still receives the original blast HP result without invocation");
+    auto altered=command;altered.amount++;
+    Require(ledger.Begin(altered,&result)==ExplosionLedger::Decision::Conflict,"same blast UUID cannot change final damage");
+    auto motion=command;motion.source=Source::Explosion;motion.health=45;
+    Require(!ledger.Motion(motion,20),"pooled actor serial cannot consume another actor's blast impulse");
+    Require(ledger.Motion(motion,19)&&!ledger.Motion(motion,19),"blast motion has its own at-most-once execution bit");
+    ledger.World(100,2);Require(ledger.Begin(command,&result)==ExplosionLedger::Decision::Cached,"peer reconnect preserves the event ledger in the same native world");
+    ledger.World(100,3);Require(ledger.Begin(command,&result)==ExplosionLedger::Decision::Fresh,"new world starts a new activation namespace");
+}
 void RenewalDuringPublication(){
     Case c;auto reserve=c.CommandFor();reserve.source=Source::Fluid;c.Send(reserve);
     for(auto part:{1u,2u,4u})c.engine.Original(part);
@@ -366,5 +402,5 @@ int main(){
     }
     Require(!TranslateFallOrigin(1e9f,-1e9f,1e9f,&origin),"reject unreasonable translated origin without writing");
     Require(!TranslateFallOrigin(90,90,90,nullptr),"reject missing cache output");
-    HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();UnexecutedCredits();Lifetime();PausedHandback();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();PlayerMovementOnly();PlayerFluidAndPoseOwner();std::printf("world motion arbiter PASS %u assertions\n",checks);
+    HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();UnexecutedCredits();Lifetime();PausedHandback();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();ExplosionMotion();ExplosionEventIdentity();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();PlayerMovementOnly();PlayerFluidAndPoseOwner();std::printf("world motion arbiter PASS %u assertions\n",checks);
 }

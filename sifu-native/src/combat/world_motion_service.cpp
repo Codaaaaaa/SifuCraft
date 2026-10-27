@@ -10,6 +10,7 @@
 #include "combat/player_idle_gate.h"
 #include "combat/damage.h"
 #include "combat/world_motion_engine.h"
+#include "combat/explosion_ledger.h"
 #include "combat/target_retention.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
@@ -36,6 +37,8 @@ unsigned g_gate_users=0; // game thread only, shared forwarding-hook ownership
 std::atomic<std::uint32_t> g_flags{kScripted};
 std::atomic<bool> g_ready{false};
 std::uintptr_t g_base=0;
+ExplosionLedger g_explosions; // game thread; intentionally independent of peer-session transport ledger
+std::atomic<bool> g_explosion_room{true};
 struct PlayerPublication {motion::Scope scope;std::uint64_t stamp=0,at=0,save=0,map=0;PlayerInfo info;};
 PlayerPublication g_player_publication; // g_lock protects runtime publication
 std::uint64_t Stamp(ue::ObjectIdentity id){return (std::uint64_t(static_cast<std::uint32_t>(id.index))<<32)|static_cast<std::uint32_t>(id.serial);}
@@ -84,6 +87,10 @@ public:
         retained_world_=g_current.actors.scope.generation;
         AcquireSRWLockExclusive(&g_lock);const bool retained=g_retained.Keep(retained_world_,target_.id,target_.spawn,GetTickCount64());ReleaseSRWLockExclusive(&g_lock);
         if(!retained)return false;
+        if(c.source==Source::Explosion){
+            g_explosions.World(g_current.actors.scope.native_session,g_current.actors.scope.generation);
+            if(!g_explosions.Motion(c,target_.serial))return Refuse("explosion-already-attempted-or-unproven");
+        }
         SC_LOG("[world-motion] observe target=%u/%u/%d token=%016llX thread=%lu",target_.id,target_.spawn,target_.serial,token_,GetCurrentThreadId());
         return true;
     }
@@ -142,6 +149,16 @@ public:
         const auto hit=mem::ReadPtr(target.actor+off::AFightingCharacter::m_HitCapsule);ue::FVector position;
         if(!ue::IsLive(hit)||ue::OuterOf(hit)!=target.actor||!ue::ReadWorldLocation(hit,&position)){out.status=Status::TargetLost;return out;}
         out.position={position.x,position.y,position.z};
+        const bool blast=ExplosionLedger::DamageType(c.action);
+        if(blast){
+            g_explosions.World(g_current.actors.scope.native_session,g_current.actors.scope.generation);
+            const auto claim=g_explosions.Begin(c,&out);
+            if(claim==ExplosionLedger::Decision::Cached){
+                if(out.serial!=target.identity.serial)out.status=Status::TargetLost;
+                return out;
+            }
+            if(claim!=ExplosionLedger::Decision::Fresh){out.status=claim==ExplosionLedger::Decision::Conflict?Status::Conflict:Status::Busy;return out;}
+        }
         const auto application=combat::damage::ApplyWorld(g_base,g_current.actors.scope.world,g_current.actors.scope.generation,
             g_current.actors.scope.peer_session,c.id,target,c.amount);
         const auto& result=application.result;
@@ -151,6 +168,7 @@ public:
         out.status=outcome==protocol::DamageOutcome::Applied?Status::Applied:
             (outcome==protocol::DamageOutcome::Invincible||outcome==protocol::DamageOutcome::Dead)?Status::Blocked:
             outcome==protocol::DamageOutcome::Unavailable?Status::Unsupported:Status::TargetLost;
+        if(blast)g_explosions.Complete(c,out);
         SC_LOG("[world-effect] id=%llu target=%u/%u type=%016llX mc_final=%.3f native_lost=%.3f HP_after=%.3f outcome=%u",c.id,c.target,c.spawn,c.action,c.amount,result.sifu_damage,result.health_after,result.result);
         return out;
     }
@@ -241,7 +259,8 @@ void Exchange(Context context,Mailbox& mailbox) {
     const bool player_ready=g_ready.load()&&!flags&&g_player_publication.scope==scope&&g_player_publication.stamp==stamp&&
         g_player_publication.save==g_published.save&&g_player_publication.map==g_published.map&&g_player_publication.at<=now&&now-g_player_publication.at<=200&&
         input::Router().owner()==protocol::InputOwner::Sifu&&!hooks::PoseActive();
-    const auto capabilities=changed?0ull:((g_ready.load()?kMotionCapability:0)|(g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kDamageCapability:0)|(settings_live?kPauseCapability:0)|(player_ready?(kPlayerMachineCapability|kPlayerFluidCapability):0));
+    const auto capabilities=changed?0ull:((g_ready.load()?kMotionCapability:0)|(g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kDamageCapability:0)|(settings_live?kPauseCapability:0)|(player_ready?(kPlayerMachineCapability|kPlayerFluidCapability):0)|
+        (g_explosion_room.load()&&g_ready.load()&&g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kExplosionCapability:0));
     mailbox.Status(scope.generation,capabilities,now,stamp,blocks::ShapesAppliedRevision(),flags,player_ready?g_player_publication.info:PlayerInfo{});
     ReleaseSRWLockExclusive(&g_lock);
 }
@@ -256,6 +275,7 @@ void ApplyOnGameThread(std::uintptr_t base) {
     ReleaseSRWLockExclusive(&g_lock);
     const auto now=GetTickCount64();const auto flags=Flags(g_current.actors);
     const auto& scope=g_current.actors.scope;
+    g_explosions.World(scope.native_session,scope.generation);
     const bool ready=g_current.enabled&&g_current.actors.enabled&&g_current.save&&g_current.map&&blocks::ShapesReady()&&
         g_current.actors.updated_ms<=now&&now-g_current.actors.updated_ms<=200;
     const bool settled=blocks::ShapesSettled();
@@ -270,6 +290,8 @@ void ApplyOnGameThread(std::uintptr_t base) {
         if(engine.phase()!=Engine::Phase::Free&&!g_backends[i].Identity())engine.Lost();
     }
     for(unsigned n=0;n<8&&!commands.empty()&&g_fleet.Submit(commands.front(),now);++n)commands.pop_front();
+    const bool room=g_explosions.size()<65536;
+    if(g_explosion_room.exchange(room)!=room)SC_LOG("[world-explosion] event ledger %s entries=%llu",room?"available":"full: new TNT events paused",static_cast<unsigned long long>(g_explosions.size()));
     g_fleet.Update(env,now);
     PlayerPublication player;
     if(ready&&settled&&!flags){

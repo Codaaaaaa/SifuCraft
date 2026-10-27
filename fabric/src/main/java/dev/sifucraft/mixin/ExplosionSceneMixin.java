@@ -17,23 +17,41 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.ServerExplosion;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 
 @Mixin(ServerExplosion.class)
 public abstract class ExplosionSceneMixin {
     @Shadow @Final private ServerLevel level;
     @Shadow @Final private Vec3 center;
+    @Unique private boolean sifucraft$evaluated;
+    @Unique private int sifucraft$result;
 
     @WrapMethod(method = "explode")
     private int sifucraft$oneGeometryRevision(Operation<Integer> original) {
+        if(sifucraft$evaluated)return sifucraft$result;
+        sifucraft$evaluated=true;
+        var explosion=(ServerExplosion)(Object)this;
+        var source=explosion.getDirectSourceEntity();
+        var id=source instanceof net.minecraft.world.entity.item.PrimedTnt
+                ?java.util.UUID.nameUUIDFromBytes(("sifucraft:blast:"+source.getUUID()).getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                :java.util.UUID.randomUUID();
         var scene = SifuCollision.queryView();
-        return scene == null || level.dimension() != Level.OVERWORLD ? original.call()
-                : SifuCollision.withQueryView(scene, original::call);
+        sifucraft$result=SceneExplosions.evaluate(explosion,id,()->scene == null || level.dimension() != Level.OVERWORLD ? original.call()
+                : SifuCollision.withQueryView(scene, original::call));
+        return sifucraft$result;
+    }
+
+    @WrapOperation(method="hurtEntities",at=@At(value="INVOKE",target="Lnet/minecraft/world/entity/Entity;pushFromExplosion(Lnet/minecraft/world/phys/Vec3;)V"))
+    private void sifucraft$originalImpulse(Entity entity,Vec3 impulse,Operation<Void> original){
+        if(entity instanceof dev.sifucraft.combat.EnemyProxy proxy)SceneExplosions.impulse(proxy,impulse);
+        else original.call(entity,impulse);
     }
 
     @WrapOperation(method = "getSeenPercent", at = @At(value = "INVOKE",

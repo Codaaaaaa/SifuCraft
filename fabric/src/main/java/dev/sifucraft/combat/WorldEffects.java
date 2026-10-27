@@ -131,6 +131,8 @@ public final class WorldEffects {
         return view;
     }
     private static Evidence evidence(EnemyProxy proxy,DamageSource source){
+        var blast=SceneExplosions.proof(proxy,source);
+        if(blast!=null)return new Evidence(source.typeHolder().unwrapKey().orElseThrow().identifier().toString(),blast.center(),null,blast.event());
         var floor=landing.get();
         if(source.is(DamageTypes.FALL)&&floor!=null&&floor.target==proxy&&WorldMotionWorld.current()!=null&&floor.scope.equals(WorldMotionWorld.current().scope()))return new Evidence("minecraft:fall",floor.pos,null,floor.source);
         var machine=MachineProjectiles.evidence(proxy,source);
@@ -171,12 +173,13 @@ public final class WorldEffects {
         var pos=proof.pos;var section=WorldBlocks.index().snapshot(SectionPos.of(pos).asLong());
         long state=ShapeProtocol.mapHash(BlockStateKey.encode(proxy.level().getBlockState(pos)));if(state==0)state=1;
         long revision=proof.machine==null?(section==null?0:section.revision()):proof.machine.revision(),stateKey=proof.machine==null?state:proof.machine.state(),now=WorldWriter.clockMillis();var origin=proof.causal!=null?proof.causal:proof.machine==null?proxy.getUUID():proof.machine.action();sent++;
-        view.requests().request(view.scope(),id->new Command(DAMAGE,WORLD_EFFECT,id,0,now,origin.getMostSignificantBits(),origin.getLeastSignificantBits(),ShapeProtocol.mapHash(proof.type),proxy.level().getGameTime(),
+        var future=view.requests().request(view.scope(),id->new Command(DAMAGE,WORLD_EFFECT,id,0,now,origin.getMostSignificantBits(),origin.getLeastSignificantBits(),ShapeProtocol.mapHash(proof.type),proxy.level().getGameTime(),
             view.scope().save(),view.scope().map(),view.nativeStatus().shapeRevision(),view.scope().world(),entry.id(),entry.spawn(),0,entry.location(),dev.sifucraft.bridge.SifuFrame.Vec3.ZERO,
             entry.health(),entry.radius(),entry.halfHeight(),0,pos.getX(),pos.getY(),pos.getZ(),0,0,amount,stateKey,revision,0,0))
             .whenComplete((reply,error)->proxy.level().getServer().execute(()->{
                 if(error!=null)lost++;else if(reply.status()==2)applied++;else rejected++;
                 if(logged++<80)LoggerFactory.getLogger("sifucraft").info("[world-effects] type={} target={}/{} mc_final={} receipt={} native_HP={} error={}",proof.type,entry.id(),entry.spawn(),amount,reply==null?-1:reply.status(),reply==null?-1:reply.health(),error==null?"":error.toString());
             }));
+        SceneExplosions.damageSubmitted(proxy,source,future);
     }
 }
