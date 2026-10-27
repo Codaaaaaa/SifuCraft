@@ -171,5 +171,27 @@ void WorldEffects(){
     Case moving;moving.Acquire();moving.backend.effects=true;auto during=moving.CommandFor(Op::Damage);during.source=Source::WorldEffect;during.action=EffectTag("minecraft:drown");moving.Send(during);moving.Pop(Status::Applied);
     Require(!moving.engine.Skip(moving.now)&&moving.engine.phase()==Engine::Phase::Releasing,"actual world damage yields physical ownership to native hit/death processing");moving.Restore();
 }
+void FluidRenewal(){
+    Case c;auto reserve=c.CommandFor();reserve.source=Source::Fluid;c.Send(reserve);
+    for(auto part:{1u,2u,4u})c.engine.Original(part);c.Tick();c.Pop(Status::Prepared);
+    auto fluid=[&](Op op){auto cmd=c.CommandFor(op);cmd.source=Source::Fluid;return cmd;};
+    c.now+=250;c.Tick();auto renew=fluid(Op::Renew);c.Send(renew);auto receipt=c.Pop(Status::Applied);
+    Require(c.backend.moves==0&&c.engine.Skip(c.now),"fluid heartbeat never creates displacement or resumes originals");
+    c.now+=200;c.Tick();c.Send(renew);auto replay=c.Pop(Status::Applied);
+    Require(!std::memcmp(&receipt,&replay,sizeof(receipt)),"renewal replay is exact and does not extend absolute deadline");
+    c.now+=200;c.Tick();Require(c.engine.Skip(c.now),"fresh renewal survives the original 500ms deadline");
+    auto step=fluid(Op::Step);step.delta[0]=6;step.delta[1]=0;step.delta[2]=6;c.Send(step);c.Pop(Status::Applied);
+    c.backend.block=true;c.backend.fraction=.25f;step=fluid(Op::Step);c.Send(step);auto partial=c.Pop(Status::Partial);
+    Require(partial.delta[0]==2.5f&&c.engine.Skip(c.now),"valid partial fluid sweep retains its short lease for actual-position reconciliation");
+    c.backend.fraction=0;step=fluid(Op::Step);c.Send(step);c.Pop(Status::Blocked);Require(c.engine.Skip(c.now),"continuous fluid support contact does not unnecessarily restart AI");
+    c.Send(fluid(Op::Release));c.Empty();c.Restore();auto released=c.Pop(Status::Released);
+    Require(released.restored==7,"fluid release after movement needs no fabricated geometry revision");
+    Case timeout;reserve=timeout.CommandFor();reserve.source=Source::Fluid;timeout.Send(reserve);
+    for(auto part:{1u,2u,4u})timeout.engine.Original(part);timeout.Tick();timeout.Pop(Status::Prepared);
+    timeout.now+=250;renew=timeout.CommandFor(Op::Renew);renew.source=Source::Fluid;timeout.Send(renew);timeout.Pop(Status::Applied);
+    timeout.now+=500;timeout.Tick();Require(!timeout.engine.Skip(timeout.now),"stopped fresh heartbeat releases by its own absolute deadline");timeout.Restore();
+    Case machine;machine.Acquire();machine.Send(machine.CommandFor(Op::Renew));machine.Pop(Status::Invalid);
+    Require(machine.engine.Skip(machine.now),"machine cannot use fluid renewal to evade its contact budget");machine.now+=500;machine.Tick();machine.Restore();
 }
-int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();std::printf("world motion arbiter PASS %u assertions\n",checks);}
+}
+int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();std::printf("world motion arbiter PASS %u assertions\n",checks);}

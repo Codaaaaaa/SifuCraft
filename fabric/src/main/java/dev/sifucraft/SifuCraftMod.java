@@ -22,9 +22,11 @@ public final class SifuCraftMod implements ModInitializer {
         }
         ServerTickEvents.START_SERVER_TICK.register(EnemyMirrors::tick);
         ServerTickEvents.END_SERVER_TICK.register(dev.sifucraft.blocks.PistonMachines::update);
+        ServerTickEvents.END_SERVER_TICK.register(dev.sifucraft.combat.FluidMotion::tick);
         ServerTickEvents.START_SERVER_TICK.register(dev.sifucraft.blocks.PlayerSignalContacts::tick);
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PlayerSignalContacts.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> EnemyMirrors.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PistonMachines.stop());
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.combat.FluidMotion.stop());
     }
 }

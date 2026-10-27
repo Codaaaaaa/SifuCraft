@@ -85,7 +85,7 @@ public final class EnemyMirrors {
             return true;
         });
         for (var incoming : enemies.entries()) {
-            var enemy=dev.sifucraft.blocks.PistonMachines.pose(enemies,incoming);
+            var enemy=FluidMotion.pose(enemies,dev.sifucraft.blocks.PistonMachines.pose(enemies,incoming));
             if (!enemy.alive()) continue;
             EnemyProxy proxy = proxies.get(enemy.key());
             if (proxy == null) {

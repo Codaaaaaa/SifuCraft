@@ -34,9 +34,14 @@ public final class BlockShapesOfflineTest {
         var stable=new BlockSectionIndex();var retained=new BlockPos(7,64,2);
         stable.changed(retained,Blocks.STONE.defaultBlockState());
         var before=BlockShapes.export(stable.snapshots(),EmptyBlockGetter.INSTANCE,placement,3,1,"map",7);
+        stable.changed(new BlockPos(8,64,2),Blocks.WATER.defaultBlockState());
+        var water=BlockShapes.export(stable.snapshots(),EmptyBlockGetter.INSTANCE,placement,4,1,"map",7);
+        check(BlockShapes.sameGeometry(before,water),"liquid-only state revisions retain the exact existing collision epoch");
+        stable.changed(new BlockPos(8,64,2),Blocks.AIR.defaultBlockState());
         long key=ByteBuffer.wrap(before.payload()).order(ByteOrder.LITTLE_ENDIAN).getLong(56);
         stable.changed(new BlockPos(1,64,2),Blocks.STONE.defaultBlockState());
         var inserted=BlockShapes.export(stable.snapshots(),EmptyBlockGetter.INSTANCE,placement,4,1,"map",7);
+        check(!BlockShapes.sameGeometry(before,inserted),"added solid geometry always requires a new collision epoch");
         var encoded=ByteBuffer.wrap(inserted.payload()).order(ByteOrder.LITTLE_ENDIAN);
         check(encoded.getInt(12)==2&&encoded.getLong(88)==key,"inserting an earlier block never renumbers another collider");
         stable.changed(new BlockPos(1,64,2),Blocks.AIR.defaultBlockState());

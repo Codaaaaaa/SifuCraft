@@ -14,8 +14,8 @@ public final class WorldMotionProtocolTest {
     private static void check(boolean ok,String why){if(!ok)throw new AssertionError(why);}
     private static void invalid(Runnable action){try{action.run();throw new AssertionError("accepted invalid motion packet");}catch(IllegalArgumentException expected){}}
     private static Command sample(int op,int source,SifuFrame.Vec3 delta,int duration,int flags,int target,int spawn){
-        return new Command(op,source,11,op==STEP||op==RELEASE||op==CANCEL?71:0,1000,21,22,23,24,31,32,5,7,target,spawn,duration,
-            new SifuFrame.Vec3(10,20,90),delta,60,35,92,flags,-1,64,5,0,.5f,op==DAMAGE?3:0,41,6,flags==PLAYER?73:0,op==STEP?72:0);
+        return new Command(op,source,11,op==STEP||op==RELEASE||op==CANCEL||op==RENEW?71:0,1000,21,22,23,24,31,32,5,7,target,spawn,duration,
+            new SifuFrame.Vec3(10,20,90),delta,60,35,92,flags,-1,64,5,0,.5f,op==DAMAGE?3:0,41,6,flags==PLAYER?73:0,op==STEP||op==RENEW?72:0);
     }
     private static byte[] fixture(String name) throws Exception {return HexFormat.of().parseHex(Files.readString(Path.of("../protocol/fixtures/"+name)).replaceAll("\\s+",""));}
     public static void main(String[] args) throws Exception {
@@ -32,6 +32,10 @@ public final class WorldMotionProtocolTest {
         check(encode(sample(STEP,MACHINE,new SifuFrame.Vec3(0,0,10),100,0,42,2)).length==COMMAND_BYTES,"vertical step has bounded complete payload");
         check(encode(sample(STEP,FLUID,new SifuFrame.Vec3(6,0,6),100,0,42,2)).length==COMMAND_BYTES,"fluid vector length rather than per-axis clamp");
         check(encode(sample(DAMAGE,WORLD_EFFECT,SifuFrame.Vec3.ZERO,0,0,42,2)).length==COMMAND_BYTES,"world source damage");
+        check(encode(sample(RENEW,FLUID,SifuFrame.Vec3.ZERO,500,0,42,2)).length==COMMAND_BYTES,"bounded fresh fluid heartbeat");
+        invalid(()->encode(sample(RENEW,MACHINE,SifuFrame.Vec3.ZERO,500,0,42,2)));
+        invalid(()->encode(sample(RENEW,FLUID,SifuFrame.Vec3.ZERO,0,0,42,2)));
+        invalid(()->encode(sample(RENEW,FLUID,new SifuFrame.Vec3(1,0,0),500,0,42,2)));
         check(encode(sample(RESERVE,MACHINE,SifuFrame.Vec3.ZERO,100,PLAYER,0,0)).length==COMMAND_BYTES,"player lifetime scope");
         var bytes=fixture("world_motion_reply.hex");bytes[72]^=1;invalid(()->decodeReply(bytes));
         invalid(()->decodeReply(new byte[REPLY_BYTES-1]));

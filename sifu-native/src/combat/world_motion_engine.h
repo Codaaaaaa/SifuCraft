@@ -124,6 +124,11 @@ public:
             BeginRelease(now>=deadline_?Status::TimedOut:Status::TargetLost);Finish(command,reason_,now);return true;
         }
         if(command.shape_revision!=env_.revision||command.tick<last_tick_||command.progress<last_progress_||!Expected(command,current)) {Finish(command,Status::Stale,now);return true;}
+        if(command.op==Op::Renew){
+            if(command.source!=Source::Fluid||now-command.issued_ms>=command.duration_ms){Finish(command,Status::Stale,now);return true;}
+            deadline_=std::max(deadline_,command.issued_ms+command.duration_ms);last_tick_=command.tick;
+            Finish(command,Status::Applied,now);return true;
+        }
         const double requested=Length(command.delta);
         if(command.source==Source::Machine&&spent_+requested>101.0001) {Finish(command,Status::Invalid,now);BeginRelease(Status::Invalid);return true;}
         // Book the request before the engine call. A partial sweep never refunds or retries it.
@@ -137,9 +142,11 @@ public:
         else if(moved.blocking)status=Length(delta.data())<0.001?Status::Blocked:Status::Partial;
         else if(!moved.returned||Distance(moved.body.position,current.position,command.delta)>0.1)status=Status::Partial;
         if(moved.invoked&&ValidBody(moved.body))body_=moved.body;
-        if(moved.invoked)release_revision_=std::max(release_revision_,command.shape_revision+1);
+        if(moved.invoked&&command.source==Source::Machine)release_revision_=std::max(release_revision_,command.shape_revision+1);
         Finish(command,status,now,delta,moved.blocking?1u:0u,moved.penetrating?2u:0u);
-        if(status!=Status::Applied)BeginRelease(status);
+        // Continuous media reconcile a valid blocked/partial sweep and retain
+        // their short heartbeat lease. Machines cannot commit through a blocker.
+        if(status!=Status::Applied&&(command.source!=Source::Fluid||status==Status::TargetLost))BeginRelease(status);
         return true;
     }
     // Called before each hooked Tick. A world/identity/HP change releases immediately.

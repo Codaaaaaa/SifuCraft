@@ -27,6 +27,7 @@ public final class BlockShapes implements AutoCloseable {
     private final AtomicBoolean building = new AtomicBoolean();
     private volatile Export pending;
     private Export latest;
+    private Export builtGeometry; // server-thread comparison; independent of the client ACK/publish queue
     private ShapeWriter writer;
     private long mcSession, sifuSession, revision, nextNs, saveKey;
     private volatile long lastIndex = -1, lastTicket = -1,lastMotion=-1;
@@ -89,9 +90,10 @@ public final class BlockShapes implements AutoCloseable {
                 long changed = index.revision();
                 long motion=dev.sifucraft.blocks.ShapeChanges.revision();
                 if (changed == lastIndex && targetTicket == lastTicket && motion==lastMotion) return;
-                Export export = export(index.snapshots(),server.overworld(),placement,++revision,generation,targetMap,targetSave);
+                Export export = export(index.snapshots(),server.overworld(),placement,revision+1,generation,targetMap,targetSave);
+                boolean unchanged=targetTicket==lastTicket&&motion==lastMotion&&sameGeometry(builtGeometry,export);
                 lastIndex = changed; lastTicket = targetTicket;lastMotion=motion;
-                if (targetTicket == ticket) pending = export;
+                if (targetTicket == ticket&&!unchanged){revision++;builtGeometry=export;pending = export;}
             } catch (RuntimeException e) {
                 long time = System.nanoTime(); failures++;
                 if (time >= nextLogNs) {
@@ -104,6 +106,19 @@ public final class BlockShapes implements AutoCloseable {
 
     static boolean matchesWorld(int generation, String path, MapPlacement placement) {
         return generation != 0 && !path.isBlank() && UnrealSpace.mapName(path).equals(placement.map());
+    }
+    /** Fluid level/redstone brightness and initial empty chunks do not change
+     * collision. Ignore only each section's saved-state revision; compare all
+     * coordinates, stable source keys, hashes and box bytes exactly. */
+    static boolean sameGeometry(Export a,Export b){
+        if(a==null||b==null||a.world!=b.world||a.save!=b.save||!a.map.equals(b.map)||a.sections!=b.sections||a.payload.length!=b.payload.length)return false;
+        var left=ByteBuffer.wrap(a.payload).order(ByteOrder.LITTLE_ENDIAN);int at=0;
+        for(int section=0;section<a.sections;section++){
+            int boxes=left.getInt(at+12),end=at+32+boxes*ShapeProtocol.BOX_BYTES;
+            for(int i=at;i<end;i++)if((i<at+16||i>=at+24)&&a.payload[i]!=b.payload[i])return false;
+            at=end;
+        }
+        return at==a.payload.length;
     }
 
     static Export export(List<BlockSectionIndex.Snapshot> snapshots, net.minecraft.world.level.BlockGetter level,
@@ -141,6 +156,7 @@ public final class BlockShapes implements AutoCloseable {
     }
     @Override public void close() {
         active = false; if (writer != null) writer.close(); writer = null; pending = null; latest = null;
+        builtGeometry=null;
         mcSession = sifuSession = 0; world = 0; map = ""; ticket++;
     }
 }

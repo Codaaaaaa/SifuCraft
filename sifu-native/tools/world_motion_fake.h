@@ -20,8 +20,11 @@ class Harness {
         }
         bool Check(Body* out)override{if(!actor)return false;*out=actor->body;return true;}
         Sweep Move(const Body& before,const std::array<float,3>& delta)override{
-            int axis=0;while(axis<2&&delta[axis]==0)++axis;float amount=delta[axis];bool penetrating=false;
+            bool penetrating=false,blocking=false;
+            // Test-only axis-resolved AABB collision, explicitly not a UE capsule.
+            for(int axis:{2,0,1}){float amount=delta[axis];if(amount==0)continue;
             float lo[3],hi[3];for(int i=0;i<3;++i){const float half=i==2?before.half:before.radius;lo[i]=before.position[i]-half;hi[i]=before.position[i]+half;}
+            for(int i=0;i<3;++i){const float half=i==2?before.half:before.radius;lo[i]=actor->body.position[i]-half;hi[i]=actor->body.position[i]+half;}
             const auto clip=[&](const float* min,const float* max){
                 for(int i=0;i<3;++i)if(i!=axis&&(hi[i]<=min[i]+.001f||lo[i]>=max[i]-.001f))return;
                 if(hi[axis]>min[axis]+.001f&&lo[axis]<max[axis]-.001f){penetrating=true;amount=0;return;}
@@ -34,7 +37,9 @@ class Harness {
                 float min[3],max[3];for(int i=0;i<3;++i){min[i]=offset[i]+box.min[i];max[i]=offset[i]+box.max[i];}clip(min,max);
             }
             actor->body.position[axis]+=amount;
-            return {actor->body,true,true,amount==delta[axis],amount!=delta[axis],penetrating};
+            blocking|=std::fabs(amount-delta[axis])>.00001f;
+            }
+            return {actor->body,true,true,!blocking,blocking,penetrating};
         }
         Effect Hurt(const Command& c)override{
             for(auto& target:owner->actors_)if(target.id==c.target&&target.spawn==c.spawn){

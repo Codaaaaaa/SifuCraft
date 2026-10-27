@@ -46,6 +46,7 @@ public final class BlockSectionIndex {
                 throw new IllegalArgumentException("Section records must be local non-air states");
         }
         Section old = sections.get(key);
+        if(old==null&&states.isEmpty())return; // a newly loaded empty section has no previous geometry to remove
         if (old != null && old.states.equals(states)) return;
         var next = new Section(); next.states.putAll(states); next.revision = ++revision;
         sections.put(key, next); dirty.put(key, revision);

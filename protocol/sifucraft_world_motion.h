@@ -5,10 +5,10 @@
 
 // Independent reliable commands. Module-owned shared memory, never a game UObject layout.
 namespace sifucraft::world_motion {
-inline constexpr std::uint32_t kMagic=0x4D574353,kVersion=2,kSlots=32,kSlotBytes=256,kHeaderBytes=128;
+inline constexpr std::uint32_t kMagic=0x4D574353,kVersion=3,kSlots=32,kSlotBytes=256,kHeaderBytes=128;
 inline constexpr std::uint32_t kMappingBytes=kHeaderBytes+2*kSlots*kSlotBytes;
 enum SlotState:std::uint32_t { Free,Writing,Ready,Reading };
-enum class Op:std::uint32_t { Reserve=1,Step,Release,Cancel,Damage };
+enum class Op:std::uint32_t { Reserve=1,Step,Release,Cancel,Damage,Renew };
 enum class Source:std::uint32_t { Machine=1,Fluid,WorldEffect };
 enum class Status:std::uint32_t { Pending,Prepared,Applied,Released,Blocked,Partial,Cancelled,Invalid,Stale,Busy,Conflict,Unsupported,TargetLost,TimedOut };
 inline constexpr std::uint32_t kPlayer=1;
@@ -51,7 +51,7 @@ inline constexpr std::uint32_t kLayout[]={kMagic,kVersion,kSlots,kSlotBytes,kHea
     0,4,8,12,16,24,32,40,48,56,60,64,72,80,88,96,104,
     0,4,8,16,24,32,40,48,56,64,72,80,88,92,96,100,104,116,128,132,136,140,144,156,160,164,168,176,184,192,200,
     0,8,16,24,32,36,40,44,48,52,56,64,72,84,96,100,104,112,116,120,Free,Writing,Ready,Reading,
-    1,2,3,4,5,1,2,3,0,1,2,3,4,5,6,7,8,9,10,11,12,13,kPlayer,kPaused,kScripted,1,2,4};
+    1,2,3,4,5,6,1,2,3,0,1,2,3,4,5,6,7,8,9,10,11,12,13,kPlayer,kPaused,kScripted,1,2,4};
 inline constexpr std::uint64_t kLayoutHash=[] {
     std::uint64_t h=14695981039346656037ull;
     for(auto v:kLayout)for(int shift=0;shift<32;shift+=8){h^=(v>>shift)&255u;h*=1099511628211ull;}
@@ -65,7 +65,7 @@ inline void Seal(Command& c){c.payload_hash=Hash(&c,offsetof(Command,payload_has
 inline void Seal(Reply& r){r.payload_hash=Hash(&r,offsetof(Reply,payload_hash));}
 inline bool Valid(const Command& c){
     const auto op=static_cast<std::uint32_t>(c.op),source=static_cast<std::uint32_t>(c.source);
-    if(op<1||op>5||source<1||source>3||!c.id||!c.issued_ms||!(c.source_hi|c.source_lo)||!c.action||!c.save||!c.map||!c.world||
+    if(op<1||op>6||source<1||source>3||!c.id||!c.issued_ms||!(c.source_hi|c.source_lo)||!c.action||!c.save||!c.map||!c.world||
        (c.flags&~kPlayer)||((c.flags&kPlayer)?(c.target||c.spawn||!c.actor_stamp):(!c.target||c.target>0x7fffffffu||!c.spawn))||
        c.duration_ms>500||!std::isfinite(c.health)||c.health<0||!std::isfinite(c.amount)||c.amount<0||c.amount>1e7f||
        !std::isfinite(c.radius)||!std::isfinite(c.half_height)||c.radius<10||c.radius>100||c.half_height<c.radius||c.half_height>200||
@@ -76,6 +76,7 @@ inline bool Valid(const Command& c){
     if(c.op==Op::Step&&(!c.lease||!c.component_token||length<=0||length>100.002||(c.source==Source::Machine&&axes!=1)))return false;
     if((c.op==Op::Release||c.op==Op::Cancel)&&(!c.lease||length!=0))return false;
     if(c.op==Op::Damage&&(c.amount<=0||length!=0))return false;
+    if(c.op==Op::Renew&&(c.source!=Source::Fluid||!c.lease||!c.component_token||!c.duration_ms||length!=0))return false;
     if(c.source==Source::Machine&&(!c.state_hash||!c.section_revision))return false;
     return c.payload_hash==Hash(&c,offsetof(Command,payload_hash));
 }
