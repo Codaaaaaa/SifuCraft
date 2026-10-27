@@ -160,7 +160,7 @@ MEMBERS = {
     "FRootMotionMovementParams": ["bHasRootMotion"],
     "FRootMotionSourceGroup": ["RootMotionSources", "PendingAddRootMotionSources"],
     "FHitResult": ["Time", "Location", "Normal", "ImpactNormal"],
-    "APawn": ["Controller"],
+    "APawn": ["Controller", "ControlInputVector", "LastControlInputVector"],
     "ACharacter": ["CharacterMovement", "Mesh", "CapsuleComponent", "BasedMovement"],
     "FBasedMovementInfo": ["MovementBase", "BoneName", "Location", "Rotation", "bRelativeRotation"],
     "AController": ["Pawn", "IgnoreMoveInput", "IgnoreLookInput"],
@@ -192,7 +192,7 @@ MEMBERS = {
     "UStaticMesh": ["BodySetup"],
     "UInstancedStaticMeshComponent": ["PerInstanceSMData"],
     "UMovementComponent": ["Velocity", "UpdatedComponent", "UpdatedPrimitive"],
-    "UCharacterMovementComponent": ["CharacterOwner", "MovementMode", "WalkableFloorAngle", "WalkableFloorZ", "MaxStepHeight", "RootMotionParams", "CurrentRootMotion", "PendingLaunchVelocity", "OldBaseLocation", "OldBaseQuat"],
+    "UCharacterMovementComponent": ["CharacterOwner", "MovementMode", "WalkableFloorAngle", "WalkableFloorZ", "MaxStepHeight", "RootMotionParams", "CurrentRootMotion", "PendingLaunchVelocity", "OldBaseLocation", "OldBaseQuat", "Acceleration"],
     "UCapsuleComponent": ["CapsuleHalfHeight", "CapsuleRadius"],
     "UEngine": ["GameViewport"],
     # Sifu

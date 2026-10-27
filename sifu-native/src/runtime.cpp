@@ -822,6 +822,7 @@ void Run(std::uintptr_t image_base) {
                 (peer.flags&protocol::kMcReady);
             context.actors.targets=enemies.targets();context.actors.grid=collision_schedule.MotionGrid(generation);
             context.enabled=!settings.npc_motion_probe&&!settings.npc_ai_probe;
+            context.observe_player=settings.player_world_observe;
             if(shape_frame.source_mc==context.actors.scope.peer_session&&shape_frame.header.world==generation&&
                shape_frame.header.revision&&MapName(world_path)==shape_frame.header.map) {
                 context.save=shape_frame.header.save_key;

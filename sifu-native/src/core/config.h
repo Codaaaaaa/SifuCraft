@@ -7,6 +7,7 @@
 //              (hook-plan dry run only)
 //   npc-motion-probe  startup opt-in to the bounded P8 M1/M2 diagnostic; no automatic movement
 //   npc-ai-probe      startup opt-in to M3/M4 forwarding/hold diagnostic; no automatic control
+//   player-world-observe  bounded read-only input/movement samples in Native control
 namespace sifucraft::config {
 
 struct Settings {
@@ -14,6 +15,7 @@ struct Settings {
     bool no_hooks = false;
     bool npc_motion_probe = false; // startup opt-in; explicit addressed commands still required
     bool npc_ai_probe = false;
+    bool player_world_observe = false;
 };
 
 Settings Load();

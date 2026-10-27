@@ -324,6 +324,8 @@ inline constexpr std::uint32_t ImpactNormal = 0x34;
 }
 namespace APawn {
 inline constexpr std::uint32_t Controller = 0x2E8;
+inline constexpr std::uint32_t ControlInputVector = 0x2F4;
+inline constexpr std::uint32_t LastControlInputVector = 0x300;
 }
 namespace ACharacter {
 inline constexpr std::uint32_t CharacterMovement = 0x318;
@@ -472,6 +474,7 @@ inline constexpr std::uint32_t CurrentRootMotion = 0xA50;
 inline constexpr std::uint32_t PendingLaunchVelocity = 0x3D4;
 inline constexpr std::uint32_t OldBaseLocation = 0x190;
 inline constexpr std::uint32_t OldBaseQuat = 0x180;
+inline constexpr std::uint32_t Acceleration = 0x23C;
 }
 namespace UCapsuleComponent {
 inline constexpr std::uint32_t CapsuleHalfHeight = 0x4A8;

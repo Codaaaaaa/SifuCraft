@@ -6,6 +6,7 @@
 #include "blocks/block_mirror.h"
 #include "combat/ai_tick_gate.h"
 #include "combat/base_sync.h"
+#include "combat/player_world_probe.h"
 #include "combat/damage.h"
 #include "combat/world_motion_engine.h"
 #include "combat/target_retention.h"
@@ -242,9 +243,13 @@ bool Skip(std::uintptr_t component,motion::Part part) {
     return false;
 }
 void PoseOwnedMovement(std::uintptr_t component){base_sync::PoseOwned(component);}
-void BeforeOriginalMovement(std::uintptr_t component){base_sync::BeforeOriginal(component);}
+void BeforeOriginalMovement(std::uintptr_t component){
+    base_sync::BeforeOriginal(component);
+    if(GetCurrentThreadId()==g_thread.load())player_probe::Before(g_base,g_current.actors,component,g_current.observe_player);
+}
 void AfterOriginal(std::uintptr_t component,motion::Part part) {
     if(!component)return;
+    if(part==motion::Part::Movement&&GetCurrentThreadId()==g_thread.load())player_probe::After(g_base,g_current.actors,component,g_current.observe_player);
     for(std::size_t i=0;i<kTargets;++i)if(component==g_watches[i][PartIndex(part)].load()){
         if(GetCurrentThreadId()!=g_thread.load()){g_wrong_thread[i].fetch_or(static_cast<unsigned>(part));return;}
         if(g_backends[i].Identity())g_fleet.at(i).Original(static_cast<unsigned>(part));else g_fleet.at(i).Lost();

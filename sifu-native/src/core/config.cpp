@@ -34,6 +34,7 @@ Settings Load() {
     settings.stage = settings.no_hooks ? 0 : ReadStage(root + L"\\stage");
     settings.npc_motion_probe = settings.stage >= 10 && Exists(root + L"\\npc-motion-probe");
     settings.npc_ai_probe = settings.stage >= 10 && Exists(root + L"\\npc-ai-probe");
+    settings.player_world_observe = settings.stage >= 10 && Exists(root + L"\\player-world-observe");
     SC_LOG("config: rollout stage %d%s", settings.stage, settings.no_hooks ? " (no-hooks file present)" : "");
     return settings;
 }

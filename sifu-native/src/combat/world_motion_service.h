@@ -6,6 +6,7 @@ struct Context {
     combat::motion::Context actors;
     std::uint64_t save=0,map=0;
     bool enabled=false;
+    bool observe_player=false;
 };
 // Runtime owns the mapping; H1 owns all actor bindings, leases and engine operations.
 void Exchange(Context context,Mailbox& mailbox);
