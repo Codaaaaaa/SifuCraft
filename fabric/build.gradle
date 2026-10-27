@@ -64,6 +64,8 @@ loom {
 			property "sifucraft.fluidGeometryLoadDelayMs", providers.gradleProperty("sifucraft.fluidGeometryLoadDelayMs").getOrElse("0")
 			property "sifucraft.fluidReconnectSelfTest", providers.gradleProperty("sifucraft.fluidReconnectSelfTest").getOrElse("false")
 			property "sifucraft.fluidPersistenceSelfTest", providers.gradleProperty("sifucraft.fluidPersistenceSelfTest").getOrElse("false")
+			property "sifucraft.machineInventorySelfTest", providers.gradleProperty("sifucraft.machineInventorySelfTest").getOrElse("false")
+			property "sifucraft.playerEnvironmentSelfTest", providers.gradleProperty("sifucraft.playerEnvironmentSelfTest").getOrElse("false")
 			property "sifucraft.playerItemBubblesSelfTest", providers.gradleProperty("sifucraft.playerItemBubblesSelfTest").getOrElse("false")
 			property "sifucraft.fluidPersistencePhase", providers.gradleProperty("sifucraft.fluidPersistencePhase").getOrElse("prepare")
 			property "sifucraft.fluidReconnectControl", file('../build/p9-fluid-reconnect-control.txt').canonicalPath

@@ -108,6 +108,8 @@ public final class SifuCraftClient implements ClientModInitializer {
     private FluidSceneCheck fluidSceneCheck;
     private FluidPersistenceCheck fluidPersistenceCheck;
     private PlayerItemBubbleCheck playerItemBubbleCheck;
+    private PlayerEnvironmentCheck playerEnvironmentCheck;
+    private MachineInventoryCheck machineInventoryCheck;
     private EnvironmentDamageCheck environmentDamageCheck;
     private NativePauseCheck nativePauseCheck;
     private FluidMotionCheck fluidMotionCheck;
@@ -361,6 +363,14 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(Boolean.getBoolean("sifucraft.fluidPersistenceSelfTest")){
             fluidPersistenceCheck=new FluidPersistenceCheck();ServerTickEvents.END_SERVER_TICK.register(fluidPersistenceCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(fluidPersistenceCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.machineInventorySelfTest")){
+            machineInventoryCheck=new MachineInventoryCheck();ServerTickEvents.END_SERVER_TICK.register(machineInventoryCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(machineInventoryCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.playerEnvironmentSelfTest")){
+            playerEnvironmentCheck=new PlayerEnvironmentCheck();ServerTickEvents.END_SERVER_TICK.register(playerEnvironmentCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(playerEnvironmentCheck::restore);
         }
         if(Boolean.getBoolean("sifucraft.playerItemBubblesSelfTest")){
             playerItemBubbleCheck=new PlayerItemBubbleCheck();ServerTickEvents.END_SERVER_TICK.register(playerItemBubbleCheck::tick);
@@ -651,6 +661,8 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(fluidSceneCheck!=null)fluidSceneCheck.clientTick(minecraft,guiAvailable(frame));
         if(fluidPersistenceCheck!=null)fluidPersistenceCheck.clientTick(minecraft,guiAvailable(frame));
         if(playerItemBubbleCheck!=null)playerItemBubbleCheck.clientTick(minecraft,guiAvailable(frame));
+        if(playerEnvironmentCheck!=null)playerEnvironmentCheck.clientTick(minecraft,guiAvailable(frame));
+        if(machineInventoryCheck!=null)machineInventoryCheck.clientTick(minecraft,guiAvailable(frame));
         if(environmentDamageCheck!=null)environmentDamageCheck.clientTick(minecraft,frame);
         if(nativePauseCheck!=null)nativePauseCheck.clientTick(minecraft);
         if(fluidMotionCheck!=null)fluidMotionCheck.clientTick(minecraft);
