@@ -53,8 +53,9 @@ bool Mailbox::Write(const Reply& reply){return PushReply(mapping_.data(),mc_,nat
 bool Mailbox::CanReply(){return ReplySpace(mapping_.data(),mc_,native_);}
 void Mailbox::Status(std::uint32_t world,std::uint64_t caps,std::uint64_t now,std::uint64_t stamp,std::uint64_t revision,std::uint32_t flags,PlayerInfo player){
     if(!Matches(mapping_.data(),mc_,native_))return;
-    if((caps&kPlayerMachineCapability)&&(!Valid(player)||static_cast<std::int32_t>(stamp>>32)<=0||static_cast<std::int32_t>(stamp)<=0))caps&=~kPlayerMachineCapability;
-    if(!(caps&kPlayerMachineCapability))player={};
+    constexpr auto player_caps=kPlayerMachineCapability|kPlayerFluidCapability;
+    if((caps&player_caps)&&(!Valid(player)||static_cast<std::int32_t>(stamp>>32)<=0||static_cast<std::int32_t>(stamp)<=0))caps&=~player_caps;
+    if(!(caps&player_caps))player={};
     auto& h=*reinterpret_cast<Header*>(mapping_.data());auto seq=std::atomic_ref(h.status_sequence);
     auto start=seq.load(std::memory_order_relaxed)&~1ull;seq.store(start+1,std::memory_order_seq_cst);
     h.world=world;h.world_flags=flags;h.capabilities=caps;h.native_ms=now;h.player_stamp=stamp;h.shape_revision=revision;h.player=player;seq.store(start+2,std::memory_order_release);

@@ -297,6 +297,7 @@ inline constexpr std::uint32_t m_bIsRushing = 0x13D8;
 inline constexpr std::uint32_t m_LocalResyncRequest = 0x1458;
 inline constexpr std::uint32_t m_LocalTimedoutResyncRequest = 0x1468;
 inline constexpr std::uint32_t m_ResyncRequestOnReplica = 0x1478;
+inline constexpr std::uint32_t m_fInitialHeight = 0x1408;
 }
 namespace USkeletalMeshComponent {
 inline constexpr std::uint32_t AnimScriptInstance = 0x6F0;
@@ -755,12 +756,16 @@ inline constexpr std::uintptr_t FKey_Copy = 0x1BA9B10;
 inline constexpr std::uintptr_t FKey_Destructor = 0xF523F0;
 inline constexpr std::uintptr_t LaunchImpactInternal = 0x1A64D30;
 inline constexpr std::uintptr_t SaveBaseLocation = 0x33D0DD0;
+inline constexpr std::uintptr_t MovementOnTeleported = 0x33C9440;
 }  // namespace fn
 
 // Virtual slots used for calls through an object's own vtable.
 namespace slot {
 namespace UObject {
 inline constexpr std::uint32_t ProcessEvent = 0x220;
+}
+namespace UMovementComponent {
+inline constexpr std::uint32_t OnTeleported = 0x530;
 }
 namespace UCharacterMovementComponent {
 inline constexpr std::uint32_t SaveBaseLocation = 0x660;

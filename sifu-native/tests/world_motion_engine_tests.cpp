@@ -3,6 +3,7 @@
 #include <cstring>
 #include "combat/world_motion_engine.h"
 #include "combat/target_retention.h"
+#include "combat/pose_fall_origin.h"
 using namespace sifucraft::world_motion;
 namespace {
 unsigned checks=0;
@@ -10,10 +11,10 @@ void Require(bool value,const char* label){++checks;if(!value){std::fprintf(stde
 struct Fake final:Backend {
     Body body{19,818,{0,0,90},60,30,90};
     int binds=0,moves=0,forgets=0,hurts=0;bool valid=true,bind=true,block=false,penetrate=false,returned=true,read=true,effects=false;
-    float fraction=1;bool invoked=true,player=false;
+    float fraction=1;bool invoked=true,player=false,player_fluid=false;
     std::array<float,3> normal{};
     bool Bind(const Command& c,Body* out)override{++binds;*out=body;return bind&&(!(c.flags&kPlayer)||c.actor_stamp==((73ull<<32)|static_cast<std::uint32_t>(body.serial)));}
-    bool SupportsPlayer(Source source)const override{return player&&source==Source::Machine;}
+    bool SupportsPlayer(Source source)const override{return player&&(source==Source::Machine||(player_fluid&&source==Source::Fluid));}
     bool Check(Body* out)override{*out=body;return valid;}
     Sweep Move(const Body&,const std::array<float,3>& d)override{++moves;if(invoked)for(int i=0;i<3;++i)body.position[i]+=d[i]*fraction;return {body,invoked,read,returned,block,penetrate,normal};}
     Effect Hurt(const Command& c)override{if(!effects)return {};hurts++;body.health=std::max(0.f,body.health-c.amount*3);return {Status::Applied,true,body.serial,body.health,body.position,0};}
@@ -323,5 +324,47 @@ void PlayerMovementOnly(){
     paused.now+=5000;paused.Tick();Require(!paused.engine.Skip(paused.now)&&paused.engine.phase()==Engine::Phase::Releasing,"a true player pause retains only observation, never movement authority");
     paused.env.flags=0;paused.Tick();paused.engine.Original(1);paused.Tick();Require(paused.Pop(Status::Released).restored==1,"player resumes and proves its one original tick after pause");
 }
+
+void PlayerFluidAndPoseOwner(){
+    Case fluid;fluid.backend.player=fluid.backend.player_fluid=true;
+    auto pc=[&](Op op){auto c=fluid.CommandFor(op);c.source=Source::Fluid;c.flags=kPlayer;c.target=c.spawn=0;
+        c.duration_ms=op==Op::Reserve?200:op==Op::Renew?500:0;
+        if(op==Op::Reserve)c.actor_stamp=(73ull<<32)|19;return c;};
+    fluid.Send(pc(Op::Reserve));fluid.engine.Original(1);fluid.Tick();fluid.Pop(Status::Prepared);
+    fluid.Send(pc(Op::Step));Require(fluid.Pop(Status::Applied).delta[0]==10,"player fluid uses the actual bounded sweep");
+    fluid.now+=170;fluid.Tick();fluid.Send(pc(Op::Renew));fluid.Pop(Status::Applied);
+    fluid.now+=50;fluid.Tick();Require(fluid.engine.Skip(fluid.now),"fresh player fluid renewal extends only its short deadline");
+    fluid.engine.PlayerPoseOwned();fluid.Tick();fluid.Empty();
+    Require(!fluid.engine.Skip(fluid.now)&&fluid.engine.phase()==Engine::Phase::Releasing,"MC pose owner immediately removes player filtering and retains only bounded confirmation");
+    fluid.backend.body.position[0]+=5;fluid.now+=20;fluid.Tick();fluid.Send(pc(Op::Release));fluid.Tick();
+    auto handed=fluid.Pop(Status::Released);Require(handed.restored==1&&(handed.flags&kPlayerPoseHandoff)&&handed.position[0]==15,"handoff observes the MC-controlled root without claiming an original Native tick");
+    Require(fluid.engine.phase()==Engine::Phase::Free,"explicit pose handoff frees its slot");
+    Case original;original.backend.player=true;auto reserve=original.CommandFor();reserve.flags=kPlayer;reserve.target=reserve.spawn=0;reserve.actor_stamp=(73ull<<32)|19;
+    original.Send(reserve);original.engine.Original(1);original.Tick();original.Pop(Status::Prepared);original.engine.PlayerControlWillTransfer();original.engine.Original(1);original.Tick();original.Empty();
+    Require(!original.engine.Skip(original.now)&&original.engine.phase()==Engine::Phase::Releasing,"an original tick during F8 anchoring retains bounded stop confirmation without owning motion");
+    auto stop=original.CommandFor(Op::Release);stop.flags=kPlayer;stop.target=stop.spawn=0;original.Send(stop);original.Tick();auto observed=original.Pop(Status::Released);
+    Require(observed.restored==1&&!(observed.flags&kPlayerPoseHandoff),"actual original tick and MC-pose proof remain distinguishable");
+    Case bounded;bounded.backend.player=true;auto c=bounded.CommandFor();c.flags=kPlayer;c.target=c.spawn=0;c.actor_stamp=(73ull<<32)|19;
+    bounded.Send(c);bounded.engine.Original(1);bounded.Tick();bounded.Pop(Status::Prepared);bounded.engine.PlayerPoseOwned();
+    bounded.now+=1001;bounded.Tick();Require(bounded.engine.phase()==Engine::Phase::Free,"missing pose handoff ACK never retains the binding beyond its bounded observation window");
+    Case npc;npc.Send(npc.CommandFor());for(unsigned part:{1u,2u,4u})npc.engine.Original(part);npc.Tick();npc.Pop(Status::Prepared);
+    npc.engine.PlayerPoseOwned();npc.Tick();Require(npc.engine.Skip(npc.now),"the player pose owner cannot release an NPC lease");
 }
-int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();UnexecutedCredits();Lifetime();PausedHandback();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();PlayerMovementOnly();std::printf("world motion arbiter PASS %u assertions\n",checks);}
+
+}
+int main(){
+    float origin=0;
+    Require(TranslateFallOrigin(922,922,90,&origin)&&origin==90,"MC return from slime apex cannot become an 832cm native fall");
+    Require(TranslateFallOrigin(1000,900,500,&origin)&&origin-500==100,"taking MC ownership preserves the pre-existing 100cm fall");
+    Require(origin-400==200,"subsequent genuine native descent still accumulates fall distance");
+    Require(TranslateFallOrigin(origin,500,1500,&origin)&&origin-1500==100,"upward MC translation preserves genuine fall distance too");
+    Require(TranslateFallOrigin(origin,1500,900,&origin)&&origin==1000,"MC translation roundtrip preserves the original native fall origin");
+    for(auto bad:{NAN,INFINITY,-INFINITY}){
+        Require(!TranslateFallOrigin(bad,90,90,&origin),"reject invalid native fall origin");
+        Require(!TranslateFallOrigin(90,bad,90,&origin),"reject invalid old pose");
+        Require(!TranslateFallOrigin(90,90,bad,&origin),"reject invalid actual pose");
+    }
+    Require(!TranslateFallOrigin(1e9f,-1e9f,1e9f,&origin),"reject unreasonable translated origin without writing");
+    Require(!TranslateFallOrigin(90,90,90,nullptr),"reject missing cache output");
+    HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();UnexecutedCredits();Lifetime();PausedHandback();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();PlayerMovementOnly();PlayerFluidAndPoseOwner();std::printf("world motion arbiter PASS %u assertions\n",checks);
+}

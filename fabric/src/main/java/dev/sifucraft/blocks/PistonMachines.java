@@ -139,7 +139,7 @@ public final class PistonMachines {
         if(bodies.isEmpty()){originals(level,members);token.lastCommitTick=level.getGameTime();return;}
         if(!fresh(view)||!view.shapesCurrent()||(view.nativeStatus().capabilities()&MOTION_CAPABILITY)==0||flights.size()>=128)return;
         if(bodies.containsKey(NativeMotionSubjects.PLAYER)&&!NativeMotionSubjects.playerReady(view))return;
-        boolean yielding=false;for(var key:bodies.keySet())if(!NativeMotionSubjects.player(key))yielding|=dev.sifucraft.combat.FluidMotion.yieldToMachine(key,view);
+        boolean yielding=false;for(var key:bodies.keySet())yielding|=dev.sifucraft.combat.FluidMotion.yieldToMachine(key,view);
         if(yielding){for(var member:members)PistonTimeline.track(member,view.scope());return;}
         flight=new Flight(level,piston,members,token,view.scope(),now);for(var member:members){flights.put(member,flight);PistonTimeline.track(member,view.scope());}activeServer=level.getServer();
         for(var key:bodies.keySet()){
@@ -247,7 +247,7 @@ public final class PistonMachines {
                 if(receipt!=null&&receipt.status()==3&&receipt.restored()==(NativeMotionSubjects.player(t.key)?1:7)&&receipt.actorSerial()==t.binding.actorSerial()&&receipt.componentToken()==t.binding.componentToken()){
                     poses.put(t.key,new Pose(f.scope,receipt.position(),receipt.nativeFrame(),now+500,true));
                     updateProxy(view,t,receipt);
-                    if(!NativeMotionSubjects.player(t.key))dev.sifucraft.combat.FluidMotion.machineReleased(f.level,f.scope,t.key,t.binding,receipt,t.velocity,t.source);
+                    dev.sifucraft.combat.FluidMotion.machineReleased(f.level,f.scope,t.key,t.binding,receipt,t.velocity,t.source,t.playerStamp);
                     released++;
                 }else releaseFailed++;
             }

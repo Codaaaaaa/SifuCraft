@@ -93,7 +93,7 @@ int main(int argc,char** argv){try{
     auto& h=*reinterpret_cast<Header*>(memory.data());h.magic=kMagic;h.version=kVersion;h.mapping_bytes=kMappingBytes;h.slot_bytes=kSlotBytes;
     h.mc_session=11;h.native_session=22;h.layout_hash=kLayoutHash;
     Check(Matches(memory.data(),11,22)&&!Matches(memory.data(),12,22),"mailbox session boundary");
-    h.version=4;Check(!Matches(memory.data(),11,22),"old protocol rejected despite unchanged mapping size");h.version=kVersion;
+    h.version=5;Check(!Matches(memory.data(),11,22),"old protocol rejected despite unchanged mapping size");h.version=kVersion;
     auto slots=reinterpret_cast<CommandSlot*>(memory.data()+kHeaderBytes);
     for(unsigned i=0;i<kSlots;++i){slots[i].state=Ready;slots[i].sequence=kSlots-i;slots[i].value=c;slots[i].value.id=kSlots-i;Seal(slots[i].value);}
     bool valid=false;Command received{};

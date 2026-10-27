@@ -58,6 +58,7 @@ loom {
 			property "sifucraft.nativePistonSelfTest", providers.gradleProperty("sifucraft.nativePistonSelfTest").getOrElse("false")
 			property "sifucraft.nativePlayerPistonSelfTest", providers.gradleProperty("sifucraft.nativePlayerPistonSelfTest").getOrElse("false")
 			property "sifucraft.nativePlayerPistonLift", providers.gradleProperty("sifucraft.nativePlayerPistonLift").getOrElse("false")
+			property "sifucraft.nativePlayerPistonSlime", providers.gradleProperty("sifucraft.nativePlayerPistonSlime").getOrElse("false")
 			property "sifucraft.playerPistonF8Control", file('../build/p8-native-player-f8-control.txt').canonicalPath
 			property "sifucraft.fluidSceneSelfTest", providers.gradleProperty("sifucraft.fluidSceneSelfTest").getOrElse("false")
 			property "sifucraft.fluidGateControl", file('../build/p9-fluid-gate.txt').canonicalPath

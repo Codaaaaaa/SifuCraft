@@ -17,7 +17,7 @@ import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraft.world.phys.Vec3;
 
 /** Unregistered original player integrator. Predictions cannot pick up items or apply world effects. */
-public final class VanillaPlayerBody extends Player {
+public final class VanillaPlayerBody extends Player implements MotionPrediction {
     private EntityDimensions physical=EntityDimensions.scalable(.7f,1.8f);
     private double beforeFall;
     private VanillaFluidBody.Landing landing;

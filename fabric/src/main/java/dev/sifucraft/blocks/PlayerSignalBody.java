@@ -14,7 +14,7 @@ import net.minecraft.world.phys.Vec3;
 /** Native player presence. Mechanical movement requires a Native receipt; this entity never executes it. */
 public final class PlayerSignalBody extends Mob {
     private final SignalSteps signalSteps=new SignalSteps();
-    void updateSignals(){RedstoneContacts.touchBody(this);signalSteps.update(this);}
+    public void updateSignals(){RedstoneContacts.touchBody(this);signalSteps.update(this);}
     private float width=.6f,height=1.8f;
     public PlayerSignalBody(EntityType<? extends PlayerSignalBody> type,Level level) {
         super(type,level);

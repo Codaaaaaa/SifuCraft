@@ -56,11 +56,13 @@ FUNCTIONS = {
     "FKey_Destructor": "FKey::~FKey",
     "LaunchImpactInternal": "UHitComponent::LaunchImpactInternal",
     "SaveBaseLocation": "UCharacterMovementComponent::SaveBaseLocation",
+    "MovementOnTeleported": "UCharacterMovementComponent::OnTeleported",
 }
 
 # Virtual slots used for calls (dispatched through the object's own vtable): introducing class -> methods.
-CALL_SLOTS = {"UObject": ["ProcessEvent"], "UCharacterMovementComponent": ["SaveBaseLocation"]}
-CALL_VERIFY = [("UFightingMovementComponent", "UCharacterMovementComponent", "SaveBaseLocation", "UCharacterMovementComponent::SaveBaseLocation")]
+CALL_SLOTS = {"UObject": ["ProcessEvent"], "UMovementComponent": ["OnTeleported"], "UCharacterMovementComponent": ["SaveBaseLocation"]}
+CALL_VERIFY = [("UFightingMovementComponent", "UCharacterMovementComponent", "SaveBaseLocation", "UCharacterMovementComponent::SaveBaseLocation"),
+               ("UFightingMovementComponent", "UMovementComponent", "OnTeleported", "UCharacterMovementComponent::OnTeleported")]
 
 # Short C++ namespaces for PDB template types used by native inspection.
 TYPE_ALIASES = {
@@ -154,7 +156,7 @@ MEMBERS = {
     "ABaseCharacter": ["m_OrderComponent"],
     "UOrderComponent": ["m_OrderManager"],
     "OrderManager": ["m_OrderList", "m_DelayedOrderCommand", "m_DelayedOrderCommandDuringPrediction"],
-    "UFightingMovementComponent": ["m_bIsRushing", "m_LocalResyncRequest", "m_LocalTimedoutResyncRequest", "m_ResyncRequestOnReplica"],
+    "UFightingMovementComponent": ["m_bIsRushing", "m_LocalResyncRequest", "m_LocalTimedoutResyncRequest", "m_ResyncRequestOnReplica", "m_fInitialHeight"],
     "USkeletalMeshComponent": ["AnimScriptInstance", "ParallelAnimationEvaluationTask", "ParallelBlendPhysicsCompletionTask"],
     "UAnimInstance": ["MontageInstances", "RootMotionMontageInstance", "RootMotionBlendQueue", "ExtractedRootMotion"],
     "FRootMotionMovementParams": ["bHasRootMotion"],

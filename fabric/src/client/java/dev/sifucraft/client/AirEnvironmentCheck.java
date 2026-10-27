@@ -36,6 +36,7 @@ final class AirEnvironmentCheck {
     private final Map<Integer,Reference> references=new LinkedHashMap<>();
     private ServerLevel level;private volatile boolean finished;private int stage,compared,dryTicks,bubbleTicks,protectedWetTicks;
     private long started,stageAt;private int minAir=300;private float damage;
+    private boolean injectedStatusGap;private int statusGapTicks;
     AirEnvironmentCheck(){require(DevWorld.LEVEL_ID.startsWith("sifucraft-air-check-"),"disposable save required");}
     private static void require(boolean value,String why){if(!value)throw new AssertionError("air environment: "+why);}
     void clientTick(Minecraft mc){if(finished)mc.stop();}
@@ -46,7 +47,11 @@ final class AirEnvironmentCheck {
     void tick(MinecraftServer server){
         if(finished)return;
         try{
-            var view=WorldMotionWorld.current();if(view==null||view.nativeStatus()==null||!view.placement().map().equals("MotionFixture"))return;
+            if(stage==1&&!injectedStatusGap&&compared>=100){injectedStatusGap=true;WorldMotionWorld.withUnavailableStatus(()->tick(server));return;}
+            var view=WorldMotionWorld.current();if(view==null||!view.placement().map().equals("MotionFixture"))return;
+            // Registered proxies always run their original breathing tick. A
+            // transient mailbox read must not skip the independent reference.
+            if(view.nativeStatus()==null){if(stage<1||stage>3)return;statusGapTicks++;}
             // Real entities keep breathing while a changed collision section is
             // being acknowledged. Tick the independent reference at the same
             // 20Hz cadence rather than skipping it behind that barrier.
@@ -99,6 +104,7 @@ final class AirEnvironmentCheck {
             }
             if(stage==4){
                 if(FluidMotion.stats().active()!=0||view.requests().pending()!=0)return;
+                require(injectedStatusGap&&statusGapTicks>0,"reference cadence survived an explicitly unavailable status");
                 require(WorldEffects.stats().sent()==1&&WorldEffects.stats().applied()==1&&WorldEffects.stats().rejected()==0&&WorldEffects.stats().lost()==0,"exactly one environment effect, no replay or rejected source");
                 require(FluidMotion.stats().steps()>0&&FluidMotion.stats().blocked()>0&&FluidMotion.stats().released()>0&&FluidMotion.stats().failed()==0,"real physical ceiling and original handback used production movement");
                 restore(server);

@@ -73,7 +73,8 @@ public:
             else if(restore_paused_){restore_deadline_=now+500;restore_paused_=false;}
         }
         const bool restore_timeout=phase_==Phase::Releasing&&!(env_.flags&kPaused)&&now>=restore_deadline_;
-        if(phase_==Phase::Releasing&&(restored_==Parts()||restore_timeout)&&(!release_||Room())) {
+        const bool await_pose_ack=phase_==Phase::Releasing&&player_handoff_&&!release_&&now<restore_deadline_;
+        if(phase_==Phase::Releasing&&!await_pose_ack&&(restored_==Parts()||restore_timeout)&&(!release_||Room())) {
             if(restore_timeout&&restored_!=Parts())reason_=Status::TimedOut;
             bool observed=false;
             if(restored_==Parts()){
@@ -128,7 +129,7 @@ public:
                 backend_.Forget();Reject(command,Status::TargetLost,now);return true;
             }
             source_=command;body_=body;deadline_=command.issued_ms+command.duration_ms;
-            observed_=restored_=0;identity_lost_=false;spent_=0;last_tick_=command.tick;last_progress_=command.progress;release_revision_=command.shape_revision;reason_=Status::Released;
+            observed_=restored_=restore_flags_=0;identity_lost_=player_handoff_=false;spent_=0;last_tick_=command.tick;last_progress_=command.progress;release_revision_=command.shape_revision;reason_=Status::Released;
             phase_=Phase::Acquiring;reserve_=command;return true;
         }
         if(phase_==Phase::Free||!Owns(command)) {Reject(command,Status::Stale,now);return true;}
@@ -188,6 +189,13 @@ public:
         if(phase_==Phase::Acquiring)observed_|=part;
         else if(phase_==Phase::Releasing)restored_|=part;
     }
+    // The existing MC-player owner has observed this exact movement component
+    // on H5. It intentionally suppresses the Native movement tick itself.
+    void PlayerPoseOwned(){
+        if(phase_==Phase::Free||!(source_.flags&kPlayer))return;
+        PlayerControlWillTransfer();restored_|=1;restore_flags_|=kPlayerPoseHandoff;
+    }
+    void PlayerControlWillTransfer(){if(phase_==Phase::Free||!(source_.flags&kPlayer))return;BeginRelease(Status::Cancelled);player_handoff_=true;}
     // Destroyed/replaced components cannot produce their old original Tick again.
     void Lost() {BeginRelease(Status::TargetLost);identity_lost_=true;restored_=Parts();}
     void CallbackThreadLost(){BeginRelease(Status::TargetLost);}
@@ -225,7 +233,7 @@ private:
         c.actor_stamp==static_cast<std::uint64_t>(body_.serial)&&c.component_token==body_.token;}
     void BeginRelease(Status reason){
         if(phase_==Phase::Free||phase_==Phase::Releasing)return;
-        phase_=Phase::Releasing;restored_=0;reason_=reason;restore_deadline_=deadline_+500;restore_paused_=(env_.flags&kPaused)!=0;
+        phase_=Phase::Releasing;restored_=0;restore_flags_=0;reason_=reason;restore_deadline_=deadline_+500;restore_paused_=(env_.flags&kPaused)!=0;
     }
     Reply Make(const Command& c,Status status,std::uint64_t now,std::array<float,3> delta={},std::uint32_t flags=0)const{
         Reply r{};r.id=c.id;r.lease=c.op==Op::Reserve?c.id:c.lease;r.native_frame=env_.frame;r.at_ms=std::max<std::uint64_t>(now,1);
@@ -233,6 +241,7 @@ private:
         if(phase_!=Phase::Free&&c.target==source_.target&&c.spawn==source_.spawn){
             r.actor_serial=body_.serial;r.component_token=body_.token;r.health=body_.health;r.restored=restored_;
             for(int i=0;i<3;++i){r.position[i]=body_.position[i];r.delta[i]=status==Status::Prepared?body_.root_offset[i]:delta[i];}r.flags=flags;
+            if((c.op==Op::Release||c.op==Op::Cancel)&&Owns(c))r.flags|=restore_flags_;
             r.root_radius=body_.root_radius?body_.root_radius:body_.radius;r.root_half_height=body_.root_half?body_.root_half:body_.half;
         }
         Seal(r);return r;
@@ -244,8 +253,8 @@ private:
     }
     Backend& backend_;Environment env_;std::unique_ptr<Ledger> owned_;Ledger* ledger_;Phase phase_=Phase::Free;
     Command source_{};Body body_{};std::optional<Command> reserve_,release_;
-    std::uint64_t deadline_=0,last_tick_=0,release_revision_=0,restore_deadline_=0;double spent_=0;float last_progress_=0;unsigned observed_=0,restored_=0;
-    bool restore_paused_=false,identity_lost_=false;
+    std::uint64_t deadline_=0,last_tick_=0,release_revision_=0,restore_deadline_=0;double spent_=0;float last_progress_=0;unsigned observed_=0,restored_=0,restore_flags_=0;
+    bool restore_paused_=false,identity_lost_=false,player_handoff_=false;
     Status reason_=Status::Released;std::deque<Reply> out_;
 };
 

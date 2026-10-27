@@ -40,6 +40,7 @@ final class HotFloorCheck {
     private final ArrayList<Long> referenceTicks=new ArrayList<>(),nativeTicks=new ArrayList<>();
     private float previousHealth=20;private long previousSent,firstNativeAt;
     private volatile boolean finished;private int stage,comparisons,stable;private long started;private ServerLevel level;
+    private boolean injectedStatusGap;
     HotFloorCheck(){require(DevWorld.LEVEL_ID.startsWith("sifucraft-hot-floor-check-")&&cycles>=1&&cycles<=6,"disposable save and bounded cycle count required");}
     private static void require(boolean value,String why){if(!value)throw new AssertionError("hot floor: "+why);}
     void clientTick(Minecraft mc){if(finished)mc.stop();}
@@ -48,7 +49,9 @@ final class HotFloorCheck {
     void tick(MinecraftServer server){
         if(finished)return;
         try{
-            var v=WorldMotionWorld.current();if(v==null||v.nativeStatus()==null||!v.placement().map().equals("MotionFixture"))return;
+            if(stage==1&&!injectedStatusGap&&comparisons>=20){injectedStatusGap=true;WorldMotionWorld.withUnavailableStatus(()->tick(server));return;}
+            var v=WorldMotionWorld.current();if(v==null||!v.placement().map().equals("MotionFixture"))return;
+            if(stage==0&&v.nativeStatus()==null)return;
             if(stage==0){
                 if(!v.shapesCurrent()||EnemyMirrors.hitAttacker(101,1)==null||EnemyMirrors.hitAttacker(102,1)==null)return;
                 level=server.overworld();started=System.currentTimeMillis();
@@ -74,7 +77,7 @@ final class HotFloorCheck {
                 if(stale){if(firstNativeAt==0||System.currentTimeMillis()-firstNativeAt<2000)return;require(hp(101)==57&&WorldEffects.stats().sent()==1&&referenceTicks.size()>=3&&FluidMotion.stats().renewed()>5,"old renewal timestamp stops physical floor callbacks despite active fresh heartbeats");complete(server,"EXPECTED_STALE_RENEWAL_BASELINE");return;}
                 if(hp(101)>60-cycles*3)return;
                 require(hp(101)==60-cycles*3&&referenceHealth==20-cycles&&WorldEffects.stats().applied()==cycles,"actual Native HP matches original repeated callbacks without duplication");
-                for(int i=1;i<cycles;i++)require(Math.abs((nativeTicks.get(i)-nativeTicks.get(i-1))-(referenceTicks.get(i)-referenceTicks.get(i-1)))<=1,"Native floor source keeps the original hurt period within one server tick");
+                for(int i=1;i<cycles;i++)require(Math.abs((nativeTicks.get(i)-nativeTicks.get(i-1))-(referenceTicks.get(i)-referenceTicks.get(i-1)))<=1,"Native floor source keeps the original hurt period within one server tick: native="+nativeTicks+" reference="+referenceTicks);
                 for(int id:new int[]{101,102})require(!WorldEffects.canCapture(EnemyMirrors.hitAttacker(id,1),level.damageSources().hotFloor()),"actual callback proof was restored and cannot be reused outside its scope");
                 if(hover)require(FluidMotion.stats().steps()>0&&Math.abs(EnemyMirrors.hitAttacker(101,1).getY()-65)<.0025,"hover candidate only damages after actual physical downward receipt reached the top face");
                 for(var pos:originals.keySet())level.setBlockAndUpdate(pos,Blocks.STONE.defaultBlockState());stage=2;return;

@@ -62,7 +62,7 @@ public final class PlayerSignalContacts {
             }
         }
         float height=frame.capsuleHalfHeight()*2/100f;
-        var pos=PistonMachines.playerPose(motion,frame,frame.playerLocation());
+        var pos=dev.sifucraft.combat.FluidMotion.playerPose(motion,frame,PistonMachines.playerPose(motion,frame,frame.playerLocation()));
         if(!Float.isFinite(frame.health())||frame.health()<=0||!Float.isFinite(height)||height<=0||height>40||!Float.isFinite(pos.x())||!Float.isFinite(pos.y())||!Float.isFinite(pos.z())){removeBody();return;}
         boolean create=body==null||body.isRemoved();
         if(create)body=new PlayerSignalBody(SignalEntities.PLAYER_BODY,server.overworld());
@@ -71,7 +71,7 @@ public final class PlayerSignalContacts {
         if(create&&!server.overworld().addFreshEntity(body)){removeBody();return;}
         body.updateSignals();
     }
-    private static void removeBody(){if(body!=null){body.discard();PistonMachines.playerGone();}body=null;}
+    private static void removeBody(){if(body!=null){body.discard();PistonMachines.playerGone();dev.sifucraft.combat.FluidMotion.playerGone();}body=null;}
     // A stalled/disconnected Native source must release its body, not reactivate the old MC pose.
     private static void suspend(){removeBody();suppress=backing!=null;}
     private static void clear(){removeBody();backing=null;session=0;world=0;map=null;suppress=false;playerStamp=0;rootRadius=0;}

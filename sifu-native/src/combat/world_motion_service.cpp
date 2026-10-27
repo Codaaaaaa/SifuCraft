@@ -51,7 +51,7 @@ unsigned PartIndex(motion::Part part){return part==motion::Part::Movement?0:part
 class NativeBackend final:public Backend {
 public:
     void Slot(std::size_t index){slot_=index;}
-    bool SupportsPlayer(Source source)const override{return source==Source::Machine;}
+    bool SupportsPlayer(Source source)const override{return source==Source::Machine||source==Source::Fluid;}
     bool Bind(const Command& c,Body* out)override {
         if(motion::CheckWorld(g_base,g_current.actors,GetTickCount64()))return false;
         player_=(c.flags&kPlayer)!=0;
@@ -240,7 +240,7 @@ void Exchange(Context context,Mailbox& mailbox) {
     const bool player_ready=g_ready.load()&&!flags&&g_player_publication.scope==scope&&g_player_publication.stamp==stamp&&
         g_player_publication.save==g_published.save&&g_player_publication.map==g_published.map&&g_player_publication.at<=now&&now-g_player_publication.at<=200&&
         input::Router().owner()==protocol::InputOwner::Sifu&&!hooks::PoseActive();
-    const auto capabilities=changed?0ull:((g_ready.load()?kMotionCapability:0)|(g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kDamageCapability:0)|(settings_live?kPauseCapability:0)|(player_ready?kPlayerMachineCapability:0));
+    const auto capabilities=changed?0ull:((g_ready.load()?kMotionCapability:0)|(g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kDamageCapability:0)|(settings_live?kPauseCapability:0)|(player_ready?(kPlayerMachineCapability|kPlayerFluidCapability):0));
     mailbox.Status(scope.generation,capabilities,now,stamp,blocks::ShapesAppliedRevision(),flags,player_ready?g_player_publication.info:PlayerInfo{});
     ReleaseSRWLockExclusive(&g_lock);
 }
@@ -261,6 +261,7 @@ void ApplyOnGameThread(std::uintptr_t base) {
     g_flags.store(flags);g_ready.store(ready&&settled);
     base_sync::Context(base,&g_current.actors,g_current.enabled);
     const Environment env{scope.native_session,scope.peer_session,g_current.save,g_current.map,blocks::ShapesAppliedRevision(),g_current.actors.native_frame,scope.generation,flags,ready,settled};
+    if(input::Router().owner()==protocol::InputOwner::Minecraft)for(std::size_t i=0;i<kTargets;++i)g_fleet.at(i).PlayerControlWillTransfer();
     g_fleet.Update(env,now);
     for(std::size_t i=0;i<kTargets;++i){
         auto& engine=g_fleet.at(i);
@@ -298,7 +299,11 @@ bool Skip(std::uintptr_t component,motion::Part part) {
     }
     return false;
 }
-void PoseOwnedMovement(std::uintptr_t component){base_sync::PoseOwned(component);}
+void PoseOwnedMovement(std::uintptr_t component){
+    base_sync::PoseOwned(component);
+    if(GetCurrentThreadId()!=g_thread.load()||input::Router().owner()!=protocol::InputOwner::Minecraft||!hooks::PoseActive())return;
+    for(std::size_t i=0;i<kTargets;++i)if(component==g_watches[i][0].load()&&g_backends[i].Identity())g_fleet.at(i).PlayerPoseOwned();
+}
 void BeforeOriginalMovement(std::uintptr_t component){
     base_sync::BeforeOriginal(component);
     if(GetCurrentThreadId()==g_thread.load())player_probe::Before(g_base,g_current.actors,component,g_current.observe_player);

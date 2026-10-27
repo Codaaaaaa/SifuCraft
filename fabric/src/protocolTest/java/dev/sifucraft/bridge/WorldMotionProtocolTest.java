@@ -25,6 +25,15 @@ public final class WorldMotionProtocolTest {
         var reply=decodeReply(fixture("world_motion_reply.hex"));
         check(reply.id()==11&&reply.lease()==12&&reply.actorSerial()==99&&reply.restored()==7&&reply.componentToken()==55&&reply.position().z()==90&&reply.delta().x()==10&&reply.rootRadius()==35&&reply.rootHalfHeight()==90,
             "C++ receipt fields and restored mask");
+        var pose=fixture("world_motion_reply.hex");var poseBytes=java.nio.ByteBuffer.wrap(pose).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        poseBytes.putInt(36,0).putInt(40,0).putInt(44,3).putInt(52,1).putInt(100,PLAYER_POSE_HANDOFF);
+        for(int offset:new int[]{84,88,92})poseBytes.putFloat(offset,0);poseBytes.putLong(120,hash(pose,120));
+        check(decodeReply(pose).flags()==PLAYER_POSE_HANDOFF,"MC pose-owner restoration is distinct from an original tick");
+        for(int offset:new int[]{36,40,44,48,52,56,84}){
+            var bad=pose.clone();var bytes=java.nio.ByteBuffer.wrap(bad).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            if(offset==56)bytes.putLong(offset,0);else if(offset==84)bytes.putFloat(offset,1);else bytes.putInt(offset,switch(offset){case 44->2;case 48->0;case 52->7;default->1;});
+            bytes.putLong(120,hash(bad,120));invalid(()->decodeReply(bad));
+        }
         invalid(()->encode(sample(RESERVE,MACHINE,SifuFrame.Vec3.ZERO,501,0,42,2)));
         invalid(()->encode(sample(RESERVE,MACHINE,SifuFrame.Vec3.ZERO,500,0,42,0)));
         invalid(()->encode(sample(STEP,MACHINE,new SifuFrame.Vec3(6,0,6),100,0,42,2)));
@@ -65,13 +74,14 @@ public final class WorldMotionProtocolTest {
             memory.set(JAVA_LONG,40,MOTION_CAPABILITY|PLAYER_MACHINE_CAPABILITY);memory.set(JAVA_LONG,88,(73L<<32)|19);
             for(int i=0;i<6;i++)memory.set(JAVA_FLOAT,104+i*4,new float[]{101,-202,303,35,90,180}[i]);
             var playerStatus=mailbox.status(1200);check(playerStatus!=null&&playerStatus.player().position().equals(new SifuFrame.Vec3(101,-202,303))&&playerStatus.player().radius()==35&&playerStatus.player().halfHeight()==90&&playerStatus.player().health()==180,"atomic original player root/geometry/HP metadata");
+            memory.set(JAVA_LONG,40,PLAYER_FLUID_CAPABILITY);check(mailbox.status(1200).player().radius()==35,"player fluid permission carries the same typed capsule without machine permission");
             for(int offset:new int[]{104,108,112,116,120,124}){float original=memory.get(JAVA_FLOAT,offset);memory.set(JAVA_FLOAT,offset,Float.NaN);check(mailbox.status(1200)==null,"nonfinite player metadata fails closed");memory.set(JAVA_FLOAT,offset,original);}
             memory.set(JAVA_FLOAT,120,34);check(mailbox.status(1200)==null,"invalid player capsule ratio");memory.set(JAVA_FLOAT,120,90);
             memory.set(JAVA_FLOAT,124,0);check(mailbox.status(1200)==null,"dead player cannot advertise ready mechanics");memory.set(JAVA_FLOAT,124,180);
             memory.set(JAVA_LONG,88,19);check(mailbox.status(1200)==null,"player index is part of ready metadata");memory.set(JAVA_LONG,88,(73L<<32)|19);
             memory.set(JAVA_LONG,88,(-1L<<32)|19);check(mailbox.status(1200)==null,"negative native player object index fails closed");memory.set(JAVA_LONG,88,(73L<<32)|19);
             memory.set(JAVA_LONG,80,3);check(mailbox.status(1200)==null,"player metadata cannot escape the shared status seqlock");memory.set(JAVA_LONG,80,4);
-            memory.set(JAVA_INT,4,4);check(mailbox.status(1200)==null&&!mailbox.publish(reserve,1200),"old world-motion version cannot exchange commands/status");memory.set(JAVA_INT,4,VERSION);
+            memory.set(JAVA_INT,4,5);check(mailbox.status(1200)==null&&!mailbox.publish(reserve,1200),"old world-motion version cannot exchange commands/status");memory.set(JAVA_INT,4,VERSION);
             memory.set(JAVA_LONG,40,3);memory.set(JAVA_LONG,88,73);
             memory.set(JAVA_INT,60,PAUSED);check(mailbox.status(1200).flags()==PAUSED,"true pause has a world flag separate from input ownership");
             memory.set(JAVA_INT,60,4);check(mailbox.status(1200)==null,"unknown world flags fail closed");memory.set(JAVA_INT,60,0);

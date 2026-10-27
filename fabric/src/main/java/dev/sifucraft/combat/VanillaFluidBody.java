@@ -15,7 +15,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.gameevent.GameEvent;
 
 /** Unregistered vanilla land-mob integrator. Actual effects belong to the hit mirror. */
-public final class VanillaFluidBody extends Cow {
+public final class VanillaFluidBody extends Cow implements MotionPrediction {
     public record Landing(double distance,BlockPos pos){}
     private double beforeFall;private Landing landing;
     private int clippedAxes;

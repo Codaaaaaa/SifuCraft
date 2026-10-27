@@ -32,8 +32,11 @@ import org.slf4j.LoggerFactory;
 /** Disposable real-game fixture. It never fabricates a Native position or a motion command. */
 final class NativePistonCheck {
     private static final class Reference extends Cow {
-        Reference(ServerLevel level,float width,float height){super(EntityTypes.COW,level);this.width=width;this.height=height;setNoAi(true);setNoGravity(true);setSilent(true);refreshDimensions();}
+        double peakY;
+        Reference(ServerLevel level,float width,float height,boolean physics){super(EntityTypes.COW,level);this.width=width;this.height=height;setNoAi(!physics);setNoGravity(!physics);setSilent(true);refreshDimensions();}
         private float width=.7f,height=1.84f;
+        @Override protected void registerGoals(){}
+        @Override public void tick(){super.tick();peakY=Math.max(peakY,getY());}
         @Override public EntityDimensions getDefaultDimensions(Pose pose){return EntityDimensions.scalable(width>0?width:.7f,height>0?height:1.84f);}
     }
     private final Map<BlockPos,BlockState> originals=new LinkedHashMap<>();
@@ -44,6 +47,8 @@ final class NativePistonCheck {
     private final boolean pause=Boolean.getBoolean("sifucraft.pistonPauseSelfTest");
     private final boolean player=Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest");
     private final boolean lift=Boolean.getBoolean("sifucraft.nativePlayerPistonLift");
+    private final boolean slime=Boolean.getBoolean("sifucraft.nativePlayerPistonSlime");
+    private double nativePeak,referencePeak;private boolean nativeApex;
     private final java.nio.file.Path f8File=java.nio.file.Path.of(System.getProperty("sifucraft.playerPistonF8Control"));
     private volatile SifuFrame playerFrame;private volatile boolean mcReady;
     private BlockPos liftPayload;private Vec3 originalPlayer,setupPosition;private long platformSettled;
@@ -51,11 +56,17 @@ final class NativePistonCheck {
     private volatile long pauseRequested,pauseAt,pausedTick;private volatile boolean resumed,pauseChecked;
     NativePistonCheck(){require(DevWorld.LEVEL_ID.startsWith(player?"sifucraft-player-piston-check-":"sifucraft-piston-native-check-"),"disposable save required");
         require(!lift||player,"lift diagnostic requires player mode");if(lift)stage=-3;
+        require(!slime||lift,"slime diagnostic requires the elevated player fixture");
+        if(slime)dev.sifucraft.combat.FluidMotion.observe(new dev.sifucraft.combat.FluidMotion.Observer(){
+            public void prepared(dev.sifucraft.combat.FluidMotion.Sample value){}
+            public void simulated(dev.sifucraft.combat.FluidMotion.Sample value){}
+            public void completed(dev.sifucraft.combat.FluidMotion.Sample value){if(NativeMotionSubjects.player(value.key())){nativePeak=Math.max(nativePeak,value.position().y);if(start!=null&&nativePeak-start.y>1&&value.velocity().y<=0)nativeApex=true;}}
+        });
         PistonMachines.observePrepared((key,binding)->{
             if(target==null||!target.key().equals(key)||reference!=null)return;
             var offset=binding.rootOffset();var proxy=NativeMotionSubjects.find(key);require(proxy!=null,"same binding body");
             referenceStart=proxy.position().add(offset.x()/100.0,offset.z()/100.0+target.halfHeight()/100.0-binding.rootHalfHeight()/100.0,offset.y()/100.0);
-            reference=new Reference(level,binding.rootRadius()*2/100,binding.rootHalfHeight()*2/100);reference.setPos(referenceStart);reference.setOnGround(true);require(level.addFreshEntity(reference),"independent actual root-sized vanilla body registered");
+            reference=new Reference(level,binding.rootRadius()*2/100,binding.rootHalfHeight()*2/100,slime);reference.setPos(referenceStart);reference.setOnGround(true);require(level.addFreshEntity(reference),"independent actual root-sized vanilla body registered");
             LoggerFactory.getLogger("sifucraft").info("[native-piston-test] physical binding root_radius={} root_half={} root_offset_cm={} reference_start={}",binding.rootRadius(),binding.rootHalfHeight(),offset,referenceStart);
             if(pause&&pauseRequested==0){pauseRequested=System.currentTimeMillis();pausedTick=level.getGameTime();pauseControl("1");LoggerFactory.getLogger("sifucraft").info("[native-piston-test] pause requested while physical target is prepared");}
         });
@@ -66,6 +77,9 @@ final class NativePistonCheck {
     void clientTick(Minecraft mc,boolean gui,SifuFrame frame){
         playerFrame=frame;mcReady=gui;
         if(finished){mc.stop();return;}
+        // The first MC anchor is needed before WorldMotionWorld can exist.
+        // Seed ordinary F8 here rather than waiting on that dependent view.
+        if(lift&&stage==-3&&mc.player!=null&&frame!=null&&!frame.minecraftOwnsInput())f8Control("1:mc");
         if(pauseRequested!=0&&mc.isPaused()&&pauseAt==0){pauseAt=System.currentTimeMillis();mc.getSingleplayerServer().execute(()->pausedTick=level.getGameTime());}
         if(pauseAt!=0&&!resumed&&System.currentTimeMillis()-pauseAt>=1200){resumed=true;mc.getSingleplayerServer().execute(()->{require(level.getGameTime()<=pausedTick+1,"actual Native pause froze MC world time");pauseChecked=true;});pauseControl("0");}
         var view=WorldMotionWorld.current();ready=view!=null&&view.shapesCurrent()&&view.nativeStatus()!=null&&(view.nativeStatus().capabilities()&1)!=0&&view.nativeStatus().flags()==0&&
@@ -97,7 +111,7 @@ final class NativePistonCheck {
                     if(!candidate.alive()||(!player&&candidate.health()!=60)||candidate.radius()!=35||candidate.velocity().x()!=0||candidate.velocity().y()!=0||candidate.velocity().z()!=0)continue;
                     var proxy=NativeMotionSubjects.find(candidate.key());if(proxy==null)continue;
                     if(lift){target=candidate;start=proxy.position();base=liftPayload.below();direction=Direction.UP;stage=1;deadline=System.currentTimeMillis()+20000;
-                        LoggerFactory.getLogger("sifucraft").info("[native-piston-test] raised player fixture start={} base={} direction=up payload=honey",start,base);return;}
+                        LoggerFactory.getLogger("sifucraft").info("[native-piston-test] raised player fixture start={} base={} direction=up slime={}",start,base,slime);return;}
                     for(var face:new Direction[]{Direction.EAST,Direction.WEST,Direction.SOUTH,Direction.NORTH}){
                         var floor=new BlockPos(proxy.blockPosition().getX(),(int)Math.ceil(proxy.getY()-1e-5),proxy.blockPosition().getZ());
                         var trial=floor.relative(face,-2);var payload=trial.relative(face);var destination=trial.relative(face,2);
@@ -123,8 +137,16 @@ final class NativePistonCheck {
             if(stage==1){var power=direction==Direction.UP?base.west():base.relative(direction,-1);originals.putIfAbsent(power,level.getBlockState(power));level.setBlockAndUpdate(power,Blocks.REDSTONE_BLOCK.defaultBlockState());stage=2;return;}
             if(stage==2){
                 var destination=base.relative(direction,2);
-                if(!level.getBlockState(base).getValue(BlockStateProperties.EXTENDED)||!level.getBlockState(destination).is(lift?Blocks.HONEY_BLOCK:Blocks.STONE)||level.getBlockEntity(destination) instanceof PistonMovingBlockEntity||PistonMachines.stats().pending()!=0)return;
+                if(!level.getBlockState(base).getValue(BlockStateProperties.EXTENDED)||!level.getBlockState(destination).is(lift?(slime?Blocks.SLIME_BLOCK:Blocks.HONEY_BLOCK):Blocks.STONE)||level.getBlockEntity(destination) instanceof PistonMovingBlockEntity||PistonMachines.stats().pending()!=0)return;
                 require(reference!=null,"physical binding produced the independent reference");
+                if(slime){
+                    var physics=dev.sifucraft.combat.FluidMotion.stats();require(physics.failed()==0,"player impulse lease remains valid: "+physics);
+                    if(!nativeApex||reference.getDeltaMovement().y>0)return;
+                    require(Math.abs(nativePeak-reference.peakY)<.03,"player passive apex agrees with the independent zero-input vanilla body: native="+nativePeak+" reference="+reference.peakY);
+                    referencePeak=reference.peakY;
+                    require(physics.acquired()>0&&physics.steps()>0&&PistonMachines.stats().releaseFailed()==0,"real player impulse continued beyond mechanical contact");
+                    end=proxy.position();stage=5;deadline=System.currentTimeMillis()+20000;f8Control("3:mc");return;
+                }
                 require(proxy.position().subtract(start).distanceToSqr(reference.position().subtract(referenceStart))<.0009,"actual Native delta matches ordinary vanilla root body: native="+proxy.position().subtract(start)+" reference="+reference.position().subtract(referenceStart));
                 require(proxy.position().distanceToSqr(start)>.01,"real target moved");
                 var stats=PistonMachines.stats();require(stats.prepared()>=2&&stats.releaseFailed()==0&&(pause?stats.released()>=2:stats.released()==stats.prepared()),"every completed physical half-step restored all three original ticks: "+stats);
@@ -153,8 +175,8 @@ final class NativePistonCheck {
                 if(clear){liftPayload=trial;break;}
             }
             require(liftPayload!=null,"empty elevated player platform and headroom");
-            set(liftPayload.below(),Blocks.PISTON.defaultBlockState().setValue(BlockStateProperties.FACING,Direction.UP));set(liftPayload,Blocks.HONEY_BLOCK.defaultBlockState());
-            setupPosition=Vec3.atBottomCenterOf(liftPayload).add(0,.9375,0);
+            set(liftPayload.below(),Blocks.PISTON.defaultBlockState().setValue(BlockStateProperties.FACING,Direction.UP));set(liftPayload,(slime?Blocks.SLIME_BLOCK:Blocks.HONEY_BLOCK).defaultBlockState());
+            setupPosition=Vec3.atBottomCenterOf(liftPayload).add(0,slime?1:.9375,0);
             backing.teleportTo(level,setupPosition.x,setupPosition.y+.15,setupPosition.z,java.util.Set.of(),backing.getYRot(),backing.getXRot(),true);
             stage=-2;deadline=System.currentTimeMillis()+20000;
             LoggerFactory.getLogger("sifucraft").info("[native-piston-test] ordinary MC setup platform={} standing={} original={}",liftPayload,setupPosition,originalPlayer);return;
@@ -172,18 +194,26 @@ final class NativePistonCheck {
         var frame=playerFrame;if(frame==null)return;
         if(stage==5){
             if(!frame.minecraftOwnsInput()||!mcReady)return;var backing=server.getPlayerList().getPlayers().getFirst();
+            if(slime){var physics=dev.sifucraft.combat.FluidMotion.stats();require(physics.failed()==0,"F8 player physics handoff confirmed: "+physics);if(physics.active()!=0||physics.released()==0)return;}
             backing.teleportTo(level,originalPlayer.x,originalPlayer.y,originalPlayer.z,java.util.Set.of(),backing.getYRot(),backing.getXRot(),true);stage=6;return;
         }
         if(stage==6){if(!frame.minecraftOwnsInput()||nativeFeet(view,frame).distanceToSqr(originalPlayer)>.0009)return;restore(server);stage=7;return;}
-        if(view.shapesCurrent())complete(server);
+        if(stage==7){if(!view.shapesCurrent())return;stage=8;settledAt=0;f8Control("4:native");return;}
+        if(frame.minecraftOwnsInput())return;
+        require(frame.health()==playerHealth,"Native HP unchanged after actual final handback");
+        require(nativeFeet(view,frame).distanceToSqr(originalPlayer)<.0009,"no movement after final native floor restoration");
+        if(settledAt==0)settledAt=System.currentTimeMillis();
+        if(System.currentTimeMillis()-settledAt>=3000)complete(server);
     }
     private void complete(MinecraftServer server)throws java.io.IOException{
         var stats=PistonMachines.stats();restore(server);stage=4;
         var report=new LinkedHashMap<String,Object>();report.put("result","PASS");report.put("target",target.id());report.put("spawn",target.spawn());report.put("start",start.toString());report.put("end",end.toString());
-        report.put("prepared",stats.prepared());report.put("steps",stats.applied());report.put("released",stats.released());report.put("restored_ticks",player?1:7);report.put("post_release_ms",3000);
-        report.put("direction",direction.toString());report.put("payload",lift?"honey":"stone");report.put("native_player_hp",playerHealth);report.put("ordinary_mc_setup_and_return",lift);
+        report.put("prepared",stats.prepared());report.put("steps",stats.applied());report.put("released",stats.released());report.put("restored_ticks",player?1:7);report.put("post_release_ms",slime?0:3000);
+        report.put("direction",direction.toString());report.put("payload",lift?(slime?"slime":"honey"):"stone");report.put("native_player_hp",playerHealth);report.put("ordinary_mc_setup_and_return",lift);
+        if(lift)report.put("final_native_handback_stable_ms",3000);
+        if(slime){report.put("native_peak_y",nativePeak);report.put("reference_peak_y",referencePeak);report.put("fluid_stats",dev.sifucraft.combat.FluidMotion.stats().toString());report.put("handoff_at_apex",true);}
         AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve(player?"p8-native-player-piston.json":"p8-native-piston.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(report,out));
-        LoggerFactory.getLogger("sifucraft").info("[native-piston-test] PASS real actor, vanilla reference, geometry barriers, all required original ticks and 3s no drift; {}",stats);
+        LoggerFactory.getLogger("sifucraft").info("[native-piston-test] PASS real actor, vanilla reference, geometry barriers, required movement handback; slime_apex_handoff={} stats={}",slime,stats);
     }
-    void restore(MinecraftServer ignored){PistonMachines.observePrepared(null);if(pause)pauseControl("0");if(lift)f8Control("0:done");if(reference!=null)reference.discard();reference=null;if(level!=null){for(var pos:originals.keySet())level.removeBlockEntity(pos);for(var e:originals.entrySet())level.setBlock(e.getKey(),e.getValue(),2);}originals.clear();}
+    void restore(MinecraftServer ignored){PistonMachines.observePrepared(null);if(slime)dev.sifucraft.combat.FluidMotion.observe(null);if(pause)pauseControl("0");if(lift&&stage!=6)f8Control("0:done");if(reference!=null)reference.discard();reference=null;if(level!=null){for(var pos:originals.keySet())level.removeBlockEntity(pos);for(var e:originals.entrySet())level.setBlock(e.getKey(),e.getValue(),2);}originals.clear();}
 }

@@ -1,4 +1,5 @@
 #include "combat/base_sync.h"
+#include "combat/pose_fall_origin.h"
 #include <windows.h>
 #include <atomic>
 #include <algorithm>
@@ -19,6 +20,8 @@ namespace bits=gen::bits::UCharacterMovementComponent;
 const combat::motion::Context* g_context=nullptr;
 std::uintptr_t g_base=0;DWORD g_thread=0;bool g_enabled=false,g_failed=false;
 std::atomic<std::uintptr_t> g_pose_owned{0};
+struct PoseOwner {std::uintptr_t actor=0,root=0;ue::ObjectIdentity actor_id,movement_id,root_id;};
+PoseOwner g_pose_owner;
 combat::motion::Scope g_scope;
 struct Seen {ue::ObjectIdentity actor,movement,base;std::uint64_t version=0;};
 std::map<std::uintptr_t,Seen> g_seen;
@@ -41,13 +44,68 @@ bool Schema(std::uintptr_t movement){
     }
     return false;
 }
+void ReturnPlayerFloor(std::uintptr_t movement){
+    if(!g_context||GetCurrentThreadId()!=g_thread||g_pose_owned.load()!=movement)return;
+    const auto owner=g_pose_owner;g_pose_owner={};g_pose_owned.store(0);
+    const auto& c=*g_context;
+    if(!owner.actor||owner.actor!=c.pawn||owner.actor_id!=c.pawn_identity||
+       ue::IdentityOf(owner.actor)!=owner.actor_id||ue::IdentityOf(movement)!=owner.movement_id||ue::IdentityOf(owner.root)!=owner.root_id||
+       mem::ReadPtr(movement+off::UActorComponent::OwnerPrivate)!=owner.actor||
+       mem::ReadPtr(owner.actor+off::ACharacter::CharacterMovement)!=movement||
+       mem::ReadPtr(owner.actor+off::AActor::RootComponent)!=owner.root||
+       mem::ReadPtr(owner.actor+off::ACharacter::CapsuleComponent)!=owner.root||ue::AttachParentOf(owner.root)||
+       mem::ReadPtr(movement+off::UMovementComponent::UpdatedComponent)!=owner.root)return;
+    const auto table=mem::ReadPtr(movement);
+    const auto function=mem::ReadPtr(table+gen::slot::UMovementComponent::OnTeleported);
+    if(table!=g_base+gen::hook::MovementTick.vftable||function!=g_base+gen::fn::MovementOnTeleported)return;
+    ue::FVector before{},after{};probe::HealthSample hp,after_hp;
+    const auto health=mem::ReadPtr(owner.actor+off::AFightingCharacter::m_HealthComponent);
+    if(!ue::ReadWorldLocation(owner.root,&before)||!Finite(before)||!probe::ReadHealthSample(health,&hp)||hp.health<=0||hp.down)return;
+    // K2_SetActorLocationAndRotation does not notify the movement component.
+    // Recompute its floor/base once after MC pose ownership, including disconnect.
+    // Let the original implementation choose the mode; never manufacture a floor
+    // or clear Sifu's fall/damage state by writing private movement fields.
+    reinterpret_cast<void(*)(void*)>(function)(reinterpret_cast<void*>(movement));
+    const bool valid=ue::IdentityOf(owner.actor)==owner.actor_id&&ue::IdentityOf(movement)==owner.movement_id&&ue::IdentityOf(owner.root)==owner.root_id&&
+        ue::ReadWorldLocation(owner.root,&after)&&Finite(after)&&Distance(before,after)<.1f&&
+        probe::ReadHealthSample(health,&after_hp)&&after_hp.health==hp.health;
+    SC_LOG("[world-base] player pose handback floor=%s actor=%d/%d movement=%d/%d HP=%.3f mode=%u",valid?"PASS":"FAIL",owner.actor_id.index,owner.actor_id.serial,
+        owner.movement_id.index,owner.movement_id.serial,hp.health,mem::ReadOr<std::uint8_t>(movement+off::UCharacterMovementComponent::MovementMode,255));
+}
 }
 void Context(std::uintptr_t base,const combat::motion::Context* context,bool enabled){
     g_base=base;g_context=context;g_thread=GetCurrentThreadId();g_enabled=enabled;
     if(context&&g_scope!=context->scope){g_seen.clear();g_scope=context->scope;}
 }
-void PoseOwned(std::uintptr_t movement){g_pose_owned.store(movement);}
+void PoseOwned(std::uintptr_t movement){
+    if(!g_context||GetCurrentThreadId()!=g_thread)return;
+    const auto& c=*g_context;const auto actor=mem::ReadPtr(movement+off::UActorComponent::OwnerPrivate);
+    if(actor!=c.pawn||ue::IdentityOf(actor)!=c.pawn_identity)return;
+    const auto root=mem::ReadPtr(actor+off::AActor::RootComponent);
+    const auto movement_id=ue::IdentityOf(movement),root_id=ue::IdentityOf(root);
+    if(!movement_id.valid()||!root_id.valid())return;
+    g_pose_owner={actor,root,c.pawn_identity,movement_id,root_id};g_pose_owned.store(movement);
+}
+void TranslatePlayerPose(std::uintptr_t actor,float before_z,float after_z){
+    if(!g_context||GetCurrentThreadId()!=g_thread||before_z==after_z)return;
+    const auto& c=*g_context;
+    if(actor!=c.pawn||ue::IdentityOf(actor)!=c.pawn_identity)return;
+    const auto movement=mem::ReadPtr(actor+off::ACharacter::CharacterMovement);
+    const auto root=mem::ReadPtr(actor+off::AActor::RootComponent);
+    if(!ue::IsLive(movement)||!ue::IsLive(root)||ue::AttachParentOf(root)||
+       mem::ReadPtr(actor+off::ACharacter::CapsuleComponent)!=root||
+       mem::ReadPtr(movement+off::UActorComponent::OwnerPrivate)!=actor||
+       mem::ReadPtr(movement+off::UMovementComponent::UpdatedComponent)!=root||
+       mem::ReadPtr(movement)!=g_base+gen::hook::MovementTick.vftable)return;
+    const auto at=movement+off::UFightingMovementComponent::m_fInitialHeight;
+    float initial=0,translated=0;
+    if(!mem::Read(at,&initial)||!TranslateFallOrigin(initial,before_z,after_z,&translated))return;
+    *reinterpret_cast<volatile float*>(at)=translated;
+    static unsigned logged=0;
+    if(std::fabs(after_z-before_z)>100&&logged++<12)SC_LOG("[world-base] player pose fall-origin translation dz=%.3f origin=%.3f->%.3f native_fall_cm=%.3f",after_z-before_z,initial,translated,initial-before_z);
+}
 void BeforeOriginal(std::uintptr_t movement){
+    ReturnPlayerFloor(movement);
     if(!g_enabled||g_failed||!g_context||GetCurrentThreadId()!=g_thread||!hooks::MovementHookOwns(movement))return;
     const auto& c=*g_context;
     const auto actor=mem::ReadPtr(movement+off::UActorComponent::OwnerPrivate);

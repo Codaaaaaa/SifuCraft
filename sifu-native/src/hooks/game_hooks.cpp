@@ -8,6 +8,7 @@
 
 #include "blocks/block_mirror.h"
 #include "combat/damage.h"
+#include "combat/base_sync.h"
 #include "combat/motion_probe.h"
 #include "combat/world_motion_service.h"
 #include "combat/shield_timing.h"
@@ -104,6 +105,10 @@ void CallSetHidden(std::uintptr_t pawn, bool hidden) {
 }
 
 void CallSetTransform(std::uintptr_t pawn, const ue::FVector& location, float yaw) {
+    const auto root=mem::ReadPtr(pawn+gen::off::AActor::RootComponent);
+    const auto root_id=ue::IdentityOf(root),pawn_id=ue::IdentityOf(pawn);
+    ue::FVector before{},after{};
+    const bool translate=root_id.valid()&&pawn_id.valid()&&ue::ReadWorldLocation(root,&before);
     const PoseCalls& c = g_pose_calls;
     g_params.assign(static_cast<std::size_t>(c.set_transform.params_size()), 0);
     std::memcpy(&g_params[c.new_location], &location, sizeof(location));
@@ -112,6 +117,8 @@ void CallSetTransform(std::uintptr_t pawn, const ue::FVector& location, float ya
     g_params[c.sweep] = 0;
     g_params[c.teleport] = 1;
     c.set_transform.Invoke(pawn, g_params.data());
+    if(translate&&ue::IdentityOf(root)==root_id&&ue::IdentityOf(pawn)==pawn_id&&ue::ReadWorldLocation(root,&after))
+        world_motion::base_sync::TranslatePlayerPose(pawn,before.z,after.z);
 }
 
 // The local pawn resolved on the game thread itself: garbage collection runs on this thread too,

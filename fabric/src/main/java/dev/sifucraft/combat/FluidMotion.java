@@ -8,6 +8,9 @@ import dev.sifucraft.blocks.PistonMachines;
 import dev.sifucraft.blocks.SceneFluidGeometry;
 import dev.sifucraft.blocks.WorldBlocks;
 import dev.sifucraft.blocks.WorldMotionWorld;
+import dev.sifucraft.blocks.NativeMotionSubjects;
+import dev.sifucraft.blocks.PlayerSignalBody;
+import dev.sifucraft.blocks.PlayerSignalContacts;
 import dev.sifucraft.bridge.EnemyFrame;
 import dev.sifucraft.bridge.ShapeProtocol;
 import dev.sifucraft.bridge.SifuFrame;
@@ -26,6 +29,8 @@ import net.minecraft.core.SectionPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.FluidTags;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.LoggerFactory;
@@ -35,25 +40,27 @@ public final class FluidMotion {
     private FluidMotion(){}
     private static final long ACTION=ShapeProtocol.mapHash("sifucraft:fluid");
     private enum Phase { ACQUIRE,IDLE,MOVE,RENEW,RELEASE,CANCEL }
-    private record Handoff(WorldMotionRequests.Scope scope,Reply binding,Reply release,Vec3 velocity,PistonContacts.Source source,boolean supported,boolean settling,long at){}
+    private record Handoff(WorldMotionRequests.Scope scope,Reply binding,Reply release,Vec3 velocity,PistonContacts.Source source,boolean supported,boolean settling,long at,long playerStamp){}
     private static final class Flight {
         final EnemyFrame.Key key;final EnemyFrame.Entry initial;final WorldMotionRequests.Scope scope;final ServerLevel level;final UUID source;
         final AtomicBoolean queued=new AtomicBoolean();
         final BlockPos sourcePos;final long stateHash,sectionRevision;
         final long action;final Vec3 initialVelocity;
-        final boolean machine;
+        final boolean machine;final long playerStamp;
         final PistonContacts.Source machineSource;
         Phase phase=Phase.ACQUIRE;CompletableFuture<Reply> pending;Reply binding,last;
         List<CompletableFuture<Reply>> burst=List.of();
-        VanillaFluidBody body;long lease,deadline,renewAt,lastTick=Long.MIN_VALUE;Vec3 requested,actualStart,nextVelocity;int parts,part;
+        LivingEntity body;MotionPrediction prediction;long lease,deadline,renewAt,lastTick=Long.MIN_VALUE;Vec3 requested,actualStart,nextVelocity;int parts,part;
         int pendingOp,retryOp;SifuFrame.Vec3 pendingDelta=SifuFrame.Vec3.ZERO;
         boolean resumeMove;
         boolean damageYield;
+        boolean playerYield;
         boolean machinePending,machineYield;long yieldUntilTick=Long.MIN_VALUE;
         boolean partial,nativeGround;Vec3 contactNormal=Vec3.ZERO;SifuCollision.Active groundScene;long groundRevision;
-        Flight(WorldMotionWorld.View view,ServerLevel level,EnemyFrame.Entry e,EnemyProxy proxy,BlockPos at,Handoff handoff){
+        Flight(WorldMotionWorld.View view,ServerLevel level,EnemyFrame.Entry e,Entity proxy,BlockPos at,Handoff handoff){
             key=e.key();initial=e;scope=view.scope();this.level=level;source=handoff==null?proxy.getUUID():handoff.source.capture();sourcePos=handoff==null?at:handoff.source.pos();action=handoff==null?ACTION:handoff.source.action();
             machine=handoff!=null;
+            playerStamp=NativeMotionSubjects.player(key)?view.nativeStatus().playerStamp():0;
             machineSource=handoff==null?null:handoff.source;
             initialVelocity=handoff==null?new Vec3(e.velocity().x()/2000.0,e.velocity().z()/2000.0,e.velocity().y()/2000.0):handoff.velocity;
             long hash=ShapeProtocol.mapHash(handoff==null?BlockStateKey.encode(level.getBlockState(at)):handoff.source.movedState());stateHash=hash==0?1:hash;
@@ -95,7 +102,7 @@ public final class FluidMotion {
     public record Sample(EnemyFrame.Key key,Vec3 position,Vec3 velocity,float width,float height,long seed,int entityId,long tick,boolean grounded,int entityTick){}
     public interface Observer {void prepared(Sample initial);default void beforeSimulation(Sample initial,VanillaFluidBody body){}void simulated(Sample planned);void completed(Sample actual);}
     private static volatile Observer observer;
-    public static void observe(Observer value){if(value!=null&&!Boolean.getBoolean("sifucraft.fluidMotionSelfTest")&&!Boolean.getBoolean("sifucraft.bubbleMatrixSelfTest")&&!Boolean.getBoolean("sifucraft.nativeLiftSelfTest")&&!Boolean.getBoolean("sifucraft.pistonAftermathSelfTest")&&!Boolean.getBoolean("sifucraft.fluidPartialSelfTest"))throw new IllegalStateException("isolated fixture only");observer=value;}
+    public static void observe(Observer value){if(value!=null&&!Boolean.getBoolean("sifucraft.fluidMotionSelfTest")&&!Boolean.getBoolean("sifucraft.bubbleMatrixSelfTest")&&!Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest")&&!Boolean.getBoolean("sifucraft.nativeLiftSelfTest")&&!Boolean.getBoolean("sifucraft.pistonAftermathSelfTest")&&!Boolean.getBoolean("sifucraft.fluidPartialSelfTest"))throw new IllegalStateException("isolated fixture only");observer=value;}
     private static Sample sample(Flight f){return new Sample(f.key,f.body.position(),f.body.getDeltaMovement(),f.body.getBbWidth(),f.body.getBbHeight(),((long)f.key.id()<<32)^f.key.spawn(),f.body.getId(),f.lastTick,f.body.onGround(),f.body.tickCount);}
     private static boolean sameWorld(WorldMotionWorld.View v,ServerLevel level){
         if(v==null||!WorldBlocks.ENABLED||!v.scope().equals(v.requests().scope())||v.scope().save()!=PistonMovePlans.saveKey(level)||v.scene()==null||
@@ -149,20 +156,27 @@ public final class FluidMotion {
     private static Vec3 normal(Reply reply){int bits=reply.flags();var n=new Vec3((byte)(bits>>>8)/127.0,(byte)(bits>>>24)/127.0,(byte)(bits>>>16)/127.0);return n.lengthSqr()>.8?n.normalize():Vec3.ZERO;}
     private static void landing(WorldMotionWorld.View v,Flight f,double dy,boolean reconcile){
         boolean grounded=support(v,f)||f.nativeGround&&f.groundScene==v.scene()&&f.groundRevision==v.nativeStatus().shapeRevision();
-        if(reconcile||f.body.onGround()&&!grounded||!f.body.onGround()&&grounded&&dy<0)f.body.reconcileFall(dy,grounded);
-        f.body.setOnGround(grounded);var contact=f.body.consumeLanding();
+        if(reconcile||f.body.onGround()&&!grounded||!f.body.onGround()&&grounded&&dy<0)f.prediction.reconcileFall(dy,grounded);
+        f.body.setOnGround(grounded);var contact=f.prediction.consumeLanding();
         var proxy=EnemyMirrors.hitAttacker(f.key.id(),f.key.spawn());if(grounded&&proxy!=null){
             WorldEffects.landed(proxy,f.scope,contact,f.source);
             WorldEffects.stood(proxy,f.scope,rootFeet(v,f,f.last),f.last.atMs(),f.source);
         }
     }
     public static void machineReleased(ServerLevel level,WorldMotionRequests.Scope scope,EnemyFrame.Key key,Reply binding,Reply release,Vec3 velocity,PistonContacts.Source source){
-        var v=WorldMotionWorld.current();if(v==null||!scope.equals(v.scope())||release.status()!=3||release.restored()!=7)return;
+        machineReleased(level,scope,key,binding,release,velocity,source,0);
+    }
+    public static void machineReleased(ServerLevel level,WorldMotionRequests.Scope scope,EnemyFrame.Key key,Reply binding,Reply release,Vec3 velocity,PistonContacts.Source source,long playerStamp){
+        var v=WorldMotionWorld.current();if(v==null||!scope.equals(v.scope())||release.status()!=3||release.restored()!=(NativeMotionSubjects.player(key)?1:7))return;
+        if(NativeMotionSubjects.player(key)&&(v.nativeStatus()==null||(v.nativeStatus().capabilities()&PLAYER_FLUID_CAPABILITY)==0||playerStamp==0||playerStamp!=v.nativeStatus().playerStamp()))return;
+        // UE Walking deliberately keeps its own small floor gap. Do not feed
+        // that static player separation back into an endless MC settling lease.
+        if(NativeMotionSubjects.player(key)&&velocity.lengthSqr()<1e-10)return;
         var box=physicalBox(v,binding,release.position());var support=mcSupport(level,box);
         // Vanilla's upward piston separation leaves a small air gap. Let its
         // original gravity settle that gap after the WHOLE action finishes.
         boolean settling=source.nextProgress()>=1&&support&&!mcSupport(level,box,.002);
-        if(support||velocity.lengthSqr()>1e-10)handoffs.put(key,new Handoff(scope,binding,release,velocity,source,support,settling,WorldWriter.clockMillis()));
+        if(support||velocity.lengthSqr()>1e-10)handoffs.put(key,new Handoff(scope,binding,release,velocity,source,support,settling,WorldWriter.clockMillis(),playerStamp));
     }
     public static void tick(MinecraftServer server){
         var level=server.overworld();var view=WorldMotionWorld.current();
@@ -171,29 +185,37 @@ public final class FluidMotion {
         for(var f:new ArrayList<>(flights.values()))advance(f);
         if(!valid(view,level)||!currentGeometry(view))return;
         long now=WorldWriter.clockMillis();
-        for(var incoming:view.enemies().entries()){
-            var e=PistonMachines.pose(view.enemies(),incoming);
+        var candidates=new ArrayList<>(view.enemies().entries());
+        // Player acquisition currently requires a real mechanical handoff.
+        // Water alone never acquires it or reinterprets Native movement input.
+        if((view.nativeStatus().capabilities()&PLAYER_FLUID_CAPABILITY)!=0&&handoffs.containsKey(NativeMotionSubjects.PLAYER)){
+            var player=NativeMotionSubjects.entry(view,NativeMotionSubjects.PLAYER);if(player!=null)candidates.add(player);
+        }
+        for(var incoming:candidates){
+            var e=NativeMotionSubjects.player(incoming.key())?incoming:PistonMachines.pose(view.enemies(),incoming);
             if(flights.size()>=16||view.requests().pending()>=24)break;
             if(!e.alive()||flights.containsKey(e.key())||now<retry.getOrDefault(e.key(),0L)||e.radius()<10||e.radius()>100||e.halfHeight()>200)continue;
-            var proxy=EnemyMirrors.hitAttacker(e.id(),e.spawn());if(proxy==null||proxy.isRemoved())continue;
+            var proxy=NativeMotionSubjects.find(e.key());if(proxy==null||proxy.isRemoved())continue;
             var at=medium(level,proxy.getBoundingBox());var h=handoffs.get(e.key());
             if(h!=null){
                 var p=e.location();var original=h.release.position();double distance=Math.sqrt(Math.pow(p.x()-original.x(),2)+Math.pow(p.y()-original.y(),2)+Math.pow(p.z()-original.z(),2));
-                if(!h.scope.equals(view.scope())||h.release.health()!=e.health()||distance>1||(h.settling||h.velocity.lengthSqr()>1e-10)&&now-h.at>500){handoffs.remove(e.key());h=null;}
+                if(!h.scope.equals(view.scope())||h.release.health()!=e.health()||distance>1||NativeMotionSubjects.player(e.key())&&h.playerStamp!=view.nativeStatus().playerStamp()||(h.settling||h.velocity.lengthSqr()>1e-10)&&now-h.at>500){handoffs.remove(e.key());h=null;}
                 else if(!h.settling&&h.velocity.lengthSqr()<1e-10&&(!h.supported||mcSupport(level,physicalBox(view,h.binding,p))))h=null;
             }
+            if(NativeMotionSubjects.player(e.key())&&h==null)continue;
             if(at==null&&h==null)continue;if(at==null)at=BlockPos.containing(proxy.position());
             var f=new Flight(view,level,e,proxy,at,h);handoffs.remove(e.key());flights.put(f.key,f);f.deadline=now+500;f.renewAt=now+200;
             send(view,f,RESERVE,e.location(),SifuFrame.Vec3.ZERO,now);
         }
-        retry.keySet().removeIf(k->view.enemies().entries().stream().noneMatch(e->e.key().equals(k)));
-        handoffs.keySet().removeIf(k->view.enemies().entries().stream().noneMatch(e->e.key().equals(k)&&e.alive()));
-        momentum.entrySet().removeIf(e->now>=e.getValue().until||view.enemies().entries().stream().noneMatch(x->x.key().equals(e.getKey())&&x.alive()));
+        retry.keySet().removeIf(k->NativeMotionSubjects.player(k)?PlayerSignalContacts.nativeBody()==null:view.enemies().entries().stream().noneMatch(e->e.key().equals(k)));
+        handoffs.keySet().removeIf(k->NativeMotionSubjects.player(k)?PlayerSignalContacts.nativeBody()==null:view.enemies().entries().stream().noneMatch(e->e.key().equals(k)&&e.alive()));
+        momentum.entrySet().removeIf(e->now>=e.getValue().until||(NativeMotionSubjects.player(e.getKey())?PlayerSignalContacts.nativeBody()==null:view.enemies().entries().stream().noneMatch(x->x.key().equals(e.getKey())&&x.alive())));
     }
     private static Reply result(CompletableFuture<Reply> f){return f==null||!f.isDone()||f.isCompletedExceptionally()||f.isCancelled()?null:f.getNow(null);}
     private static void wake(Flight f){if(!f.queued.compareAndSet(false,true))return;f.level.getServer().execute(()->{f.queued.set(false);if(flights.get(f.key)==f)advance(f);});}
     private static void send(WorldMotionWorld.View v,Flight f,int op,SifuFrame.Vec3 pos,SifuFrame.Vec3 delta,long now){
         if(op!=STEP)f.burst=List.of();
+        if(op==RELEASE||op==CANCEL){f.retryOp=0;f.resumeMove=false;}
         f.pendingOp=op;f.pendingDelta=delta;
         if(op==RENEW){f.deadline=now+500;f.renewAt=now+200;}
         f.pending=request(v,f,op,pos,delta,now);
@@ -203,8 +225,8 @@ public final class FluidMotion {
         return v.requests().request(f.scope,id->{if(op==RESERVE)f.lease=id;
             return new Command(op,FLUID,id,op==RESERVE?0:f.lease,now,f.source.getMostSignificantBits(),f.source.getLeastSignificantBits(),f.action,f.level.getGameTime(),
                 f.scope.save(),f.scope.map(),v.nativeStatus().shapeRevision(),f.scope.world(),f.key.id(),f.key.spawn(),op==RESERVE||op==RENEW?500:0,pos,delta,
-                f.initial.health(),f.initial.radius(),f.initial.halfHeight(),0,f.sourcePos.getX(),f.sourcePos.getY(),f.sourcePos.getZ(),0,0,0,f.stateHash,f.sectionRevision,
-                f.binding==null?0:f.binding.actorSerial(),f.binding==null?0:f.binding.componentToken());});
+                f.initial.health(),f.initial.radius(),f.initial.halfHeight(),NativeMotionSubjects.player(f.key)?PLAYER:0,f.sourcePos.getX(),f.sourcePos.getY(),f.sourcePos.getZ(),0,0,0,f.stateHash,f.sectionRevision,
+                f.binding==null?f.playerStamp:f.binding.actorSerial(),f.binding==null?0:f.binding.componentToken());});
     }
     private static Vec3 rootFeet(WorldMotionWorld.View v,Flight f,Reply reply){
         var p=reply.position();var offset=f.binding.rootOffset();
@@ -212,9 +234,9 @@ public final class FluidMotion {
     }
     private static void applied(WorldMotionWorld.View v,Flight f,Reply reply){
         poses.put(f.key,new Pose(f.scope,reply,WorldWriter.clockMillis()+600));
-        var proxy=EnemyMirrors.hitAttacker(f.key.id(),f.key.spawn());if(proxy==null)return;var p=reply.position();
+        var proxy=NativeMotionSubjects.find(f.key);if(proxy==null)return;var p=reply.position();
         proxy.setPos(v.placement().mcX(p.x()),v.placement().mcY(p.z()-f.initial.halfHeight()),v.placement().mcZ(p.y()));
-        proxy.updateSignals();
+        if(proxy instanceof EnemyProxy enemy)enemy.updateSignals();else if(proxy instanceof PlayerSignalBody player)player.updateSignals();
     }
     private static boolean binding(Flight f,Reply r){return r!=null&&r.actorSerial()==f.binding.actorSerial()&&r.componentToken()==f.binding.componentToken()&&r.health()==f.initial.health();}
     /** Queue handback BEFORE the world damage command. Its H7 reaction then
@@ -241,11 +263,18 @@ public final class FluidMotion {
         var v=WorldMotionWorld.current();long now=WorldWriter.clockMillis();
         if(f.phase==Phase.CANCEL){if(f.pending==null||f.pending.isDone()||now>f.deadline+1000)retire(f,false);return;}
         if(!sameWorld(v,f.level)||!f.scope.equals(v.scope())||now>=f.deadline+(f.phase==Phase.RELEASE?1000:0)){cancel(v,f,now);return;}
-        var proxy=EnemyMirrors.hitAttacker(f.key.id(),f.key.spawn());if(proxy==null||proxy.isRemoved()||!proxy.isAlive()){cancel(v,f,now);return;}
+        var proxy=NativeMotionSubjects.find(f.key);
+        boolean yieldingPlayer=NativeMotionSubjects.player(f.key)&&proxy==null&&v.nativeStatus()!=null&&v.nativeStatus().playerStamp()==f.playerStamp;
+        if(yieldingPlayer&&f.binding!=null&&f.phase!=Phase.CANCEL){
+            f.playerYield=true;
+            if(f.phase!=Phase.RELEASE){f.phase=Phase.RELEASE;send(v,f,RELEASE,f.last.position(),SifuFrame.Vec3.ZERO,now);return;}
+        }
+        if((proxy==null||proxy.isRemoved()||!proxy.isAlive())&&!(yieldingPlayer&&f.playerYield&&f.phase==Phase.RELEASE)){cancel(v,f,now);return;}
         // A delayed render snapshot is not a new world or a new actor. Issue no
         // commands until fresh, while retaining only the existing hard lease.
         // A seqlock writer can also make a single status read unavailable.
         if(v.nativeStatus()==null)return;
+        if(NativeMotionSubjects.player(f.key)&&v.nativeStatus().playerStamp()!=f.playerStamp){cancel(v,f,now);return;}
         if(v.nativeStatus().flags()!=0){cancel(v,f,now);return;}
         if(!fresh(v))return;
         if(f.pending!=null&&!f.pending.isDone())return;
@@ -268,7 +297,9 @@ public final class FluidMotion {
         if(f.phase==Phase.ACQUIRE){
             var r=result(f.pending);if(r==null||r.status()!=1||r.actorSerial()<=0||r.rootRadius()<10||r.rootHalfHeight()<r.rootRadius()){retire(f,false);return;}
             f.binding=f.last=r;f.pending=null;
-            f.body=new VanillaFluidBody(f.level,r.rootRadius(),r.rootHalfHeight(),((long)f.key.id()<<32)^f.key.spawn(),true);
+            long seed=((long)f.key.id()<<32)^f.key.spawn();
+            f.body=NativeMotionSubjects.player(f.key)?new VanillaPlayerBody(f.level,r.rootRadius(),r.rootHalfHeight(),seed):new VanillaFluidBody(f.level,r.rootRadius(),r.rootHalfHeight(),seed,true);
+            f.prediction=(MotionPrediction)f.body;if(NativeMotionSubjects.player(f.key)){f.body.setYRot(f.initial.yaw()-90);f.body.setXRot(0);}
             f.body.setPos(rootFeet(v,f,r));f.body.setDeltaMovement(f.initialVelocity);
             if(f.machine)f.body.setOnGround(support(v,f));
             f.phase=Phase.IDLE;acquired++;
@@ -282,8 +313,8 @@ public final class FluidMotion {
         }
         if(f.phase==Phase.RELEASE){
             var r=result(f.pending);boolean identity=r!=null&&r.actorSerial()==f.binding.actorSerial()&&r.componentToken()==f.binding.componentToken();
-            boolean ok=identity&&r.restored()==7&&(r.status()==3||f.damageYield&&(r.status()==12||r.status()==6));
-            if(ok){if(r.status()==3){applied(v,f,r);if(f.machine&&!f.damageYield&&!f.machineYield)machineReleased(f.level,f.scope,f.key,f.binding,r,Vec3.ZERO,f.machineSource);}released++;}retire(f,ok);return;
+            boolean ok=identity&&r.restored()==(NativeMotionSubjects.player(f.key)?1:7)&&(r.status()==3||f.damageYield&&(r.status()==12||r.status()==6));
+            if(ok){if(r.status()==3){if(!f.playerYield)applied(v,f,r);if(f.machine&&!f.damageYield&&!f.machineYield&&!f.playerYield)machineReleased(f.level,f.scope,f.key,f.binding,r,Vec3.ZERO,f.machineSource,f.playerStamp);}released++;}retire(f,ok);return;
         }
         if(f.phase==Phase.MOVE){
             if(f.burst.isEmpty()){
@@ -294,7 +325,7 @@ public final class FluidMotion {
                 var r=result(future);if(!binding(f,r)||(r.status()!=2&&r.status()!=4&&r.status()!=5&&r.status()!=8&&r.status()!=9)){cancel(v,f,now);return;}
                 f.last=r;applied(v,f,r);
                 if(r.status()==8||r.status()==9){rejected=true;continue;}
-                WorldEffects.moved(proxy,f.scope,v.placement(),f.initial.halfHeight(),r);
+                if(proxy instanceof EnemyProxy enemy)WorldEffects.moved(enemy,f.scope,v.placement(),f.initial.halfHeight(),r);
                 steps++;completed++;
                 if(r.status()!=2){blocked++;f.partial=true;f.nativeGround=(r.flags()&4)!=0;f.contactNormal=normal(r);}
             }
@@ -309,13 +340,13 @@ public final class FluidMotion {
                 // Entity.move already clipped known MC contacts; subsequent
                 // bubble/fluid forces belong to the NEXT tick. Only reconcile
                 // axes whose blocker was absent from the original prediction.
-                var n=new Vec3(f.body.clipped(1)?0:f.contactNormal.x,f.body.clipped(2)?0:f.contactNormal.y,f.body.clipped(4)?0:f.contactNormal.z);
+                var n=new Vec3(f.prediction.clipped(1)?0:f.contactNormal.x,f.prediction.clipped(2)?0:f.contactNormal.y,f.prediction.clipped(4)?0:f.contactNormal.z);
                 double length=n.lengthSqr(),into=velocity.dot(n);if(length>1e-10&&into<0)velocity=velocity.subtract(n.scale(into/length));
             }
             else{
-                if(Math.abs(moved.x-f.requested.x)>1e-4&&!f.body.clipped(1))velocity=new Vec3(0,velocity.y,velocity.z);
-                if(Math.abs(moved.y-f.requested.y)>1e-4&&!f.body.clipped(2))velocity=new Vec3(velocity.x,0,velocity.z);
-                if(Math.abs(moved.z-f.requested.z)>1e-4&&!f.body.clipped(4))velocity=new Vec3(velocity.x,velocity.y,0);
+                if(Math.abs(moved.x-f.requested.x)>1e-4&&!f.prediction.clipped(1))velocity=new Vec3(0,velocity.y,velocity.z);
+                if(Math.abs(moved.y-f.requested.y)>1e-4&&!f.prediction.clipped(2))velocity=new Vec3(velocity.x,0,velocity.z);
+                if(Math.abs(moved.z-f.requested.z)>1e-4&&!f.prediction.clipped(4))velocity=new Vec3(velocity.x,velocity.y,0);
             }
             f.body.setPos(actual);f.body.setDeltaMovement(velocity);f.phase=Phase.IDLE;landing(v,f,moved.y,f.partial);
             var listener=observer;if(listener!=null)listener.completed(sample(f));
@@ -332,8 +363,8 @@ public final class FluidMotion {
             f.phase=Phase.RELEASE;send(v,f,RELEASE,f.last.position(),SifuFrame.Vec3.ZERO,now);return;
         }
         f.actualStart=rootFeet(v,f,f.last);f.body.setPos(f.actualStart);
-        f.partial=f.nativeGround=false;f.contactNormal=Vec3.ZERO;f.groundScene=v.scene();f.groundRevision=v.nativeStatus().shapeRevision();f.body.beginPrediction();
-        var listener=observer;if(listener!=null)listener.beforeSimulation(sample(f),f.body);
+        f.partial=f.nativeGround=false;f.contactNormal=Vec3.ZERO;f.groundScene=v.scene();f.groundRevision=v.nativeStatus().shapeRevision();f.prediction.beginPrediction();
+        var listener=observer;if(listener!=null){if(f.body instanceof VanillaFluidBody mob)listener.beforeSimulation(sample(f),mob);}
         // This body is unregistered, so the world does not call commonTick for it.
         // Use the installed server entry to retain counters/old pose/AI cadence.
         SifuCollision.withQueryView(v.scene(),()->{f.level.tickNonPassenger(f.body);return null;});
@@ -365,5 +396,13 @@ public final class FluidMotion {
         if(p.scope.nativeSession()!=frame.session()||p.scope.world()!=frame.worldGeneration()||WorldWriter.clockMillis()>p.until||frame.frame()>p.reply.nativeFrame()){poses.remove(e.key());return e;}
         return new EnemyFrame.Entry(e.id(),e.spawn(),p.reply.position(),e.yaw(),e.radius(),e.halfHeight(),e.health(),e.maxHealth(),e.flags(),e.faction(),e.velocity());
     }
+    public static SifuFrame.Vec3 playerPose(WorldMotionWorld.View view,SifuFrame frame,SifuFrame.Vec3 position){
+        var p=poses.get(NativeMotionSubjects.PLAYER);if(p==null)return position;
+        if(view==null||!p.scope.equals(view.scope())||frame.worldGeneration()!=p.scope.world()||WorldWriter.clockMillis()>p.until||frame.frame()>p.reply.nativeFrame()){
+            poses.remove(NativeMotionSubjects.PLAYER);return position;
+        }
+        return p.reply.position();
+    }
+    public static void playerGone(){poses.remove(NativeMotionSubjects.PLAYER);handoffs.remove(NativeMotionSubjects.PLAYER);momentum.remove(NativeMotionSubjects.PLAYER);retry.remove(NativeMotionSubjects.PLAYER);}
     public static void stop(){for(var f:flights.values())if(f.body!=null)f.body.discard();flights.clear();retry.clear();poses.clear();handoffs.clear();momentum.clear();scope=null;}
 }
