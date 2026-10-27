@@ -66,6 +66,7 @@ loom {
 			property "sifucraft.fluidReconnectSelfTest", providers.gradleProperty("sifucraft.fluidReconnectSelfTest").getOrElse("false")
 			property "sifucraft.fluidPersistenceSelfTest", providers.gradleProperty("sifucraft.fluidPersistenceSelfTest").getOrElse("false")
 			property "sifucraft.circuitScaleSelfTest", providers.gradleProperty("sifucraft.circuitScaleSelfTest").getOrElse("false")
+			property "sifucraft.isolatedSystemsSelfTest", providers.gradleProperty("sifucraft.isolatedSystemsSelfTest").getOrElse("false")
 			property "sifucraft.circuitScaleLive", providers.gradleProperty("sifucraft.circuitScaleLive").getOrElse("false")
 			property "sifucraft.catalogContainerSelfTest", providers.gradleProperty("sifucraft.catalogContainerSelfTest").getOrElse("false")
 			property "sifucraft.catalogLogicSelfTest", providers.gradleProperty("sifucraft.catalogLogicSelfTest").getOrElse("false")
@@ -221,6 +222,14 @@ tasks.register('p9GeometryTest', JavaExec) {
 	jvmArgs nativeAccess
 }
 tasks.named('check') { dependsOn tasks.named('p9GeometryTest') }
+
+tasks.register('p10GeometryTest', JavaExec) {
+	group = 'verification'
+	classpath = sourceSets.offlineTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.combat.P10GeometryTest'
+	jvmArgs nativeAccess
+}
+tasks.named('check') { dependsOn tasks.named('p10GeometryTest') }
 tasks.register('shapeProtocolTest', JavaExec) {
 	group = 'verification'
 	classpath = sourceSets.protocolTest.runtimeClasspath

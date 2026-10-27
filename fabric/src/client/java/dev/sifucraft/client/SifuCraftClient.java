@@ -163,6 +163,10 @@ public final class SifuCraftClient implements ClientModInitializer {
         EntityRenderers.register(EnemyEntities.ENEMY_PROXY, NoopRenderer::new);
         EntityRenderers.register(dev.sifucraft.blocks.SignalEntities.PLAYER_BODY, NoopRenderer::new);
         minecraft = Minecraft.getInstance();
+        if (Boolean.getBoolean("sifucraft.isolatedSystemsSelfTest")) {
+            IsolatedSystemsCheck.install();
+            return;
+        }
         input = new InputInjector(minecraft);
         bridge = new McBridge(new McBridge.Listener() {
             @Override public void onNativeInteraction(dev.sifucraft.bridge.NativeInteraction.Result result) {

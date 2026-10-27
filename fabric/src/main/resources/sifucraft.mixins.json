@@ -11,6 +11,7 @@
 		"DispenserSourceMixin",
 		"EmptyBucketDispenserMixin",
 		"EntityMixin",
+		"ExplosionSceneMixin",
 		"EnvironmentPathMixin",
 		"FlowingFluidMixin",
 		"FilledBucketDispenserMixin",
@@ -28,6 +29,7 @@
 		"PistonStructureMixin",
 		"ProjectileSourceMixin",
 		"ShieldBlockingMixin",
+		"TntSceneMixin",
 		"WindChargeCollisionMixin",
 		"WindChargeSceneHitMixin"
 	],
