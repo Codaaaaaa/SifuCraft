@@ -36,10 +36,10 @@ public final class PistonMachines {
     private enum Phase { PREPARE,MOVE,COMMIT,SHAPES,RELEASE,CANCEL }
     private static final class SourceToken {final UUID id;final Map<EnemyFrame.Key,Double> spent=new HashMap<>();long retryAt,lastCommitTick=Long.MIN_VALUE;SourceToken(){this(UUID.randomUUID());}SourceToken(UUID id){this.id=id;}}
     private static final class Target {
-        final EnemyFrame.Key key;final EnemyFrame.Entry entry;final PistonContacts.Source source;
+        final EnemyFrame.Key key;final EnemyFrame.Entry entry;final PistonContacts.Source source;final long playerStamp;
         CompletableFuture<Reply> reserve,cancel,release;Reply binding,last;long lease;
         Vec3 velocity=Vec3.ZERO;
-        Target(EnemyFrame.Entry entry,PistonContacts.Source source){key=entry.key();this.entry=entry;this.source=source;}
+        Target(EnemyFrame.Entry entry,PistonContacts.Source source,long playerStamp){key=entry.key();this.entry=entry;this.source=source;this.playerStamp=playerStamp;}
     }
     private record Work(Target target,PistonContacts.Source source,SifuFrame.Vec3 position,SifuFrame.Vec3 delta,long revision){}
     private static final class Flight {
@@ -65,13 +65,14 @@ public final class PistonMachines {
     private static final ThreadLocal<Set<EnemyFrame.Key>> committing=new ThreadLocal<>();
     private static final ThreadLocal<Boolean> groupCommit=ThreadLocal.withInitial(()->false);
     private static WorldMotionRequests.Scope scope;
+    private static long playerStamp;
     private static volatile MinecraftServer activeServer;
     private static final AtomicBoolean geometryWake=new AtomicBoolean();
     private static volatile long offeredRevision;
     private static volatile java.util.function.BiConsumer<EnemyFrame.Key,Reply> preparedObserver;
     /** Isolated real-game test observes the physical binding before creating its independent reference. */
     public static void observePrepared(java.util.function.BiConsumer<EnemyFrame.Key,Reply> observer){
-        if(observer!=null&&!Boolean.getBoolean("sifucraft.nativePistonSelfTest")&&!Boolean.getBoolean("sifucraft.pistonPauseSelfTest"))throw new IllegalStateException("isolated fixture only");preparedObserver=observer;
+        if(observer!=null&&!Boolean.getBoolean("sifucraft.nativePistonSelfTest")&&!Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest")&&!Boolean.getBoolean("sifucraft.pistonPauseSelfTest"))throw new IllegalStateException("isolated fixture only");preparedObserver=observer;
     }
     private static long prepared,applied,committed,cancelled,released,releaseFailed,refundedSteps;private static double refundedCm;
     public record Stats(long prepared,long applied,long committed,long cancelled,long released,long releaseFailed,int pending,long refundedSteps,double refundedCm){}
@@ -100,7 +101,7 @@ public final class PistonMachines {
     }
     private static void wakeFromServer(Flight f){if(flights.get(f.piston)==f&&f.level.getBlockEntity(f.piston.getBlockPos())==f.piston)
         PistonMovingBlockEntity.tick(f.level,f.piston.getBlockPos(),f.level.getBlockState(f.piston.getBlockPos()),f.piston);}
-    public static boolean suppress(Entity entity){var set=committing.get();return set!=null&&entity instanceof EnemyProxy p&&set.contains(p.sifuKey());}
+    public static boolean suppress(Entity entity){var set=committing.get();if(set==null)return false;var key=NativeMotionSubjects.key(entity);return key!=null&&set.contains(key);}
     private static boolean valid(WorldMotionWorld.View view,ServerLevel level){
         return view!=null&&view.scope().equals(view.requests().scope())&&view.scope().save()==PistonMovePlans.saveKey(level)&&
             view.scene()!=null&&view.scene().matchesScope(view.scope().nativeSession(),view.scope().world())&&view.scene().placement().equals(view.placement())&&
@@ -108,13 +109,13 @@ public final class PistonMachines {
     }
     private static boolean fresh(WorldMotionWorld.View view){long now=System.currentTimeMillis(),nativeNow=WorldWriter.clockMillis();return view.enemies().receivedMs()<=now&&now-view.enemies().receivedMs()<=200&&
         view.nativeStatus()!=null&&view.nativeStatus().atMs()<=nativeNow&&nativeNow-view.nativeStatus().atMs()<=200&&view.nativeStatus().world()==view.scope().world()&&view.nativeStatus().flags()==0;}
-    private static EnemyFrame.Entry entry(WorldMotionWorld.View view,EnemyFrame.Key key){return view.enemies().entries().stream().filter(e->e.key().equals(key)&&e.alive()).findFirst().orElse(null);}
+    private static EnemyFrame.Entry entry(WorldMotionWorld.View view,EnemyFrame.Key key){return NativeMotionSubjects.entry(view,key);}
     private static Map<EnemyFrame.Key,PistonPreview.Body> contacts(WorldMotionWorld.View view,PistonPreview.Result preview){
         var touched=new HashSet<EnemyFrame.Key>();for(var m:preview.moves())if(m.enemy()!=null)touched.add(m.enemy());
         var result=new LinkedHashMap<EnemyFrame.Key,PistonPreview.Body>();
         for(var body:preview.bodies())if(body.enemy()!=null&&touched.contains(body.enemy())){
-            var proxy=EnemyMirrors.hitAttacker(body.enemy().id(),body.enemy().spawn());var e=entry(view,body.enemy());
-            if(proxy!=null&&!proxy.isRemoved()&&proxy.getUUID().equals(body.entity())&&e!=null)result.put(body.enemy(),body);
+            var proxy=NativeMotionSubjects.find(body.enemy());var e=entry(view,body.enemy());
+            if(proxy!=null&&!proxy.isRemoved()&&proxy.getUUID().equals(body.entity())&&(e!=null||NativeMotionSubjects.player(body.enemy())))result.put(body.enemy(),body);
         }
         return result;
     }
@@ -130,26 +131,29 @@ public final class PistonMachines {
         var token=membership==null?sources.computeIfAbsent(piston,ignored->new SourceToken()):groupTokens.computeIfAbsent(membership.token().id(),SourceToken::new);long now=WorldWriter.clockMillis();
         if(now<token.retryAt||level.getGameTime()<=token.lastCommitTick)return;
         if(members.stream().allMatch(p->p.getProgress(1)>=1)){originals(level,members);token.lastCommitTick=level.getGameTime();return;}
-        if(members.stream().allMatch(p->level.getEntities((Entity)null,new AABB(p.getBlockPos()).inflate(3),e->e instanceof EnemyProxy enemy&&EnemyMirrors.hitAttacker(enemy.sifuKey().id(),enemy.sifuKey().spawn())==enemy).isEmpty())){
+        if(members.stream().allMatch(p->level.getEntities((Entity)null,new AABB(p.getBlockPos()).inflate(3),NativeMotionSubjects::current).isEmpty())){
             originals(level,members);token.lastCommitTick=level.getGameTime();return;
         }
         var preview=PistonPreview.group(level,members,view.scene(),budgets,token.id,Map.of());
         var bodies=contacts(view,preview);
         if(bodies.isEmpty()){originals(level,members);token.lastCommitTick=level.getGameTime();return;}
         if(!fresh(view)||!view.shapesCurrent()||(view.nativeStatus().capabilities()&MOTION_CAPABILITY)==0||flights.size()>=128)return;
-        boolean yielding=false;for(var key:bodies.keySet())yielding|=dev.sifucraft.combat.FluidMotion.yieldToMachine(key,view);
+        if(bodies.containsKey(NativeMotionSubjects.PLAYER)&&!NativeMotionSubjects.playerReady(view))return;
+        boolean yielding=false;for(var key:bodies.keySet())if(!NativeMotionSubjects.player(key))yielding|=dev.sifucraft.combat.FluidMotion.yieldToMachine(key,view);
         if(yielding){for(var member:members)PistonTimeline.track(member,view.scope());return;}
         flight=new Flight(level,piston,members,token,view.scope(),now);for(var member:members){flights.put(member,flight);PistonTimeline.track(member,view.scope());}activeServer=level.getServer();
         for(var key:bodies.keySet()){
             var source=preview.moves().stream().filter(m->key.equals(m.enemy())).findFirst().orElseThrow().source();
             if(source.sectionRevision()==0){cancel(view,flight);return;}
-            var target=new Target(entry(view,key),source);flight.targets.put(key,target);var active=flight;
+            var target=new Target(entry(view,key),source,NativeMotionSubjects.player(key)?view.nativeStatus().playerStamp():0);flight.targets.put(key,target);var active=flight;
             target.reserve=watch(active,view.requests().request(flight.scope,id->{target.lease=id;return command(active,target,source,RESERVE,id,null,target.entry.location(),SifuFrame.Vec3.ZERO,view.nativeStatus().shapeRevision(),now);}));
         }
     }
     private static void advance(WorldMotionWorld.View view,Flight f,Runnable original){
         long now=WorldWriter.clockMillis();
         if(!valid(view,f.level)||!f.scope.equals(view.scope())||f.members.stream().anyMatch(p->p.isRemoved()||f.level.getBlockEntity(p.getBlockPos())!=p))cancel(view,f);
+        if(view!=null&&view.nativeStatus()!=null&&f.targets.values().stream().anyMatch(t->NativeMotionSubjects.player(t.key)&&
+           (view.nativeStatus().playerStamp()!=t.playerStamp||PlayerSignalContacts.nativeBody()==null)))cancel(view,f);
         if(f.phase!=Phase.SHAPES&&f.phase!=Phase.RELEASE&&f.members.stream().anyMatch(p->p.getProgress(1)!=f.progressByMember.get(p)))cancel(view,f);
         // A sent release has already handed back authority natively. A delayed
         // receipt may be awaited without extending the native 500ms hard limit.
@@ -240,10 +244,10 @@ public final class PistonMachines {
             if(f.targets.values().stream().anyMatch(t->!done(t.release)))return;
             for(var t:f.targets.values()){
                 var receipt=result(t.release);
-                if(receipt!=null&&receipt.status()==3&&receipt.restored()==7&&receipt.actorSerial()==t.binding.actorSerial()&&receipt.componentToken()==t.binding.componentToken()){
+                if(receipt!=null&&receipt.status()==3&&receipt.restored()==(NativeMotionSubjects.player(t.key)?1:7)&&receipt.actorSerial()==t.binding.actorSerial()&&receipt.componentToken()==t.binding.componentToken()){
                     poses.put(t.key,new Pose(f.scope,receipt.position(),receipt.nativeFrame(),now+500,true));
                     updateProxy(view,t,receipt);
-                    dev.sifucraft.combat.FluidMotion.machineReleased(f.level,f.scope,t.key,t.binding,receipt,t.velocity,t.source);
+                    if(!NativeMotionSubjects.player(t.key))dev.sifucraft.combat.FluidMotion.machineReleased(f.level,f.scope,t.key,t.binding,receipt,t.velocity,t.source);
                     released++;
                 }else releaseFailed++;
             }
@@ -258,9 +262,10 @@ public final class PistonMachines {
         finally{groupCommit.set(previous);}
     }
     private static void updateProxy(WorldMotionWorld.View view,Target target,Reply reply){
-        var proxy=EnemyMirrors.hitAttacker(target.key.id(),target.key.spawn());if(proxy==null)return;var p=reply.position();
-        proxy.setPos(view.placement().mcX(p.x()),view.placement().mcY(p.z()-target.entry.halfHeight()),view.placement().mcZ(p.y()));proxy.updateSignals();
-        dev.sifucraft.combat.WorldEffects.moved(proxy,view.scope(),view.placement(),target.entry.halfHeight(),reply);
+        var proxy=NativeMotionSubjects.find(target.key);if(proxy==null)return;var p=reply.position();
+        proxy.setPos(view.placement().mcX(p.x()),view.placement().mcY(p.z()-target.entry.halfHeight()),view.placement().mcZ(p.y()));
+        if(proxy instanceof PlayerSignalBody player)player.updateSignals();
+        if(proxy instanceof EnemyProxy enemy){enemy.updateSignals();dev.sifucraft.combat.WorldEffects.moved(enemy,view.scope(),view.placement(),target.entry.halfHeight(),reply);}
     }
     private static boolean done(CompletableFuture<?> future){return future!=null&&future.isDone();}
     private static Reply result(CompletableFuture<Reply> future){if(!done(future)||future.isCompletedExceptionally()||future.isCancelled())return null;return future.getNow(null);}
@@ -270,15 +275,25 @@ public final class PistonMachines {
     private static Command command(Flight f,Target t,PistonContacts.Source source,int op,long id,Reply binding,SifuFrame.Vec3 position,SifuFrame.Vec3 delta,long revision,long now){
         var owner=t.source;long state=ShapeProtocol.mapHash(owner.movedState());if(state==0)state=1;var pos=owner.pos();
         return new Command(op,MACHINE,id,op==RESERVE?0:t.lease,now,owner.capture().getMostSignificantBits(),owner.capture().getLeastSignificantBits(),owner.action(),source.tick(),
-            f.scope.save(),f.scope.map(),revision,f.scope.world(),t.key.id(),t.key.spawn(),op==RESERVE?500:0,position,delta,t.entry.health(),t.entry.radius(),t.entry.halfHeight(),0,
-            pos.getX(),pos.getY(),pos.getZ(),source.progress(),source.nextProgress(),0,state,source.sectionRevision(),binding==null?0:binding.actorSerial(),binding==null?0:binding.componentToken());
+            f.scope.save(),f.scope.map(),revision,f.scope.world(),t.key.id(),t.key.spawn(),op==RESERVE?500:0,position,delta,t.entry.health(),t.entry.radius(),t.entry.halfHeight(),NativeMotionSubjects.player(t.key)?PLAYER:0,
+            pos.getX(),pos.getY(),pos.getZ(),source.progress(),source.nextProgress(),0,state,source.sectionRevision(),binding==null?t.playerStamp:binding.actorSerial(),binding==null?0:binding.componentToken());
     }
     /** Server tick cleanup also covers a removed/unloaded BE which will no longer call its own ticker. */
     public static void update(MinecraftServer server){
         PistonTimeline.prune(server);
         var view=WorldMotionWorld.current();if(view==null||scope==null||!scope.equals(view.scope())){stop();return;}
+        if(view.nativeStatus()!=null&&view.nativeStatus().playerStamp()!=playerStamp){
+            if(playerStamp!=0){
+                for(var f:new HashSet<>(flights.values()))if(f.targets.containsKey(NativeMotionSubjects.PLAYER))cancel(view,f);
+                budgets.remove(NativeMotionSubjects.PLAYER);poses.remove(NativeMotionSubjects.PLAYER);
+                for(var token:sources.values())token.spent.remove(NativeMotionSubjects.PLAYER);
+                for(var token:groupTokens.values())token.spent.remove(NativeMotionSubjects.PLAYER);
+            }
+            playerStamp=view.nativeStatus().playerStamp();
+        }
         for(var f:flights.values().stream().distinct().toList())if(f.phase==Phase.CANCEL||f.members.stream().anyMatch(p->p.isRemoved()||f.level.getBlockEntity(p.getBlockPos())!=p))advance(view,f,()->{});
         var alive=new HashSet<EnemyFrame.Key>();if(view.enemies()!=null)for(var e:view.enemies().entries())if(e.alive())alive.add(e.key());
+        if(PlayerSignalContacts.nativeBody()!=null)alive.add(NativeMotionSubjects.PLAYER);
         budgets.keySet().retainAll(alive);poses.keySet().retainAll(alive);
         var tokens=PistonActions.liveTokens();for(var flight:flights.values())tokens.add(flight.token.id);groupTokens.keySet().retainAll(tokens);
     }
@@ -289,5 +304,12 @@ public final class PistonMachines {
            frame.frame()>p.frame&&(p.released||samePosition(entry.location(),p.position,1))){poses.remove(entry.key());return entry;}
         return new EnemyFrame.Entry(entry.id(),entry.spawn(),p.position,entry.yaw(),entry.radius(),entry.halfHeight(),entry.health(),entry.maxHealth(),entry.flags(),entry.faction(),entry.velocity());
     }
-    public static void stop(){flights.clear();sources.clear();groupTokens.clear();budgets.clear();poses.clear();scope=null;activeServer=null;offeredRevision=0;geometryWake.set(false);PistonTimeline.stop();}
+    public static SifuFrame.Vec3 playerPose(WorldMotionWorld.View view,SifuFrame frame,SifuFrame.Vec3 position){
+        var p=poses.get(NativeMotionSubjects.PLAYER);if(p==null)return position;long now=WorldWriter.clockMillis();
+        if(view==null||!p.scope.equals(view.scope())||frame.worldGeneration()!=p.scope.world()||now>=p.until||
+           frame.frame()>p.frame&&(p.released||samePosition(position,p.position,1))){poses.remove(NativeMotionSubjects.PLAYER);return position;}
+        return p.position;
+    }
+    static void playerGone(){poses.remove(NativeMotionSubjects.PLAYER);}
+    public static void stop(){flights.clear();sources.clear();groupTokens.clear();budgets.clear();poses.clear();scope=null;playerStamp=0;activeServer=null;offeredRevision=0;geometryWake.set(false);PistonTimeline.stop();}
 }

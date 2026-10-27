@@ -6,11 +6,12 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
-/** Signal-only presence of the Native-controlled player, never a movement or damage owner. */
+/** Native player presence. Mechanical movement requires a Native receipt; this entity never executes it. */
 public final class PlayerSignalBody extends Mob {
     private final SignalSteps signalSteps=new SignalSteps();
     void updateSignals(){RedstoneContacts.touchBody(this);signalSteps.update(this);}
@@ -24,6 +25,7 @@ public final class PlayerSignalBody extends Mob {
     }
     @Override protected EntityDimensions getDefaultDimensions(Pose pose){return EntityDimensions.scalable(width>0?width:.6f,height>0?height:1.8f);}
     @Override public void tick(){setDeltaMovement(Vec3.ZERO);}
+    @Override public void move(MoverType type,Vec3 movement){}
     @Override public void checkDespawn(){}
     @Override public boolean isPickable(){return false;}
     @Override public boolean isPushable(){return false;}

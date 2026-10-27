@@ -40,7 +40,8 @@ final class PlayerSignalCheck {
     private ServerLevel level;
     private ServerPlayer player;
     private Vec3 originalPos,originalVelocity;
-    private boolean originalGravity,done;
+    private boolean originalGravity;
+    private volatile boolean done;
     private int tick,warmup;
     private long started;
     private McState pinned;
@@ -55,7 +56,7 @@ final class PlayerSignalCheck {
     PlayerSignalCheck(){require(DevWorld.LEVEL_ID.startsWith("sifucraft-player-signal-check-"),"disposable save required");}
     private static void require(boolean ok,String why){if(!ok)throw new AssertionError("player signals: "+why);}
     McState protectNativePose(McState state,boolean guiReady){
-        if(clientDone)return McState.NOT_READY;
+        if(clientDone||done)return McState.NOT_READY;
         if(pinned==null&&guiReady&&(state.flags()&Protocol.MC_HAS_POSE)!=0)
             pinned=new McState(state.flags(),state.perspective(),state.playerLocation(),state.playerRotation(),SifuFrame.Vec3.ZERO,
                 state.cameraLocation(),state.cameraRotation(),state.cameraFov(),state.anchorEpoch(),state.sifuSession(),state.worldGeneration());
@@ -65,12 +66,13 @@ final class PlayerSignalCheck {
     }
     void clientTick(Minecraft mc,boolean guiReady,SifuFrame frame){
         if(clientDone)return;
+        if(done&&!needNative){clientDone=true;if(mc.player!=null&&clientGravity!=null)mc.player.setNoGravity(clientGravity);mc.stop();return;}
         ready=guiReady&&SifuCraftClient.blockCollisionCurrent();
         if(level!=null&&mc.player!=null){
             if(clientGravity==null)clientGravity=mc.player.isNoGravity();
             mc.player.setNoGravity(true);mc.player.setDeltaMovement(Vec3.ZERO);
         }
-        if(needNative&&pinned!=null&&frame!=null&&frame.minecraftOwnsInput()){
+        if(!done&&needNative&&pinned!=null&&frame!=null&&frame.minecraftOwnsInput()){
             var actual=frame.playerLocation();var feet=pinned.playerLocation();
             double error=Math.sqrt(Math.pow(actual.x()-feet.x(),2)+Math.pow(actual.y()-feet.y(),2)+Math.pow(actual.z()-frame.capsuleHalfHeight()-feet.z(),2));
             nativePoseError=Math.max(nativePoseError,error);nativeSamples++;

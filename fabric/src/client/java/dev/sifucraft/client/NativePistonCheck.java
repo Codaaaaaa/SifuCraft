@@ -3,6 +3,7 @@ package dev.sifucraft.client;
 import dev.sifucraft.blocks.PistonMachines;
 import dev.sifucraft.blocks.SceneBlockSupport;
 import dev.sifucraft.blocks.WorldMotionWorld;
+import dev.sifucraft.blocks.NativeMotionSubjects;
 import dev.sifucraft.bridge.EnemyFrame;
 import dev.sifucraft.bridge.SifuFrame;
 import dev.sifucraft.combat.EnemyMirrors;
@@ -28,7 +29,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.LoggerFactory;
 
-/** Disposable real-game fixture. It never fabricates an NPC position or a motion command. */
+/** Disposable real-game fixture. It never fabricates a Native position or a motion command. */
 final class NativePistonCheck {
     private static final class Reference extends Cow {
         Reference(ServerLevel level,float width,float height){super(EntityTypes.COW,level);this.width=width;this.height=height;setNoAi(true);setNoGravity(true);setSilent(true);refreshDimensions();}
@@ -41,12 +42,13 @@ final class NativePistonCheck {
     private ServerLevel level;private EnemyFrame.Entry target;private Vec3 start,end,referenceStart;private BlockPos base;private Direction direction;
     private Reference reference;private long deadline,settledAt,lastMonitor;
     private final boolean pause=Boolean.getBoolean("sifucraft.pistonPauseSelfTest");
+    private final boolean player=Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest");
     private final java.nio.file.Path pauseFile=java.nio.file.Path.of(System.getProperty("sifucraft.motionPauseControl"));
     private volatile long pauseRequested,pauseAt,pausedTick;private volatile boolean resumed,pauseChecked;
-    NativePistonCheck(){require(DevWorld.LEVEL_ID.startsWith("sifucraft-piston-native-check-"),"disposable save required");
+    NativePistonCheck(){require(DevWorld.LEVEL_ID.startsWith(player?"sifucraft-player-piston-check-":"sifucraft-piston-native-check-"),"disposable save required");
         PistonMachines.observePrepared((key,binding)->{
             if(target==null||!target.key().equals(key)||reference!=null)return;
-            var offset=binding.rootOffset();var proxy=EnemyMirrors.hitAttacker(key.id(),key.spawn());require(proxy!=null,"same binding body");
+            var offset=binding.rootOffset();var proxy=NativeMotionSubjects.find(key);require(proxy!=null,"same binding body");
             referenceStart=proxy.position().add(offset.x()/100.0,offset.z()/100.0+target.halfHeight()/100.0-binding.rootHalfHeight()/100.0,offset.y()/100.0);
             reference=new Reference(level,binding.rootRadius()*2/100,binding.rootHalfHeight()*2/100);reference.setPos(referenceStart);reference.setOnGround(true);require(level.addFreshEntity(reference),"independent actual root-sized vanilla body registered");
             LoggerFactory.getLogger("sifucraft").info("[native-piston-test] physical binding root_radius={} root_half={} root_offset_cm={} reference_start={}",binding.rootRadius(),binding.rootHalfHeight(),offset,referenceStart);
@@ -59,7 +61,8 @@ final class NativePistonCheck {
         if(finished){mc.stop();return;}
         if(pauseRequested!=0&&mc.isPaused()&&pauseAt==0){pauseAt=System.currentTimeMillis();mc.getSingleplayerServer().execute(()->pausedTick=level.getGameTime());}
         if(pauseAt!=0&&!resumed&&System.currentTimeMillis()-pauseAt>=1200){resumed=true;mc.getSingleplayerServer().execute(()->{require(level.getGameTime()<=pausedTick+1,"actual Native pause froze MC world time");pauseChecked=true;});pauseControl("0");}
-        var view=WorldMotionWorld.current();ready=gui&&view!=null&&view.shapesCurrent()&&view.nativeStatus()!=null&&(view.nativeStatus().capabilities()&1)!=0&&view.nativeStatus().flags()==0;
+        var view=WorldMotionWorld.current();ready=view!=null&&view.shapesCurrent()&&view.nativeStatus()!=null&&(view.nativeStatus().capabilities()&1)!=0&&view.nativeStatus().flags()==0&&
+            (player?frame!=null&&!frame.minecraftOwnsInput()&&(view.nativeStatus().capabilities()&dev.sifucraft.bridge.WorldMotionProtocol.PLAYER_MACHINE_CAPABILITY)!=0:gui);
         long ns=System.nanoTime();double dt=lastNs==0?0:Math.min(.05,(ns-lastNs)/1e9);lastNs=ns;
         if(!ready||mc.player==null||frame==null)return;
         require(view.placement().map().equals("Hideout_1_Main"),"known isolated checkpoint map");
@@ -68,7 +71,7 @@ final class NativePistonCheck {
         if(stage<3)require(System.currentTimeMillis()-began<90000,"bounded live fixture deadline stage="+stage);
         // The known idle fixture is just beyond the 30m table radius at the entry.
         // Walk at 1m/s through ordinary MC collision; stop as soon as a body appears.
-        if(stage==0&&view.enemies().entries().isEmpty()&&walked<4){
+        if(!player&&stage==0&&view.enemies().entries().isEmpty()&&walked<4){
             var before=mc.player.position();mc.player.move(MoverType.SELF,new Vec3(.6*dt,0,.8*dt));walked+=mc.player.position().distanceTo(before);
         }
     }
@@ -80,9 +83,10 @@ final class NativePistonCheck {
             var view=WorldMotionWorld.current();if(view==null)return;
             if(stage==0){
                 level=server.overworld();
-                for(var candidate:view.enemies().entries()){
-                    if(!candidate.alive()||candidate.health()!=60||candidate.radius()!=35||candidate.velocity().x()!=0||candidate.velocity().y()!=0||candidate.velocity().z()!=0)continue;
-                    var proxy=EnemyMirrors.hitAttacker(candidate.id(),candidate.spawn());if(proxy==null)continue;
+                var pc=player?NativeMotionSubjects.entry(view,NativeMotionSubjects.PLAYER):null;
+                for(var candidate:player?(pc==null?java.util.List.<EnemyFrame.Entry>of():java.util.List.of(pc)):view.enemies().entries()){
+                    if(!candidate.alive()||(!player&&candidate.health()!=60)||candidate.radius()!=35||candidate.velocity().x()!=0||candidate.velocity().y()!=0||candidate.velocity().z()!=0)continue;
+                    var proxy=NativeMotionSubjects.find(candidate.key());if(proxy==null)continue;
                     for(var face:new Direction[]{Direction.EAST,Direction.WEST,Direction.SOUTH,Direction.NORTH}){
                         var floor=new BlockPos(proxy.blockPosition().getX(),(int)Math.ceil(proxy.getY()-1e-5),proxy.blockPosition().getZ());
                         var trial=floor.relative(face,-2);var payload=trial.relative(face);var destination=trial.relative(face,2);
@@ -104,7 +108,7 @@ final class NativePistonCheck {
                 if(settledAt==0||now-lastMonitor>200)settledAt=now;
                 lastMonitor=now;
             }
-            var proxy=EnemyMirrors.hitAttacker(target.id(),target.spawn());require(proxy!=null,"same activation retained");
+            var proxy=NativeMotionSubjects.find(target.key());require(proxy!=null,"same activation retained");
             if(stage==1){var power=base.relative(direction,-1);originals.putIfAbsent(power,level.getBlockState(power));level.setBlockAndUpdate(power,Blocks.REDSTONE_BLOCK.defaultBlockState());stage=2;return;}
             if(stage==2){
                 var destination=base.relative(direction,2);
@@ -117,11 +121,11 @@ final class NativePistonCheck {
                 end=proxy.position();settledAt=System.currentTimeMillis();stage=3;
             }
             if(stage==3){
-                require(proxy.getHealth()==target.health()/3,"Native HP unchanged");require(proxy.position().distanceToSqr(end)<.0009,"no post-release pullback");
+                if(proxy instanceof dev.sifucraft.combat.EnemyProxy enemy)require(enemy.getHealth()==target.health()/3,"Native HP unchanged");require(proxy.position().distanceToSqr(end)<.0009,"no post-release pullback");
                 if(System.currentTimeMillis()-settledAt<3000)return;
                 var stats=PistonMachines.stats();restore(server);stage=4;
-                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p8-native-piston.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(
-                    Map.of("result","PASS","target",target.id(),"spawn",target.spawn(),"start",start.toString(),"end",end.toString(),"prepared",stats.prepared(),"steps",stats.applied(),"released",stats.released(),"restored_ticks",7,"post_release_ms",3000),out));
+                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve(player?"p8-native-player-piston.json":"p8-native-piston.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(
+                    Map.of("result","PASS","target",target.id(),"spawn",target.spawn(),"start",start.toString(),"end",end.toString(),"prepared",stats.prepared(),"steps",stats.applied(),"released",stats.released(),"restored_ticks",player?1:7,"post_release_ms",3000),out));
                 LoggerFactory.getLogger("sifucraft").info("[native-piston-test] PASS real actor, vanilla reference, geometry barriers, all original ticks and 3s no drift; {}",stats);
             }else if(stage==4)finished=true;
         }catch(Exception|AssertionError e){LoggerFactory.getLogger("sifucraft").error("[native-piston-test] FAIL",e);restore(server);finished=true;Minecraft.getInstance().execute(()->{throw new AssertionError(e);});}

@@ -345,7 +345,7 @@ public final class SifuCraftClient implements ClientModInitializer {
             pistonTransactionCheck=new PistonTransactionCheck();ServerTickEvents.END_SERVER_TICK.register(pistonTransactionCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(pistonTransactionCheck::restore);
         }
-        if(Boolean.getBoolean("sifucraft.nativePistonSelfTest")){
+        if(Boolean.getBoolean("sifucraft.nativePistonSelfTest")||Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest")){
             nativePistonCheck=new NativePistonCheck();ServerTickEvents.END_SERVER_TICK.register(nativePistonCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(nativePistonCheck::restore);
         }

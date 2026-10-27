@@ -95,7 +95,7 @@ public final class PistonContacts {
             if(active.capture.onPlan!=null)active.capture.onPlan.accept(attempt);
         }
         entity.move(type,movement); // preserve vanilla, including its per-tick cap and noPhysics branch
-        var key=entity instanceof EnemyProxy proxy?proxy.sifuKey():null;
+        var key=NativeMotionSubjects.key(entity);
         active.capture.contacts.add(new Contact(active.source,entity.getUUID(),key,box,movement,entity.position().subtract(position),entity.getDeltaMovement()));
     }
 }

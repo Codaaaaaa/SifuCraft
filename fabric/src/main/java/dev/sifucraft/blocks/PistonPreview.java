@@ -32,8 +32,9 @@ public final class PistonPreview {
         Shadow(Entity e,Map<EnemyFrame.Key,PistonMotionLimit.State> budgets,Map<EnemyFrame.Key,Reply> bindings){
             position=e.position();velocity=e.getDeltaMovement();box=e.getBoundingBox();
             if(e instanceof EnemyProxy proxy)velocity=dev.sifucraft.combat.FluidMotion.pistonVelocity(proxy.sifuKey(),velocity);
-            budget=e instanceof EnemyProxy proxy?budgets.getOrDefault(proxy.sifuKey(),PistonMotionLimit.State.empty()):PistonMotionLimit.State.empty();
-            var binding=e instanceof EnemyProxy proxy?bindings.get(proxy.sifuKey()):null;
+            var key=NativeMotionSubjects.key(e);
+            budget=key==null?PistonMotionLimit.State.empty():budgets.getOrDefault(key,PistonMotionLimit.State.empty());
+            var binding=key==null?null:bindings.get(key);
             if(binding!=null){
                 var offset=binding.rootOffset();
                 position=position.add(offset.x()/100.0,offset.z()/100.0+e.getBbHeight()/2-binding.rootHalfHeight()/100.0,offset.y()/100.0);
@@ -54,15 +55,15 @@ public final class PistonPreview {
             if(moves.size()>=4096)throw new IllegalStateException("piston preview contact capacity");
             var e=capability.entity;var b=body(e);var requested=capability.requested;var before=b.box;
             Vec3 limited=requested,collided=requested;
-            if(!e.noPhysics||e instanceof EnemyProxy){
+            if(!e.noPhysics||NativeMotionSubjects.key(e)!=null){
                 var limit=PistonMotionLimit.plan(b.budget,level.getGameTime(),requested);b.budget=limit.state();limited=limit.limited();
                 collided=Entity.collideBoundingBox(e,limited,b.box,level,level.getEntityCollisions(e,b.box.expandTowards(limited)));
             }
             b.position=b.position.add(collided);b.box=b.box.move(collided);
-            moves.add(new Move(capability.source(),e.getUUID(),e instanceof EnemyProxy p?p.sifuKey():null,before,requested,limited,collided,b.velocity,b.budget));
+            moves.add(new Move(capability.source(),e.getUUID(),NativeMotionSubjects.key(e),before,requested,limited,collided,b.velocity,b.budget));
         }
         Result result(){return new Result(moves,bodies.entrySet().stream().map(e->{var b=e.getValue();return new Body(e.getKey().getUUID(),
-            e.getKey() instanceof EnemyProxy p?p.sifuKey():null,b.initial,b.position,b.velocity,b.box,b.budget);}).toList());}
+            NativeMotionSubjects.key(e.getKey()),b.initial,b.position,b.velocity,b.box,b.budget);}).toList());}
     }
     public static Result run(ServerLevel level,BlockPos pos,PistonMovingBlockEntity piston,float next,SifuCollision.Active scene,
                              Map<EnemyFrame.Key,PistonMotionLimit.State> budgets){
@@ -113,14 +114,14 @@ public final class PistonPreview {
     public static void velocity(Entity entity,double x,double y,double z){var s=CURRENT.get();if(s==null){if(!PistonMachines.suppress(entity))entity.setDeltaMovement(x,y,z);}else s.body(entity).velocity=new Vec3(x,y,z);}
     public static List<Entity> entities(Level level,Entity excluded,AABB area,Predicate<Entity> predicate){
         var s=CURRENT.get();
-        if(s==null)return predicate==null?level.getEntities(excluded,area):level.getEntities(excluded,area,predicate);
+        if(s==null)return (predicate==null?level.getEntities(excluded,area):level.getEntities(excluded,area,predicate)).stream().filter(e->!PlayerSignalContacts.ignores(e)).toList();
         // Preview movements are bounded to one piston cell. Include bodies which moved
         // into the second query and filter using their shadow box and vanilla predicate.
         var nearby=predicate==null?level.getEntities(excluded,area.inflate(1.1)):level.getEntities(excluded,area.inflate(1.1),e->true);
-        return nearby.stream().filter(e->box(e).intersects(area)&&(predicate==null||predicate.test(e))).toList();
+        return nearby.stream().filter(e->!PlayerSignalContacts.ignores(e)&&box(e).intersects(area)&&(predicate==null||predicate.test(e))).toList();
     }
     public static boolean grounded(Entity entity){
-        var s=CURRENT.get();if(s==null||!(entity instanceof EnemyProxy)||entity.onGround())return entity.onGround();
+        var s=CURRENT.get();if(s==null||NativeMotionSubjects.key(entity)==null||entity.onGround())return entity.onGround();
         var b=s.body(entity).box;
         var feet=new AABB(b.minX+1e-7,b.minY-.02,b.minZ+1e-7,b.maxX-1e-7,b.minY+.001,b.maxZ-1e-7);
         for(var shape:s.level.getBlockCollisions(entity,feet))if(!shape.isEmpty())return true;
