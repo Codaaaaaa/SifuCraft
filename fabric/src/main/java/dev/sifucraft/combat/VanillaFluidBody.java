@@ -15,6 +15,8 @@ import net.minecraft.world.level.gameevent.GameEvent;
 
 /** Unregistered vanilla land-mob integrator. Actual effects belong to the hit mirror. */
 public final class VanillaFluidBody extends Cow {
+    public record Landing(double distance,BlockPos pos){}
+    private double beforeFall;private Landing landing;
     private EntityDimensions physical=EntityDimensions.scalable(.7f,1.8f);
     public VanillaFluidBody(ServerLevel level,float radius,float half,long seed,boolean swim){
         super(EntityTypes.COW,level);physical=EntityDimensions.scalable(radius*2/100,half*2/100);refreshDimensions();
@@ -35,6 +37,14 @@ public final class VanillaFluidBody extends Cow {
         // Prediction cannot stomp farmland, play a landing event or cause damage.
         // Keep vanilla's accumulated fall state; actual landing is handled only
         // after the physical receipt, never at the speculative endpoint.
-        if(ground)resetFallDistance();else if(dy<0)fallDistance-=dy;
+        // Installed Entity.checkFallDamage accumulates float(dy), including the
+        // final ground move, and excludes water. Only defer its world callback.
+        if(!isInWater()&&dy<0)fallDistance-=(float)dy;
+        if(ground){if(fallDistance>0)landing=new Landing(fallDistance,pos.immutable());resetFallDistance();}
     }
+    public void beginPrediction(){beforeFall=fallDistance;landing=null;}
+    public void reconcileFall(double actualY,boolean ground){
+        fallDistance=beforeFall;landing=null;var pos=BlockPos.containing(getX(),getY()-.01,getZ());checkFallDamage(actualY,ground,level().getBlockState(pos),pos);
+    }
+    public Landing consumeLanding(){var result=landing;landing=null;return result;}
 }

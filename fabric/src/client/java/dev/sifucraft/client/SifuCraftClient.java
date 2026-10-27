@@ -108,6 +108,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private NativeFluidCheck nativeFluidCheck;
     private MachineProjectileCheck machineProjectileCheck;
     private NativeMachineCheck nativeMachineCheck;
+    private PistonAftermathCheck pistonAftermathCheck;
     private SignalCheck signalCheck;
     private PlayerSignalCheck playerSignalCheck;
     private SensorCheck sensorCheck;
@@ -363,6 +364,10 @@ public final class SifuCraftClient implements ClientModInitializer {
             nativeMachineCheck=new NativeMachineCheck();ServerTickEvents.END_SERVER_TICK.register(nativeMachineCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(nativeMachineCheck::restore);
         }
+        if(Boolean.getBoolean("sifucraft.pistonAftermathSelfTest")){
+            pistonAftermathCheck=new PistonAftermathCheck();ServerTickEvents.END_SERVER_TICK.register(pistonAftermathCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(pistonAftermathCheck::restore);
+        }
         if (Boolean.getBoolean("sifucraft.sceneSupportSelfTest")) {
             var check=new BlockSupportCheck();
             ServerTickEvents.END_SERVER_TICK.register(check::tick);
@@ -578,6 +583,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(nativeFluidCheck!=null)nativeFluidCheck.clientTick(minecraft,frame);
         if(machineProjectileCheck!=null)machineProjectileCheck.clientTick(minecraft,frame);
         if(nativeMachineCheck!=null)nativeMachineCheck.clientTick(minecraft,frame);
+        if(pistonAftermathCheck!=null)pistonAftermathCheck.clientTick(minecraft);
         if (signalCheck != null) signalCheck.clientTick(minecraft,guiAvailable(frame));
         if (playerSignalCheck != null) playerSignalCheck.clientTick(minecraft,guiAvailable(frame),frame);
         if (sensorCheck != null) sensorCheck.clientTick(minecraft,guiAvailable(frame));

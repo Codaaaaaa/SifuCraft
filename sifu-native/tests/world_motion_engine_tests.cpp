@@ -10,9 +10,10 @@ struct Fake final:Backend {
     Body body{19,818,{0,0,90},60,30,90};
     int binds=0,moves=0,forgets=0,hurts=0;bool valid=true,bind=true,block=false,penetrate=false,returned=true,read=true,effects=false;
     float fraction=1;
+    std::array<float,3> normal{};
     bool Bind(const Command&,Body* out)override{++binds;*out=body;return bind;}
     bool Check(Body* out)override{*out=body;return valid;}
-    Sweep Move(const Body&,const std::array<float,3>& d)override{++moves;for(int i=0;i<3;++i)body.position[i]+=d[i]*fraction;return {body,true,read,returned,block,penetrate};}
+    Sweep Move(const Body&,const std::array<float,3>& d)override{++moves;for(int i=0;i<3;++i)body.position[i]+=d[i]*fraction;return {body,true,read,returned,block,penetrate,normal};}
     Effect Hurt(const Command& c)override{if(!effects)return {};hurts++;body.health=std::max(0.f,body.health-c.amount*3);return {Status::Applied,true,body.serial,body.health,body.position,0};}
     void Forget()override{++forgets;}
 };
@@ -193,5 +194,29 @@ void FluidRenewal(){
     Case machine;machine.Acquire();machine.Send(machine.CommandFor(Op::Renew));machine.Pop(Status::Invalid);
     Require(machine.engine.Skip(machine.now),"machine cannot use fluid renewal to evade its contact budget");machine.now+=500;machine.Tick();machine.Restore();
 }
+void MachinePriority(){
+    Case c;auto reserve=c.CommandFor();reserve.source=Source::Fluid;c.Send(reserve);
+    for(auto part:{1u,2u,4u})c.engine.Original(part);c.Tick();c.Pop(Status::Prepared);
+    Require(c.engine.Skip(c.now),"continuous body initially owns its movement");
+    auto machine=c.CommandFor();c.Send(machine);c.Pop(Status::Busy);
+    Require(!c.engine.Skip(c.now)&&c.engine.phase()==Engine::Phase::Releasing&&c.backend.binds==1,"machine priority yields old continuous authority before any new bind");
+    c.Restore();c.Send(machine);c.Pop(Status::Busy);Require(c.backend.binds==1,"same machine request remains a cached Busy, never a hidden reacquisition");
+    c.Send(c.CommandFor());for(auto part:{1u,2u,4u})c.engine.Original(part);c.Tick();c.Pop(Status::Prepared);
+    Require(c.backend.binds==2&&c.engine.Skip(c.now),"a fresh machine request acquires only after all old original ticks restored");
 }
-int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();std::printf("world motion arbiter PASS %u assertions\n",checks);}
+void ContactNormals(){
+    Case c;auto reserve=c.CommandFor();reserve.source=Source::Fluid;c.Send(reserve);
+    for(auto part:{1u,2u,4u})c.engine.Original(part);
+    c.Tick();c.Pop(Status::Prepared);c.backend.block=true;c.backend.fraction=.25f;c.backend.normal={1,0,0};
+    auto step=c.CommandFor(Op::Step);step.source=Source::Fluid;step.delta[0]=-6;step.delta[2]=-6;c.Send(step);auto wall=c.Pop(Status::Partial);
+    Require((wall.flags&4)==0&&((wall.flags>>8)&255)==127,"downward motion hitting a wall is not a landing and reports its contact normal");
+    c.backend.normal={0,0,1};step=c.CommandFor(Op::Step);step.source=Source::Fluid;step.delta[0]=0;step.delta[2]=-8;c.Send(step);auto floor=c.Pop(Status::Partial);
+    Require((floor.flags&4)&&((floor.flags>>24)&255)==127,"actual upward floor normal distinguishes physical ground contact");
+    Case damage;reserve=damage.CommandFor();reserve.source=Source::Fluid;damage.Send(reserve);
+    for(auto part:{1u,2u,4u})damage.engine.Original(part);
+    damage.Tick();damage.Pop(Status::Prepared);auto release=damage.CommandFor(Op::Release);release.source=Source::Fluid;damage.Send(release);
+    damage.backend.effects=true;auto hurt=damage.CommandFor(Op::Damage);hurt.source=Source::WorldEffect;hurt.action=EffectTag("minecraft:fall");damage.Send(hurt);damage.Pop(Status::Applied);
+    damage.Restore();auto final=damage.Pop(Status::Released);Require(final.restored==7&&final.health==45,"handback queued before world damage confirms actual HP and original ticks after the native hit");
+}
+}
+int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();MachinePriority();ContactNormals();std::printf("world motion arbiter PASS %u assertions\n",checks);}

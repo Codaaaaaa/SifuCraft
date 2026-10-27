@@ -27,6 +27,7 @@ public final class SifuCraftMod implements ModInitializer {
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PlayerSignalContacts.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> EnemyMirrors.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PistonMachines.stop());
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PistonActions.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.combat.FluidMotion.stop());
     }
 }

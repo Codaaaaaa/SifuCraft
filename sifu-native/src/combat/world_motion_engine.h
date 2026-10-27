@@ -25,6 +25,7 @@ struct Body {
 struct Sweep {
     Body body;
     bool invoked=false,valid=false,returned=false,blocking=false,penetrating=false;
+    std::array<float,3> normal{};
 };
 struct Effect {
     Status status=Status::Unsupported;bool invoked=false;
@@ -99,7 +100,11 @@ public:
             Seal(reply);if(ledger_->Finish(command.id,reply))out_.push_back(reply);return true;
         }
         if(command.op==Op::Reserve) {
-            if(phase_!=Phase::Free) {Finish(command,Status::Busy,now);return true;}
+            if(phase_!=Phase::Free) {
+                if(source_.source==Source::Fluid&&command.source==Source::Machine&&command.target==source_.target&&command.spawn==source_.spawn&&command.flags==source_.flags)
+                    BeginRelease(Status::Cancelled);
+                Finish(command,Status::Busy,now);return true;
+            }
             if(!env_.settled){Finish(command,Status::Busy,now);return true;}
             if(command.shape_revision!=env_.revision||now-command.issued_ms>=command.duration_ms) {Finish(command,Status::Stale,now);return true;}
             Body body;
@@ -143,7 +148,12 @@ public:
         else if(!moved.returned||Distance(moved.body.position,current.position,command.delta)>0.1)status=Status::Partial;
         if(moved.invoked&&ValidBody(moved.body))body_=moved.body;
         if(moved.invoked&&command.source==Source::Machine)release_revision_=std::max(release_revision_,command.shape_revision+1);
-        Finish(command,status,now,delta,moved.blocking?1u:0u,moved.penetrating?2u:0u);
+        std::uint32_t contact=(moved.blocking?1u:0u)|(moved.penetrating?2u:0u);
+        if(moved.blocking){
+            if(command.delta[2]<0&&moved.normal[2]>.5f)contact|=4;
+            for(int i=0;i<3;i++)if(std::isfinite(moved.normal[i]))contact|=std::uint32_t(static_cast<std::uint8_t>(static_cast<std::int8_t>(std::lround(std::clamp(moved.normal[i],-1.f,1.f)*127))))<<(8+i*8);
+        }
+        Finish(command,status,now,delta,contact);
         // Continuous media reconcile a valid blocked/partial sweep and retain
         // their short heartbeat lease. Machines cannot commit through a blocker.
         if(status!=Status::Applied&&(command.source!=Source::Fluid||status==Status::TargetLost))BeginRelease(status);

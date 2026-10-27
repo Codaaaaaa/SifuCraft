@@ -159,7 +159,7 @@ MEMBERS = {
     "UAnimInstance": ["MontageInstances", "RootMotionMontageInstance", "RootMotionBlendQueue", "ExtractedRootMotion"],
     "FRootMotionMovementParams": ["bHasRootMotion"],
     "FRootMotionSourceGroup": ["RootMotionSources", "PendingAddRootMotionSources"],
-    "FHitResult": ["Time", "Location"],
+    "FHitResult": ["Time", "Location", "Normal", "ImpactNormal"],
     "APawn": ["Controller"],
     "ACharacter": ["CharacterMovement", "Mesh", "CapsuleComponent", "BasedMovement"],
     "FBasedMovementInfo": ["MovementBase", "BoneName", "Location", "Rotation", "bRelativeRotation"],

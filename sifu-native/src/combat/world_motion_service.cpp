@@ -94,7 +94,7 @@ public:
         const bool valid=motion::SweepBody(g_current.actors,target_,sample_,{delta[0],delta[1],delta[2]},&result);
         if(result.invoked)sample_=result.body;
         Body body;const bool anchor=Convert(sample_,&body);
-        return {body,result.invoked,valid&&anchor,result.returned,result.blocking,result.penetrating};
+        return {body,result.invoked,valid&&anchor,result.returned,result.blocking,result.penetrating,{result.normal.x,result.normal.y,result.normal.z}};
     }
     Effect Hurt(const Command& c)override{
         Effect out;

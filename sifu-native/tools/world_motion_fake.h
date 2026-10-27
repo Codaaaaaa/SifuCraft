@@ -20,7 +20,7 @@ class Harness {
         }
         bool Check(Body* out)override{if(!actor)return false;*out=actor->body;return true;}
         Sweep Move(const Body& before,const std::array<float,3>& delta)override{
-            bool penetrating=false,blocking=false;
+            bool penetrating=false,blocking=false;std::array<float,3> normal{};
             // Test-only axis-resolved AABB collision, explicitly not a UE capsule.
             for(int axis:{2,0,1}){float amount=delta[axis];if(amount==0)continue;
             float lo[3],hi[3];for(int i=0;i<3;++i){const float half=i==2?before.half:before.radius;lo[i]=before.position[i]-half;hi[i]=before.position[i]+half;}
@@ -37,9 +37,9 @@ class Harness {
                 float min[3],max[3];for(int i=0;i<3;++i){min[i]=offset[i]+box.min[i];max[i]=offset[i]+box.max[i];}clip(min,max);
             }
             actor->body.position[axis]+=amount;
-            blocking|=std::fabs(amount-delta[axis])>.00001f;
+            if(std::fabs(amount-delta[axis])>.00001f){blocking=true;normal[axis]=delta[axis]<0?1.f:-1.f;}
             }
-            return {actor->body,true,true,!blocking,blocking,penetrating};
+            return {actor->body,true,true,!blocking,blocking,penetrating,normal};
         }
         Effect Hurt(const Command& c)override{
             for(auto& target:owner->actors_)if(target.id==c.target&&target.spawn==c.spawn){
@@ -58,10 +58,10 @@ class Harness {
     bool initialized_=false;unsigned calls_=0;
     std::deque<Reply> replies_;
 public:
-    void Initialize(const protocol::Vec3& player){
+    void Initialize(const protocol::Vec3& player,float rise=0){
         if(initialized_)return;
         initialized_=true;
-        for(unsigned i=0;i<2;++i){auto& a=actors_[i];a.id=101+i;a.body={static_cast<int>(1001+i),818+i,{player.x+450,player.y+50+i*200,92},60,35,92};}
+        for(unsigned i=0;i<2;++i){auto& a=actors_[i];a.id=101+i;a.body={static_cast<int>(1001+i),818+i,{player.x+450,player.y+50+i*200,92+rise},60,35,92};}
     }
     void Tick(std::uint64_t native,std::uint64_t mc,std::uint64_t frame,std::uint32_t world,std::uint64_t now,const shape_data::Frame& shapes,std::uint32_t flags=0){
         shapes_=&shapes;const bool ready=mc&&shapes.header.revision&&shapes.source_mc==mc&&shapes.header.world==world;

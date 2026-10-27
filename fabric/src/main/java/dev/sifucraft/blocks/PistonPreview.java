@@ -84,6 +84,28 @@ public final class PistonPreview {
         }finally{if(previous==null)CURRENT.remove();else CURRENT.set(previous);}
     }
     public static boolean active(){return CURRENT.get()!=null;}
+    /** One shared body/budget context in vanilla BE creation order. The temporary
+     * server-BE progress models geometry seen by later tickers and is restored
+     * before any queued export/save task can run. It sends no block updates. */
+    static Result group(ServerLevel level,List<net.minecraft.world.level.block.piston.PistonMovingBlockEntity> pistons,SifuCollision.Active scene,
+                        Map<EnemyFrame.Key,PistonMotionLimit.State> budgets,UUID source,Map<EnemyFrame.Key,Reply> bindings){
+        if(!level.getServer().isSameThread())throw new IllegalStateException("piston group preview requires server thread");
+        var session=new Session(level,Map.copyOf(budgets),Map.copyOf(bindings));var capture=PistonContacts.Capture.preview(level,source,session::move);var previous=CURRENT.get();
+        var progress=new IdentityHashMap<PistonMovingBlockEntity,float[]>();
+        for(var piston:pistons){if(level.getBlockEntity(piston.getBlockPos())!=piston||piston.isRemoved())throw new IllegalArgumentException("registered group member required");progress.put(piston,new float[]{piston.getProgress(1),piston.getProgress(0)});}
+        CURRENT.set(session);
+        try{
+            Runnable action=()->capture.run(()->{for(var piston:pistons){float before=piston.getProgress(1);if(before>=1)continue;float next=Math.min(1,before+.5f);
+                var pos=piston.getBlockPos();PistonAccess.sifucraft$collide(level,pos,next,piston);PistonAccess.sifucraft$carry(level,pos,next,piston);
+                var access=(PistonAccess)piston;access.sifucraft$previousProgress(before);access.sifucraft$progress(next);
+            }});
+            if(scene==null)action.run();else SceneBlockSupport.withScene(scene,()->SifuCollision.withQueryView(scene,()->{action.run();return null;}));
+            return session.result();
+        }finally{
+            for(var entry:progress.entrySet()){var access=(PistonAccess)entry.getKey();access.sifucraft$progress(entry.getValue()[0]);access.sifucraft$previousProgress(entry.getValue()[1]);}
+            if(previous==null)CURRENT.remove();else CURRENT.set(previous);
+        }
+    }
     public static AABB box(Entity entity){var s=CURRENT.get();return s==null?entity.getBoundingBox():s.body(entity).box;}
     public static Vec3 position(Entity entity){var s=CURRENT.get();return s==null?entity.position():s.body(entity).position;}
     public static Vec3 velocity(Entity entity){var s=CURRENT.get();return s==null?entity.getDeltaMovement():s.body(entity).velocity;}

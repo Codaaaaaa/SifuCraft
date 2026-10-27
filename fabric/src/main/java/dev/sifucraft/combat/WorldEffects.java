@@ -25,7 +25,17 @@ import org.slf4j.LoggerFactory;
 /** Only actual vanilla environment hurt callbacks can issue a world-scoped damage event. */
 public final class WorldEffects {
     private WorldEffects(){}
-    private record Evidence(String type,BlockPos pos,MachineProjectiles.Origin machine){Evidence(String type,BlockPos pos){this(type,pos,null);}}
+    private record Evidence(String type,BlockPos pos,MachineProjectiles.Origin machine,java.util.UUID causal){Evidence(String type,BlockPos pos){this(type,pos,null,null);}Evidence(String type,BlockPos pos,MachineProjectiles.Origin machine){this(type,pos,machine,null);}}
+    private record LandingProof(EnemyProxy target,dev.sifucraft.bridge.WorldMotionRequests.Scope scope,BlockPos pos,java.util.UUID source){}
+    private static final ThreadLocal<LandingProof> landing=new ThreadLocal<>();
+    /** The caller has reconciled an actual physical endpoint. Vanilla resolves
+     * the landing block, fall multiplier, armor, effects and hurt immunity. */
+    public static void landed(EnemyProxy target,dev.sifucraft.bridge.WorldMotionRequests.Scope scope,VanillaFluidBody.Landing contact,java.util.UUID source){
+        if(contact==null||contact.distance()<=0)return;var v=WorldMotionWorld.current();if(v==null||!scope.equals(v.scope()))return;
+        var previous=landing.get();landing.set(new LandingProof(target,scope,contact.pos(),source));
+        try{var state=target.level().getBlockState(contact.pos());state.getBlock().fallOn(target.level(),state,contact.pos(),target,contact.distance());}
+        finally{if(previous==null)landing.remove();else landing.set(previous);}
+    }
     private static long sent,applied,rejected,lost;private static int logged;
     public record Stats(long sent,long applied,long rejected,long lost){}
     public static Stats stats(){return new Stats(sent,applied,rejected,lost);}
@@ -59,6 +69,8 @@ public final class WorldEffects {
         return view;
     }
     private static Evidence evidence(EnemyProxy proxy,DamageSource source){
+        var floor=landing.get();
+        if(source.is(DamageTypes.FALL)&&floor!=null&&floor.target==proxy&&WorldMotionWorld.current()!=null&&floor.scope.equals(WorldMotionWorld.current().scope()))return new Evidence("minecraft:fall",floor.pos,null,floor.source);
         var machine=MachineProjectiles.evidence(proxy,source);
         if(machine!=null)return new Evidence(source.typeHolder().unwrapKey().orElseThrow().identifier().toString(),machine.pos(),machine);
         if(source.getEntity()!=null||source.getDirectEntity()!=null)return null; // machine projectiles need their separate origin credential
@@ -90,9 +102,10 @@ public final class WorldEffects {
     public static void record(EnemyProxy proxy,DamageSource source,float amount){
         var view=view(proxy);var proof=evidence(proxy,source);if(view==null||proof==null||!Float.isFinite(amount)||amount<=0)return;
         var entry=view.enemies().entries().stream().filter(e->e.key().equals(proxy.sifuKey())&&e.alive()).findFirst().orElse(null);if(entry==null||entry.radius()<10||entry.radius()>100||entry.halfHeight()>200)return;
+        FluidMotion.beforeDamage(proxy);
         var pos=proof.pos;var section=WorldBlocks.index().snapshot(SectionPos.of(pos).asLong());
         long state=ShapeProtocol.mapHash(BlockStateKey.encode(proxy.level().getBlockState(pos)));if(state==0)state=1;
-        long revision=proof.machine==null?(section==null?0:section.revision()):proof.machine.revision(),stateKey=proof.machine==null?state:proof.machine.state(),now=WorldWriter.clockMillis();var origin=proof.machine==null?proxy.getUUID():proof.machine.action();sent++;
+        long revision=proof.machine==null?(section==null?0:section.revision()):proof.machine.revision(),stateKey=proof.machine==null?state:proof.machine.state(),now=WorldWriter.clockMillis();var origin=proof.causal!=null?proof.causal:proof.machine==null?proxy.getUUID():proof.machine.action();sent++;
         view.requests().request(view.scope(),id->new Command(DAMAGE,WORLD_EFFECT,id,0,now,origin.getMostSignificantBits(),origin.getLeastSignificantBits(),ShapeProtocol.mapHash(proof.type),proxy.level().getGameTime(),
             view.scope().save(),view.scope().map(),view.nativeStatus().shapeRevision(),view.scope().world(),entry.id(),entry.spawn(),0,entry.location(),dev.sifucraft.bridge.SifuFrame.Vec3.ZERO,
             entry.health(),entry.radius(),entry.halfHeight(),0,pos.getX(),pos.getY(),pos.getZ(),0,0,amount,stateKey,revision,0,0))

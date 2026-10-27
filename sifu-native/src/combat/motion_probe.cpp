@@ -380,6 +380,10 @@ bool SweepBody(const Context& c,const Target& t,const BodySample& before,const u
     result->returned=bytes[g_params.offset[SweepParams::Return]]!=0;
     result->blocking=(hit[bits::bBlockingHit_Offset]>>bits::bBlockingHit_Shift)&1;
     result->penetrating=(hit[bits::bStartPenetrating_Offset]>>bits::bStartPenetrating_Shift)&1;
+    static_assert(off::FHitResult::ImpactNormal+sizeof(ue::FVector)<=gen::size::FHitResult);
+    std::memcpy(&result->normal,hit+off::FHitResult::ImpactNormal,sizeof(result->normal));
+    const float norm=Distance(result->normal,{});
+    if(!Finite(result->normal)||norm<.9f||norm>1.1f)result->normal={};
     // Inspect may reject a new overlap/command. Always retain the actual read-back
     // when identity survived; never report the requested endpoint as an observation.
     auto& after=result->body;after=before;

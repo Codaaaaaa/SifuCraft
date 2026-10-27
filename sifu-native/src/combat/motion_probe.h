@@ -28,7 +28,7 @@ struct BodySample {
     float hp=0,radius=0,half=0;
     int mode=-1;
 };
-struct SweepResult { BodySample body;bool invoked=false,returned=false,blocking=false,penetrating=false; };
+struct SweepResult { BodySample body;bool invoked=false,returned=false,blocking=false,penetrating=false;ue::FVector normal{}; };
 const char* CheckWorld(std::uintptr_t base,const Context& context,std::uint64_t now);
 const char* CheckBody(const Context& context,const Target& target,BodySample* sample,bool geometry,bool ground=true);
 const char* CheckPeers(std::uintptr_t base,const Context& context,const Target& target,Peers* peers,bool idle);

@@ -319,6 +319,8 @@ inline constexpr std::uint32_t PendingAddRootMotionSources = 0x18;
 namespace FHitResult {
 inline constexpr std::uint32_t Time = 0x8;
 inline constexpr std::uint32_t Location = 0x10;
+inline constexpr std::uint32_t Normal = 0x28;
+inline constexpr std::uint32_t ImpactNormal = 0x34;
 }
 namespace APawn {
 inline constexpr std::uint32_t Controller = 0x2E8;

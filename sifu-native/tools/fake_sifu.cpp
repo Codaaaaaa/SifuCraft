@@ -179,6 +179,7 @@ int main(int argc, char** argv) {
     bool world_audio_scenario = false;
     bool shapes_test = false;
     bool motion_scenario=false;
+    float motion_rise=0; // synthetic initial fixture height, never an in-game teleport
     bool shield_scenario = false;
     bool totem_scenario = false, totem_sent = false;
     bool food_scenario = false, food_sent = false;
@@ -249,6 +250,9 @@ int main(int argc, char** argv) {
             motion_pause_control=argv[++i];
         } else if (std::strcmp(argv[i], "--motion-scenario") == 0) {
             motion_scenario=true;with_enemies=true;shapes_test=true;
+        } else if (std::strcmp(argv[i], "--motion-rise") == 0 && i+1<argc) {
+            motion_rise=static_cast<float>(std::atof(argv[++i]));
+            if(!std::isfinite(motion_rise)||std::fabs(motion_rise)>10000)return 2;
         } else if (std::strcmp(argv[i], "--enemies") == 0) {
             with_enemies = true;
         } else if (std::strcmp(argv[i], "--enemy-scenario") == 0) {
@@ -357,7 +361,7 @@ int main(int argc, char** argv) {
             }
         }
         if (combat_scenario) frame.world_path = "/SifuCraft/Test/" + pawn.map + "." + pawn.map;
-        if(motion_scenario){frame.world_path="/SifuCraft/Test/"+pawn.map+"."+pawn.map;motion.Initialize(frame.player_location);}
+        if(motion_scenario){frame.world_path="/SifuCraft/Test/"+pawn.map+"."+pawn.map;motion.Initialize(frame.player_location,motion_rise);}
         if (with_enemies && !enemies_ready_at && bridge.peer_connected() &&
             (bridge.peer_state().flags & protocol::kMcReady)) enemies_ready_at = now;
         // Start the phase clock in Minecraft's world, so client startup cannot skip the test.
