@@ -65,6 +65,7 @@ public final class WorldMotionRequests implements AutoCloseable {
     }
     /** Any caller thread. Build and enqueue atomically so request IDs reach Native in order. */
     public CompletableFuture<Reply> request(Scope expected,LongFunction<Command> create){
+        if(!LiveTestFocus.allowed())return CompletableFuture.failedFuture(new Lost("live test interrupted by focus loss",false));
         synchronized(this){
             if(scope==null||!scope.equals(expected))return CompletableFuture.failedFuture(new Lost("world scope unavailable",false));
             if(pending.size()>=CAPACITY)return CompletableFuture.failedFuture(new Lost("world request backpressure",false));
@@ -76,6 +77,7 @@ public final class WorldMotionRequests implements AutoCloseable {
     }
     /** Client thread only. Future continuations run after releasing the broker lock. */
     public void pump(long now){
+        if(!LiveTestFocus.allowed()){attach(null);return;}
         var done=new ArrayList<Runnable>();
         synchronized(this){
             if(scope==null)return;

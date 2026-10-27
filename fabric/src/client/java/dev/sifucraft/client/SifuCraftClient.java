@@ -557,6 +557,11 @@ public final class SifuCraftClient implements ClientModInitializer {
     }
 
     private void frame() {
+        if (!dev.sifucraft.bridge.LiveTestFocus.allowed()) {
+            LOG.warn("[live-test-focus] INTERRUPTED: {}. No automatic resume; await user confirmation.", dev.sifucraft.bridge.LiveTestFocus.reason());
+            minecraft.stop();
+            return;
+        }
         long now = System.currentTimeMillis();
         minecraft.options.pauseOnLostFocus = false;
         hideWindowOnce();
@@ -900,6 +905,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     }
     private static boolean worldBlocksAvailable(){return dev.sifucraft.blocks.WorldBlocks.ENABLED&&BlockShapes.ENABLED;}
     public static boolean worldPaused(){
+        if(!dev.sifucraft.bridge.LiveTestFocus.allowed())return true;
         var view=dev.sifucraft.blocks.WorldMotionWorld.current();if(view==null||view.nativeStatus()==null)return false;
         var status=view.nativeStatus();long now=dev.sifucraft.bridge.WorldWriter.clockMillis();
         return status.world()==view.scope().world()&&status.atMs()<=now&&now-status.atMs()<=500&&(status.capabilities()&dev.sifucraft.bridge.WorldMotionProtocol.PAUSE_CAPABILITY)!=0&&
