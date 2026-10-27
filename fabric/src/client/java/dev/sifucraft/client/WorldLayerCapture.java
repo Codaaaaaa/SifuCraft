@@ -62,6 +62,8 @@ final class WorldLayerCapture implements AutoCloseable {
                     if (Boolean.getBoolean("sifucraft.fluidRenderSelfTest"))
                         FluidRenderCheck.inspect(data.asSlice(0,plane),data.asSlice(plane,plane),newest.width,newest.height,newest.camera);
                     if(Boolean.getBoolean("sifucraft.worldGpuSelfTest"))WorldGpuCheck.inspect(data.asSlice(0,plane),data.asSlice(plane,plane),newest.width,newest.height);
+                    if(Boolean.getBoolean("sifucraft.catalogModelSelfTest"))
+                        CatalogModelCheck.inspect(data.asSlice(0,plane),data.asSlice(plane,plane),newest.width,newest.height,newest.camera);
                     if (Boolean.getBoolean("sifucraft.blockModelSelfTest"))
                         BlockModelCheck.inspect(data.asSlice(0,plane),data.asSlice(plane,plane),newest.width,newest.height,newest.camera);
                     if (Boolean.getBoolean("sifucraft.worldEffectsSelfTest"))

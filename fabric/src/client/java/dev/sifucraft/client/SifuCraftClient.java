@@ -111,6 +111,8 @@ public final class SifuCraftClient implements ClientModInitializer {
     private PlayerEnvironmentCheck playerEnvironmentCheck;
     private MachineInventoryCheck machineInventoryCheck;
     private FluidAtmosphereCheck fluidAtmosphereCheck;
+    private CatalogModelCheck catalogModelCheck;
+    private CatalogLogicCheck catalogLogicCheck;
     private EnvironmentDamageCheck environmentDamageCheck;
     private NativePauseCheck nativePauseCheck;
     private FluidMotionCheck fluidMotionCheck;
@@ -364,6 +366,13 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(Boolean.getBoolean("sifucraft.fluidPersistenceSelfTest")){
             fluidPersistenceCheck=new FluidPersistenceCheck();ServerTickEvents.END_SERVER_TICK.register(fluidPersistenceCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(fluidPersistenceCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.catalogLogicSelfTest")){
+            catalogLogicCheck=new CatalogLogicCheck();ServerTickEvents.END_SERVER_TICK.register(catalogLogicCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(catalogLogicCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.catalogModelSelfTest")){
+            catalogModelCheck=new CatalogModelCheck();ServerLifecycleEvents.SERVER_STOPPING.register(catalogModelCheck::restore);
         }
         if(Boolean.getBoolean("sifucraft.fluidAtmosphereSelfTest")){
             fluidAtmosphereCheck=new FluidAtmosphereCheck();ServerTickEvents.END_SERVER_TICK.register(fluidAtmosphereCheck::tick);
@@ -670,6 +679,8 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(playerEnvironmentCheck!=null)playerEnvironmentCheck.clientTick(minecraft,guiAvailable(frame));
         if(machineInventoryCheck!=null)machineInventoryCheck.clientTick(minecraft,guiAvailable(frame));
         if(fluidAtmosphereCheck!=null)fluidAtmosphereCheck.clientTick(minecraft,frame);
+        if(catalogModelCheck!=null)catalogModelCheck.tick(minecraft,guiAvailable(frame));
+        if(catalogLogicCheck!=null)catalogLogicCheck.clientTick(minecraft,guiAvailable(frame));
         if(environmentDamageCheck!=null)environmentDamageCheck.clientTick(minecraft,frame);
         if(nativePauseCheck!=null)nativePauseCheck.clientTick(minecraft);
         if(fluidMotionCheck!=null)fluidMotionCheck.clientTick(minecraft);
