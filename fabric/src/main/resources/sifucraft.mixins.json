@@ -13,6 +13,7 @@
 		"EnvironmentPathMixin",
 		"FlowingFluidMixin",
 		"LevelMixin",
+		"LiquidContactMixin",
 		"PlayerAttackMixin",
 		"PlayerPredictionMixin",
 		"PistonContactsMixin",

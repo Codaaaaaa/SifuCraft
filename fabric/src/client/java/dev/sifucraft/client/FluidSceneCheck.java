@@ -6,6 +6,7 @@ import dev.sifucraft.blocks.SceneBlockSupport;
 import dev.sifucraft.blocks.BlockSectionIndex;
 import dev.sifucraft.blocks.WorldMotionWorld;
 import dev.sifucraft.collision.SifuCollision;
+import dev.sifucraft.collision.MapPlacement;
 import dev.sifucraft.storage.AtomicFiles;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -13,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -23,6 +25,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.storage.LevelResource;
 import org.slf4j.LoggerFactory;
 
@@ -38,6 +41,54 @@ final class FluidSceneCheck {
     private static void require(boolean value,String why){if(!value)throw new AssertionError("fluid scene: "+why);}
     void clientTick(Minecraft mc,boolean gui){if(finished){mc.stop();return;}var scene=SifuCollision.active();ready=gui&&scene!=null&&scene.placement().map().equals("FluidFixture")&&SifuCraftClient.blockCollisionCurrent();}
     private void set(BlockPos pos,BlockState state){var old=level.getBlockState(pos);require(!old.hasBlockEntity(),"no saved BE replaced");originals.putIfAbsent(pos.immutable(),old);level.setBlockAndUpdate(pos,state);}
+    private void boundaries(){
+        var active=SifuCollision.active();var air=Blocks.AIR.defaultBlockState();
+        for(int origin:new int[]{-4096,0,4096}){
+            var scene=new SifuCollision.Active(active.grid(),new MapPlacement("Boundary",origin,64,0));
+            SceneBlockSupport.withScene(scene,()->{
+                for(var direction:new Direction[]{Direction.WEST,Direction.EAST}){
+                    var inside=new BlockPos(origin+(direction==Direction.WEST?-2048:2047),70,30);var outside=inside.relative(direction);
+                    require(SceneFluidGeometry.canOccupy(level,inside)&&!SceneFluidGeometry.canOccupy(level,outside),"half-open map extent origin="+origin+" face="+direction);
+                    require(!SceneFluidGeometry.canPass(direction,level,inside,air,outside,air)&&!SceneFluidGeometry.canPass(direction.getOpposite(),level,outside,air,inside,air),"both directions reject a map boundary");
+                    require(SceneFluidGeometry.canPass(direction,level,inside.relative(direction.getOpposite()),air,inside,air),"ordinary adjacent cells in the same slot remain connected");
+                }
+                return null;
+            });
+        }
+        var boundary=new SifuCollision.Active(active.grid(),new MapPlacement("Boundary",-2046,64,0)); // x=2 is the next map
+        var touched=new java.util.LinkedHashSet<BlockPos>();
+        java.util.function.BiConsumer<BlockPos,BlockState> put=(pos,state)->{touched.add(pos.immutable());set(pos,state);};
+        var source=new BlockPos(1,70,30);var foreign=source.east();
+        try{
+            SceneBlockSupport.withScene(boundary,()->{
+                for(int x=0;x<=3;x++)for(int z=29;z<=31;z++){
+                    put.accept(new BlockPos(x,69,z),Blocks.STONE.defaultBlockState());
+                    put.accept(new BlockPos(x,70,z),x==0||x==3||z!=30?Blocks.STONE.defaultBlockState():air);
+                }
+                put.accept(source,Blocks.WATER.defaultBlockState());var state=level.getBlockState(source);state.getFluidState().tick(level,source,state);
+                require(level.getFluidState(foreign).isEmpty(),"original fluid tick cannot spread into the next map slot");
+                var oldFlow=Blocks.WATER.defaultBlockState().setValue(BlockStateProperties.LEVEL,4);put.accept(foreign,oldFlow);
+                for(int i=0;i<20;i++){var old=level.getBlockState(foreign);old.getFluidState().tick(level,foreign,old);}
+                require(level.getBlockState(foreign).equals(oldFlow),"deferred foreign-map ticks preserve saved flowing liquid and level");
+                return null;
+            });
+            SceneBlockSupport.withScene(active,()->{var state=level.getBlockState(foreign);state.getFluidState().tick(level,foreign,state);return null;});
+            require(level.getBlockState(foreign).getValue(BlockStateProperties.LEVEL)==1,"same original tick resumes normally with the matching geometry");
+            SceneBlockSupport.withScene(boundary,()->{
+                put.accept(source,air);put.accept(foreign,Blocks.WATER.defaultBlockState());put.accept(source,Blocks.LAVA.defaultBlockState());
+                require(level.getBlockState(source).is(Blocks.LAVA),"cross-map water cannot cool lava through direct LiquidBlock neighbor queries");return null;
+            });
+            SceneBlockSupport.withScene(active,()->{put.accept(foreign,air);put.accept(foreign,Blocks.WATER.defaultBlockState());return null;});
+            require(level.getBlockState(source).is(Blocks.OBSIDIAN),"same-map original water/lava contact still produces obsidian");
+            SceneBlockSupport.withScene(boundary,()->{
+                put.accept(source,air);put.accept(foreign,Blocks.BLUE_ICE.defaultBlockState());put.accept(source.below(),Blocks.SOUL_SOIL.defaultBlockState());put.accept(source,Blocks.LAVA.defaultBlockState());
+                require(level.getBlockState(source).is(Blocks.LAVA),"cross-map blue ice cannot cause basalt");return null;
+            });
+            SceneBlockSupport.withScene(active,()->{put.accept(foreign,air);put.accept(foreign,Blocks.BLUE_ICE.defaultBlockState());return null;});
+            require(level.getBlockState(source).is(Blocks.BASALT),"same-map soul soil and blue ice retain original basalt conversion");
+        }finally{for(var pos:touched){var old=originals.remove(pos);if(old!=null)level.setBlock(pos,old,2);}}
+        LoggerFactory.getLogger("sifucraft").info("[fluid-scene-test] map boundaries PASS: 3 origins/6 faces, original flow rejection, foreign level preserved/resumed, water-lava and basalt negative/positive contacts");
+    }
     private void bucket(int offset,Item input,Item output){
         var originalPos=player.position();float yaw=player.getYRot(),pitch=player.getXRot();var hand=player.getItemInHand(InteractionHand.MAIN_HAND).copy();
         try{
@@ -68,7 +119,7 @@ final class FluidSceneCheck {
         if(finished||stage==0&&!ready||stage==8&&!ready)return;
         try{
             if(stage==0){
-                level=server.overworld();if(server.getPlayerList().getPlayers().isEmpty()||SceneFluidGeometry.canOccupy(level,GATE))return;player=server.getPlayerList().getPlayers().getFirst();started=System.currentTimeMillis();revalidation();
+                level=server.overworld();if(server.getPlayerList().getPlayers().isEmpty()||SceneFluidGeometry.canOccupy(level,GATE))return;player=server.getPlayerList().getPlayers().getFirst();started=System.currentTimeMillis();boundaries();revalidation();
                 for(int offset:new int[]{0,20})for(int y=62;y<=66;y++)for(int z=1;z<=7;z++)for(int x=1;x<=15;x++)set(new BlockPos(x+offset,y,z),Blocks.AIR.defaultBlockState());
                 for(int z=2;z<=6;z++)for(int x=2;x<=6;x++){
                     set(new BlockPos(x+20,63,z),Blocks.STONE.defaultBlockState());
@@ -102,7 +153,7 @@ final class FluidSceneCheck {
                 if(stage==3){gate(true);stage=4;return;}
                 if(stage==5){gate(false);stage=6;return;}
                 restore(server);stage=8;
-                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p9-fluid-scene.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(Map.of("result","PASS","scheduled_ticks",compared,"bucket_conversions",6,"native_wall_bucket_rejected",true,"native_gate_open_close_reopen",true,"trace",trace),out));
+                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p9-fluid-scene.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(Map.of("result","PASS","scheduled_ticks",compared,"bucket_conversions",6,"native_wall_bucket_rejected",true,"native_gate_open_close_reopen",true,"map_boundaries",true,"foreign_tick_preserved_and_resumed",true,"boundary_mix_contacts",true,"trace",trace),out));
                 LoggerFactory.getLogger("sifucraft").info("[fluid-scene-test] PASS {} scheduled ticks equal ordinary vanilla pool; bucket source/pickup/inventory, no floor/wall leak, Native gate open/close/reopen",compared);
             }else if(stage==8)finished=true;
         }catch(Exception|AssertionError e){LoggerFactory.getLogger("sifucraft").error("[fluid-scene-test] FAIL",e);restore(server);finished=true;Minecraft.getInstance().execute(()->{throw new AssertionError(e);});}
