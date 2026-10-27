@@ -106,6 +106,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private HotFloorCheck hotFloorCheck;
     private BubbleMatrixCheck bubbleMatrixCheck;
     private FluidSceneCheck fluidSceneCheck;
+    private FluidPersistenceCheck fluidPersistenceCheck;
     private EnvironmentDamageCheck environmentDamageCheck;
     private NativePauseCheck nativePauseCheck;
     private FluidMotionCheck fluidMotionCheck;
@@ -355,6 +356,10 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(Boolean.getBoolean("sifucraft.fluidSceneSelfTest")){
             fluidSceneCheck=new FluidSceneCheck();ServerTickEvents.END_SERVER_TICK.register(fluidSceneCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(fluidSceneCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.fluidPersistenceSelfTest")){
+            fluidPersistenceCheck=new FluidPersistenceCheck();ServerTickEvents.END_SERVER_TICK.register(fluidPersistenceCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(fluidPersistenceCheck::restore);
         }
         if(Boolean.getBoolean("sifucraft.environmentDamageSelfTest")){
             environmentDamageCheck=new EnvironmentDamageCheck();ServerTickEvents.END_SERVER_TICK.register(environmentDamageCheck::tick);
@@ -639,6 +644,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(pistonTransactionCheck!=null)pistonTransactionCheck.clientTick(minecraft,guiAvailable(frame));
         if(nativePistonCheck!=null)nativePistonCheck.clientTick(minecraft,guiAvailable(frame),frame);
         if(fluidSceneCheck!=null)fluidSceneCheck.clientTick(minecraft,guiAvailable(frame));
+        if(fluidPersistenceCheck!=null)fluidPersistenceCheck.clientTick(minecraft,guiAvailable(frame));
         if(environmentDamageCheck!=null)environmentDamageCheck.clientTick(minecraft,frame);
         if(nativePauseCheck!=null)nativePauseCheck.clientTick(minecraft);
         if(fluidMotionCheck!=null)fluidMotionCheck.clientTick(minecraft);
