@@ -17,7 +17,7 @@ import java.util.function.Consumer;
  * which keeps Sifu's levels (about -70 m .. +40 m) well above the dev world's flat ground at y = -60.
  */
 final class MapSlots {
-    static final int SPACING = 4096;
+    static final int SPACING = MapPlacement.SLOT_SPACING;
     static final int ORIGIN_Y = 64;
     private static final String FILE_NAME = "sifucraft-maps.properties";
 

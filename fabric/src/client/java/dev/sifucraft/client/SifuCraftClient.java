@@ -106,6 +106,8 @@ public final class SifuCraftClient implements ClientModInitializer {
     private NativePauseCheck nativePauseCheck;
     private FluidMotionCheck fluidMotionCheck;
     private NativeFluidCheck nativeFluidCheck;
+    private MachineProjectileCheck machineProjectileCheck;
+    private NativeMachineCheck nativeMachineCheck;
     private SignalCheck signalCheck;
     private PlayerSignalCheck playerSignalCheck;
     private SensorCheck sensorCheck;
@@ -353,6 +355,14 @@ public final class SifuCraftClient implements ClientModInitializer {
             nativeFluidCheck=new NativeFluidCheck();ServerTickEvents.END_SERVER_TICK.register(nativeFluidCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(nativeFluidCheck::restore);
         }
+        if(Boolean.getBoolean("sifucraft.machineProjectileSelfTest")){
+            machineProjectileCheck=new MachineProjectileCheck();ServerTickEvents.END_SERVER_TICK.register(machineProjectileCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(machineProjectileCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.nativeMachineSelfTest")){
+            nativeMachineCheck=new NativeMachineCheck();ServerTickEvents.END_SERVER_TICK.register(nativeMachineCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(nativeMachineCheck::restore);
+        }
         if (Boolean.getBoolean("sifucraft.sceneSupportSelfTest")) {
             var check=new BlockSupportCheck();
             ServerTickEvents.END_SERVER_TICK.register(check::tick);
@@ -566,6 +576,8 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(nativePauseCheck!=null)nativePauseCheck.clientTick(minecraft);
         if(fluidMotionCheck!=null)fluidMotionCheck.clientTick(minecraft);
         if(nativeFluidCheck!=null)nativeFluidCheck.clientTick(minecraft,frame);
+        if(machineProjectileCheck!=null)machineProjectileCheck.clientTick(minecraft,frame);
+        if(nativeMachineCheck!=null)nativeMachineCheck.clientTick(minecraft,frame);
         if (signalCheck != null) signalCheck.clientTick(minecraft,guiAvailable(frame));
         if (playerSignalCheck != null) playerSignalCheck.clientTick(minecraft,guiAvailable(frame),frame);
         if (sensorCheck != null) sensorCheck.clientTick(minecraft,guiAvailable(frame));

@@ -6,6 +6,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
+import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.projectile.hurtingprojectile.windcharge.WindCharge;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
@@ -16,7 +17,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/** Wind charges use ray queries, so the extra entity-collision shapes alone do not stop them. */
+/** Projectile rays need the original scene in addition to the extra movement collision shapes. */
 @Mixin(ProjectileUtil.class)
 public abstract class WindChargeCollisionMixin {
     @Unique private static final AtomicLong sifucraft$contacts = new AtomicLong();
@@ -25,7 +26,7 @@ public abstract class WindChargeCollisionMixin {
             at = @At("RETURN"), cancellable = true)
     private static void sifucraft$windOnScene(Entity projectile, Predicate<Entity> filter, ClipContext.Block mode,
                                              CallbackInfoReturnable<HitResult> cir) {
-        if (!(projectile instanceof WindCharge) || projectile.level().dimension() != Level.OVERWORLD) return;
+        if (!(projectile instanceof Projectile) || projectile.level().dimension() != Level.OVERWORLD) return;
         var active = SifuCollision.active();
         if (active == null) return;
         var start = projectile.position();
@@ -36,6 +37,6 @@ public abstract class WindChargeCollisionMixin {
                 start.distanceToSqr(scene.getLocation()) >= start.distanceToSqr(vanilla.getLocation()) - 1e-8)) return;
         cir.setReturnValue(scene);
         if (projectile.level() instanceof ServerLevel && sifucraft$contacts.getAndIncrement() < 60)
-            org.slf4j.LoggerFactory.getLogger("sifucraft").info("[wind-charge] hit imported scene at {} face={}", scene.getLocation(), scene.getDirection());
+            org.slf4j.LoggerFactory.getLogger("sifucraft").info("[{}] hit imported scene at {} face={}", projectile instanceof WindCharge?"wind-charge":"projectile",scene.getLocation(), scene.getDirection());
     }
 }

@@ -20,7 +20,8 @@ public abstract class WindChargeSceneHitMixin {
     private boolean sifucraft$sceneIsPhysical(BlockState state, Operation<Boolean> original,
                                               @Local(argsOnly = true) HitResult hit) {
         boolean empty = original.call(state);
-        if (!empty || !((Object) this instanceof WindCharge charge) || charge.level().dimension() != Level.OVERWORLD ||
+        var projectile=(Projectile)(Object)this;
+        if (!empty || projectile.level().dimension() != Level.OVERWORLD ||
                 !(hit instanceof BlockHitResult block)) return empty;
         var active = SifuCollision.active();
         if (active == null) return empty;

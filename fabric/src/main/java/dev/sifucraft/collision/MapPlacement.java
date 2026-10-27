@@ -8,6 +8,8 @@ package dev.sifucraft.collision;
  */
 public record MapPlacement(String map, int originX, int originY, int originZ) {
     public static final double CM_PER_BLOCK = 100.0;
+    public static final int SLOT_SPACING=4096;
+    public boolean containsX(double x){return x>=originX-SLOT_SPACING/2.0&&x<originX+SLOT_SPACING/2.0;}
 
     public double mcX(double ueX) {
         return ueX / CM_PER_BLOCK + originX;

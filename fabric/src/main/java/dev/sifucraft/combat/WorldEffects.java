@@ -25,7 +25,7 @@ import org.slf4j.LoggerFactory;
 /** Only actual vanilla environment hurt callbacks can issue a world-scoped damage event. */
 public final class WorldEffects {
     private WorldEffects(){}
-    private record Evidence(String type,BlockPos pos){}
+    private record Evidence(String type,BlockPos pos,MachineProjectiles.Origin machine){Evidence(String type,BlockPos pos){this(type,pos,null);}}
     private static long sent,applied,rejected,lost;private static int logged;
     public record Stats(long sent,long applied,long rejected,long lost){}
     public static Stats stats(){return new Stats(sent,applied,rejected,lost);}
@@ -59,6 +59,8 @@ public final class WorldEffects {
         return view;
     }
     private static Evidence evidence(EnemyProxy proxy,DamageSource source){
+        var machine=MachineProjectiles.evidence(proxy,source);
+        if(machine!=null)return new Evidence(source.typeHolder().unwrapKey().orElseThrow().identifier().toString(),machine.pos(),machine);
         if(source.getEntity()!=null||source.getDirectEntity()!=null)return null; // machine projectiles need their separate origin credential
         var level=proxy.level();var box=proxy.getBoundingBox();
         if(source.is(DamageTypes.ON_FIRE))return proxy.getRemainingFireTicks()>0?new Evidence("minecraft:on_fire",proxy.blockPosition()):null;
@@ -90,7 +92,7 @@ public final class WorldEffects {
         var entry=view.enemies().entries().stream().filter(e->e.key().equals(proxy.sifuKey())&&e.alive()).findFirst().orElse(null);if(entry==null||entry.radius()<10||entry.radius()>100||entry.halfHeight()>200)return;
         var pos=proof.pos;var section=WorldBlocks.index().snapshot(SectionPos.of(pos).asLong());
         long state=ShapeProtocol.mapHash(BlockStateKey.encode(proxy.level().getBlockState(pos)));if(state==0)state=1;
-        long revision=section==null?0:section.revision(),stateKey=state,now=WorldWriter.clockMillis();var origin=proxy.getUUID();sent++;
+        long revision=proof.machine==null?(section==null?0:section.revision()):proof.machine.revision(),stateKey=proof.machine==null?state:proof.machine.state(),now=WorldWriter.clockMillis();var origin=proof.machine==null?proxy.getUUID():proof.machine.action();sent++;
         view.requests().request(view.scope(),id->new Command(DAMAGE,WORLD_EFFECT,id,0,now,origin.getMostSignificantBits(),origin.getLeastSignificantBits(),ShapeProtocol.mapHash(proof.type),proxy.level().getGameTime(),
             view.scope().save(),view.scope().map(),view.nativeStatus().shapeRevision(),view.scope().world(),entry.id(),entry.spawn(),0,entry.location(),dev.sifucraft.bridge.SifuFrame.Vec3.ZERO,
             entry.health(),entry.radius(),entry.halfHeight(),0,pos.getX(),pos.getY(),pos.getZ(),0,0,amount,stateKey,revision,0,0))
