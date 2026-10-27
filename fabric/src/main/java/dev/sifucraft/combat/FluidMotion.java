@@ -69,17 +69,16 @@ public final class FluidMotion {
     public record Sample(EnemyFrame.Key key,Vec3 position,Vec3 velocity,float width,float height,long seed,int entityId,long tick){}
     public interface Observer {void prepared(Sample initial);void simulated(Sample planned);void completed(Sample actual);}
     private static volatile Observer observer;
-    public static void observe(Observer value){if(value!=null&&!Boolean.getBoolean("sifucraft.fluidMotionSelfTest"))throw new IllegalStateException("isolated fixture only");observer=value;}
+    public static void observe(Observer value){if(value!=null&&!Boolean.getBoolean("sifucraft.fluidMotionSelfTest")&&!Boolean.getBoolean("sifucraft.nativeLiftSelfTest"))throw new IllegalStateException("isolated fixture only");observer=value;}
     private static Sample sample(Flight f){return new Sample(f.key,f.body.position(),f.body.getDeltaMovement(),f.body.getBbWidth(),f.body.getBbHeight(),((long)f.key.id()<<32)^f.key.spawn(),f.body.getId(),f.lastTick);}
     private static boolean available(WorldMotionWorld.View v,ServerLevel level){
         if(v==null||!WorldBlocks.ENABLED||!v.scope().equals(v.requests().scope())||v.scope().save()!=PistonMovePlans.saveKey(level)||v.scene()==null||
             !v.scene().matchesScope(v.scope().nativeSession(),v.scope().world())||!v.placement().equals(v.scene().placement())||v.enemies()==null||
-            v.enemies().session()!=v.scope().nativeSession()||v.enemies().worldGeneration()!=v.scope().world()||v.nativeStatus()==null||v.nativeStatus().flags()!=0||
-            (v.nativeStatus().capabilities()&MOTION_CAPABILITY)==0)return false;
+            v.enemies().session()!=v.scope().nativeSession()||v.enemies().worldGeneration()!=v.scope().world()||v.nativeStatus()==null||v.nativeStatus().flags()!=0)return false;
         return true;
     }
     private static boolean valid(WorldMotionWorld.View v,ServerLevel level){
-        if(!available(v,level))return false;
+        if(!available(v,level)||(v.nativeStatus().capabilities()&MOTION_CAPABILITY)==0)return false;
         long now=WorldWriter.clockMillis(),age=System.currentTimeMillis()-v.enemies().receivedMs();
         return age>=0&&age<=200&&v.nativeStatus().atMs()<=now&&now-v.nativeStatus().atMs()<=200;
     }
