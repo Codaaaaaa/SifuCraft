@@ -22,7 +22,7 @@ public final class WorldMotionProtocolTest {
         var reserve=sample(RESERVE,MACHINE,SifuFrame.Vec3.ZERO,500,0,42,2);
         check(Arrays.equals(encode(reserve),fixture("world_motion_command.hex")),"independent C++/Java command golden");
         var reply=decodeReply(fixture("world_motion_reply.hex"));
-        check(reply.id()==11&&reply.lease()==12&&reply.actorSerial()==99&&reply.restored()==7&&reply.componentToken()==55&&reply.position().z()==90&&reply.delta().x()==10,
+        check(reply.id()==11&&reply.lease()==12&&reply.actorSerial()==99&&reply.restored()==7&&reply.componentToken()==55&&reply.position().z()==90&&reply.delta().x()==10&&reply.rootRadius()==35&&reply.rootHalfHeight()==90,
             "C++ receipt fields and restored mask");
         invalid(()->encode(sample(RESERVE,MACHINE,SifuFrame.Vec3.ZERO,501,0,42,2)));
         invalid(()->encode(sample(RESERVE,MACHINE,SifuFrame.Vec3.ZERO,500,0,42,0)));
@@ -53,7 +53,7 @@ public final class WorldMotionProtocolTest {
             byte[] replyBytes=fixture("world_motion_reply.hex");memory.set(JAVA_INT,at,READY);memory.set(JAVA_LONG,at+8,1);
             MemorySegment.copy(MemorySegment.ofArray(replyBytes),0,memory,at+16,REPLY_BYTES);
             check(mailbox.poll().restored()==7&&memory.get(JAVA_INT,at)==FREE,"receipt copied and released");
-            memory.set(JAVA_INT,at,READY);memory.set(JAVA_LONG,at+16+112,0);
+            memory.set(JAVA_INT,at,READY);memory.set(JAVA_LONG,at+16+120,0);
             invalid(mailbox::poll);check(memory.get(JAVA_INT,at)==FREE,"bad receipt does not poison the ring");
             invalid(()->new WorldMotionMailbox(memory,12,22));
         }

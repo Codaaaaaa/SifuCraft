@@ -12,4 +12,6 @@ void Exchange(Context context,Mailbox& mailbox);
 void ApplyOnGameThread(std::uintptr_t base);
 bool Skip(std::uintptr_t component,combat::motion::Part part);
 void AfterOriginal(std::uintptr_t component,combat::motion::Part part);
+void PoseOwnedMovement(std::uintptr_t component);
+void BeforeOriginalMovement(std::uintptr_t component);
 }

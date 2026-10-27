@@ -47,9 +47,9 @@ public abstract class PistonContactsMixin {
     @Redirect(method="moveEntityByPiston",at=@At(value="INVOKE",target="Lnet/minecraft/world/entity/Entity;position()Lnet/minecraft/world/phys/Vec3;"))
     private static Vec3 sifucraft$previewPosition(Entity entity){return PistonPreview.position(entity);}
     @Redirect(method="moveEntityByPiston",at=@At(value="INVOKE",target="Lnet/minecraft/world/entity/Entity;applyEffectsFromBlocks(Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;)V"))
-    private static void sifucraft$previewEffects(Entity entity,Vec3 from,Vec3 to){if(!PistonPreview.active())entity.applyEffectsFromBlocks(from,to);}
+    private static void sifucraft$previewEffects(Entity entity,Vec3 from,Vec3 to){if(!PistonPreview.active()&&!dev.sifucraft.blocks.PistonMachines.suppress(entity))entity.applyEffectsFromBlocks(from,to);}
     @Redirect(method="moveEntityByPiston",at=@At(value="INVOKE",target="Lnet/minecraft/world/entity/Entity;removeLatestMovementRecording()V"))
-    private static void sifucraft$previewRecording(Entity entity){if(!PistonPreview.active())entity.removeLatestMovementRecording();}
+    private static void sifucraft$previewRecording(Entity entity){if(!PistonPreview.active()&&!dev.sifucraft.blocks.PistonMachines.suppress(entity))entity.removeLatestMovementRecording();}
     @Redirect(method="moveCollidedEntities",at=@At(value="INVOKE",target="Lnet/minecraft/world/level/Level;getEntities(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/phys/AABB;)Ljava/util/List;"))
     private static List<Entity> sifucraft$previewEntities(Level level,Entity excluded,AABB area){return PistonPreview.entities(level,excluded,area,null);}
     @Redirect(method="moveStuckEntities",at=@At(value="INVOKE",target="Lnet/minecraft/world/level/Level;getEntities(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/phys/AABB;Ljava/util/function/Predicate;)Ljava/util/List;"))

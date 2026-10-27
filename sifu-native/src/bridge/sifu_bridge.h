@@ -116,7 +116,7 @@ public:
     std::uint32_t peer_pid() const { return peer_pid_; }
     std::uint64_t peer_session() const { return peer_session_; }
     std::uint64_t session() const { return session_; }
-    std::uint64_t frame() const { return frame_; }
+    std::uint64_t frame() const { return frame_; } // runtime publication sequence, also used by enemy tables
     const BridgeStats& stats() const { return stats_; }
 
     // One-line summary for the log.

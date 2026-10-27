@@ -20,9 +20,11 @@ public final class SifuCraftMod implements ModInitializer {
             ServerChunkEvents.CHUNK_LOAD.register((level, chunk, generated) -> WorldBlocks.loaded(level, chunk));
             ServerChunkEvents.CHUNK_UNLOAD.register(WorldBlocks::unloaded);
         }
-        ServerTickEvents.END_SERVER_TICK.register(EnemyMirrors::tick);
+        ServerTickEvents.START_SERVER_TICK.register(EnemyMirrors::tick);
+        ServerTickEvents.END_SERVER_TICK.register(dev.sifucraft.blocks.PistonMachines::update);
         ServerTickEvents.START_SERVER_TICK.register(dev.sifucraft.blocks.PlayerSignalContacts::tick);
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PlayerSignalContacts.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> EnemyMirrors.stop());
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PistonMachines.stop());
     }
 }

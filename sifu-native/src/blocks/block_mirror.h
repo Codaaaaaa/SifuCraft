@@ -25,6 +25,8 @@ void Update(std::uintptr_t world, const std::string& map, const bridge::BlockLis
 bool ShapesReady();
 bool ShapesSettled(); // exact latest desired revision, with no partially applied box queue
 std::uint64_t ShapesAppliedRevision();
+// Game thread only: version of a currently owned collision component, never a foreign UObject.
+std::uint64_t OwnedBaseVersion(std::uintptr_t component);
 
 // Game thread (engine tick, stage 6).
 void ApplyOnGameThread(std::uintptr_t image_base);

@@ -37,6 +37,7 @@
 #include "bridge/overlay_reader.h"
 #include "bridge/world_reader.h"
 #include "bridge/shape_reader.h"
+#include "world_motion_fake.h"
 #include "combat/damage_ledger.h"
 #include "combat/shield_ledger.h"
 #include "combat/impulse_ledger.h"
@@ -174,6 +175,7 @@ int main(int argc, char** argv) {
     bool world_camera_scenario = false;
     bool world_audio_scenario = false;
     bool shapes_test = false;
+    bool motion_scenario=false;
     bool shield_scenario = false;
     bool totem_scenario = false, totem_sent = false;
     bool food_scenario = false, food_sent = false;
@@ -238,6 +240,8 @@ int main(int argc, char** argv) {
             }
         } else if (std::strcmp(argv[i], "--interaction-scenario") == 0 && i + 2 < argc) {
             interaction_scenario = true; door_closed = argv[++i]; door_open = argv[++i];
+        } else if (std::strcmp(argv[i], "--motion-scenario") == 0) {
+            motion_scenario=true;with_enemies=true;shapes_test=true;
         } else if (std::strcmp(argv[i], "--enemies") == 0) {
             with_enemies = true;
         } else if (std::strcmp(argv[i], "--enemy-scenario") == 0) {
@@ -312,13 +316,14 @@ int main(int argc, char** argv) {
     world_image::Frame world_frame;
     shape_data::Reader shape_reader;
     shape_data::Frame shape_frame;
+    world_motion::fake::Harness motion;
     unsigned world_frames = 0;
     bool world_saved = false;
     unsigned camera_samples[6]{}, camera_visible[6]{}, camera_errors = 0, native_hud_frames = 0;
     int camera_phase = 0, logged_camera_phase = -1;
     const ULONGLONG begin = GetTickCount64();
     for (std::uint64_t tick = 1; !g_stop; ++tick) {
-        Sleep(kTickMs);
+        Sleep(motion_scenario?8:kTickMs);
         const ULONGLONG now = GetTickCount64();
         const double elapsed = (now - begin) / 1000.0;
         if (seconds > 0 && elapsed >= seconds) break;
@@ -345,6 +350,7 @@ int main(int argc, char** argv) {
             }
         }
         if (combat_scenario) frame.world_path = "/SifuCraft/Test/" + pawn.map + "." + pawn.map;
+        if(motion_scenario){frame.world_path="/SifuCraft/Test/"+pawn.map+"."+pawn.map;motion.Initialize(frame.player_location);}
         if (with_enemies && !enemies_ready_at && bridge.peer_connected() &&
             (bridge.peer_state().flags & protocol::kMcReady)) enemies_ready_at = now;
         // Start the phase clock in Minecraft's world, so client startup cannot skip the test.
@@ -365,6 +371,7 @@ int main(int argc, char** argv) {
                 SC_LOG("[shape-test] received revision=%llu sections=%zu",(unsigned long long)shape_frame.header.revision,shape_frame.parts.size());
             if (shape_frame.header.revision) shape_reader.Acknowledge(shape_frame,true,now);
         }
+        if(motion_scenario)motion.Tick(bridge.session(),bridge.peer_connected()?bridge.peer_session():0,bridge.frame(),frame.world_generation,now,shape_frame);
         if (interaction_scenario) {
             protocol::InteractionSnapshot candidate{};
             candidate.frame = now; candidate.revision = 7; candidate.world = frame.world_generation; candidate.epoch = frame.anchor_epoch;
@@ -543,7 +550,8 @@ int main(int argc, char** argv) {
                        damage.flags, damage.stun_hint, result.result, result.sifu_damage, result.health_after, applied_damage);
             }
         }
-        if (with_enemies) {
+        if(motion_scenario)bridge.PublishEnemies(frame.world_generation,motion.Entries());
+        else if (with_enemies) {
             std::vector<protocol::EnemyEntry> enemies;
             if (phase != 3) {
                 for (std::uint32_t id = 101; id <= (phase == 1 || phase == 2 ? 101u : 102u); ++id) {

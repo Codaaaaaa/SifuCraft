@@ -255,9 +255,11 @@ struct OwnedObject {
     mutable ue::ObjectIdentity identity;
     ue::FName name{};
 };
-struct ShapeShown { OwnedObject actor, component; shape_data::Box box{}; };
+struct ShapeShown { OwnedObject actor, component; shape_data::Box box{};std::uint64_t geometry_version=0; };
 struct ShapeWanted { ShapeKey key{}; shape_data::Box box{}; };
 std::map<ShapeKey,ShapeShown> g_shape_actors;
+std::unordered_map<std::uintptr_t,ShapeKey> g_shape_components;
+std::uint64_t g_shape_geometry_version=0;
 std::vector<ShapeWanted> g_shape_spawns;
 std::vector<ShapeKey> g_shape_destroys;
 bool g_shape_mode = false;
@@ -799,6 +801,7 @@ void Destroy(std::uintptr_t actor) {
 }
 
 void DestroyShape(const ShapeShown& s) {
+    g_shape_components.erase(s.component.pointer);
     if (!OwnedActor(s.actor)) return;
     if (OwnedShape(s)) {
         Clear(g_shape_calls.remove); Put(g_shape_calls.object,s.actor.pointer);
@@ -849,6 +852,7 @@ ShapeShown SpawnShape(const ShapeWanted& wanted) {
     }
     if (!valid || !AddNavModifier(actor)) { DestroyShape(shown); return {}; }
     g_stats.shapes_created.fetch_add(1); g_stats.nav_modifiers.fetch_add(1);
+    shown.geometry_version=++g_shape_geometry_version;
     return shown;
 }
 
@@ -875,7 +879,7 @@ bool UpdateShape(ShapeShown& shown,const ShapeWanted& wanted) {
     const auto close=[](float a,float b){return std::isfinite(a)&&std::fabs(a-b)<.1f;};
     if(!close(actual.x,center.x)||!close(actual.y,center.y)||!close(actual.z,center.z)||
        !close(size.x,extent.x)||!close(size.y,extent.y)||!close(size.z,extent.z))return false;
-    shown.box=box;g_stats.shapes_updated.fetch_add(1);
+    shown.box=box;shown.geometry_version=++g_shape_geometry_version;g_stats.shapes_updated.fetch_add(1);
     if(g_shape_update_logged<12){
         ++g_shape_update_logged;
         SC_LOG("[block-shapes] update PASS source=%016llX actor=%d/%d component=%d/%d world=(%.2f,%.2f,%.2f) extent=(%.2f,%.2f,%.2f)",
@@ -987,7 +991,7 @@ void ApplyOnGameThread(std::uintptr_t image_base) {
     if (world != g_world) {
         // The previous world destroyed its actors, the keeper and its materials with itself.
         g_actors.clear();
-        g_shape_actors.clear(); g_shape_spawns.clear(); g_shape_destroys.clear();
+        g_shape_actors.clear();g_shape_components.clear(); g_shape_spawns.clear(); g_shape_destroys.clear();
         g_shape_applied.store(0,std::memory_order_release);
         g_shape_presentation_scope.store(0,std::memory_order_release);
         g_shape_logged = 0;g_shape_update_logged=0; g_shape_retry_at = 0;
@@ -1049,7 +1053,7 @@ void ApplyOnGameThread(std::uintptr_t image_base) {
         ShapeShown shown = SpawnShape(wanted);
         if (!OwnedShape(shown)) { g_stats.failed.fetch_add(1); g_shape_retry_at=GetTickCount64()+1000; break; } // retry; never acknowledge a partial snapshot
         if (old != g_shape_actors.end()) { DestroyShape(old->second); ++frame_destroys; }
-        g_shape_actors[wanted.key] = shown; g_shape_spawns.pop_back();
+        g_shape_actors[wanted.key] = shown;g_shape_components[shown.component.pointer]=wanted.key; g_shape_spawns.pop_back();
     }
     g_stats.shapes.store(g_shape_actors.size());
     if (g_shape_mode && g_actors.empty() && g_shape_spawns.empty() && g_shape_destroys.empty()) {
@@ -1065,6 +1069,11 @@ bool ShapesReady() {
 }
 bool ShapesSettled(){
     return ShapesReady()&&g_shape_requested.load(std::memory_order_acquire)==g_shape_applied.load(std::memory_order_acquire);
+}
+std::uint64_t OwnedBaseVersion(std::uintptr_t component){
+    auto index=g_shape_components.find(component);if(index==g_shape_components.end())return 0;
+    auto found=g_shape_actors.find(index->second);
+    return found!=g_shape_actors.end()&&found->second.component.pointer==component&&OwnedShape(found->second)?found->second.geometry_version:0;
 }
 std::uint64_t ShapesAppliedRevision() { return g_shape_revision_done.load(std::memory_order_acquire); }
 

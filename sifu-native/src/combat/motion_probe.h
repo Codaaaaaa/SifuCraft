@@ -14,6 +14,7 @@ struct Context {
     std::uintptr_t pawn = 0;
     ue::ObjectIdentity pawn_identity;
     std::uint64_t updated_ms = 0;
+    std::uint64_t native_frame = 0;
     bool enabled = false;
     std::vector<Enemies::Target> targets;
     std::shared_ptr<const collision::VoxelGrid> grid;

@@ -18,6 +18,8 @@ struct Body {
     std::uint64_t token=0;
     std::array<float,3> position{};
     float health=0,radius=0,half=0;
+    std::array<float,3> root_offset{};
+    float root_radius=0,root_half=0;
 };
 struct Sweep {
     Body body;
@@ -28,6 +30,7 @@ public:
     virtual ~Backend()=default;
     virtual bool Bind(const Command&,Body*)=0;
     virtual bool Check(Body*)=0;
+    virtual bool Observe(Body* body){return Check(body);} // final original-Tick pose, without requiring an idle AI
     virtual Sweep Move(const Body&,const std::array<float,3>&)=0;
     // Clears only this service's filters. It never rewrites an actor's old pose/state.
     virtual void Forget()=0;
@@ -57,6 +60,11 @@ public:
         const bool restore_timeout=phase_==Phase::Releasing&&now>=deadline_+500;
         if(phase_==Phase::Releasing&&(restored_==7||restore_timeout)&&(!release_||Room())) {
             if(restore_timeout&&restored_!=7)reason_=Status::TimedOut;
+            if(restored_==7){
+                Body observed;
+                if(backend_.Observe(&observed)&&ValidBody(observed)&&observed.serial==body_.serial&&observed.token==body_.token)body_=observed;
+                else reason_=Status::TargetLost;
+            }
             if(release_) {Finish(*release_,reason_==Status::Released?Status::Released:reason_,now);release_.reset();}
             backend_.Forget();phase_=Phase::Free;
         }
@@ -148,10 +156,14 @@ private:
     static double Distance(const std::array<float,3>& a,const std::array<float,3>& b,const float* delta=nullptr){float d[3];for(int i=0;i<3;++i)d[i]=a[i]-b[i]-(delta?delta[i]:0);return Length(d);}
     static bool ValidBody(const Body& b){
         return b.serial>0&&b.token&&std::all_of(b.position.begin(),b.position.end(),[](float v){return std::isfinite(v);})&&
-            std::isfinite(b.health)&&b.health>0&&std::isfinite(b.radius)&&std::isfinite(b.half)&&b.radius>=10&&b.radius<=100&&b.half>=b.radius&&b.half<=200;
+            std::isfinite(b.health)&&b.health>0&&std::isfinite(b.radius)&&std::isfinite(b.half)&&b.radius>=10&&b.radius<=100&&b.half>=b.radius&&b.half<=200&&
+            std::all_of(b.root_offset.begin(),b.root_offset.end(),[](float v){return std::isfinite(v);})&&Length(b.root_offset.data())<=100&&
+            std::isfinite(b.root_radius)&&std::isfinite(b.root_half)&&((b.root_radius==0&&b.root_half==0)||
+                (b.root_radius>=10&&b.root_radius<=100&&b.root_half>=b.root_radius&&b.root_half<=200));
     }
     static bool SameBody(const Body& a,const Body& b){return ValidBody(a)&&a.serial==b.serial&&a.token==b.token&&a.health==b.health&&
-        std::fabs(a.radius-b.radius)<0.5&&std::fabs(a.half-b.half)<0.5&&Distance(a.position,b.position)<=1;}
+        std::fabs(a.radius-b.radius)<0.5&&std::fabs(a.half-b.half)<0.5&&Distance(a.position,b.position)<=1&&
+        std::fabs(a.root_radius-b.root_radius)<0.5&&std::fabs(a.root_half-b.root_half)<0.5&&Distance(a.root_offset,b.root_offset)<=.1;}
     static bool Expected(const Command& c,const Body& b){
         return ValidBody(b)&&(!c.actor_stamp||c.actor_stamp==static_cast<std::uint64_t>(b.serial))&&(!c.component_token||c.component_token==b.token)&&
             c.health==b.health&&std::fabs(c.radius-b.radius)<0.5&&std::fabs(c.half_height-b.half)<0.5&&Distance(b.position,{c.position[0],c.position[1],c.position[2]})<=1;
@@ -170,7 +182,8 @@ private:
         r.world=c.world;r.target=c.target;r.spawn=c.spawn;r.status=status;r.source_hash=c.payload_hash;r.shape_revision=env_.revision;
         if(phase_!=Phase::Free&&c.target==source_.target&&c.spawn==source_.spawn){
             r.actor_serial=body_.serial;r.component_token=body_.token;r.health=body_.health;r.restored=restored_;
-            for(int i=0;i<3;++i){r.position[i]=body_.position[i];r.delta[i]=delta[i];}r.flags=flags;
+            for(int i=0;i<3;++i){r.position[i]=body_.position[i];r.delta[i]=status==Status::Prepared?body_.root_offset[i]:delta[i];}r.flags=flags;
+            r.root_radius=body_.root_radius?body_.root_radius:body_.radius;r.root_half_height=body_.root_half?body_.root_half:body_.half;
         }
         Seal(r);return r;
     }

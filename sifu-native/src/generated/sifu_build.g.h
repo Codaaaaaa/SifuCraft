@@ -327,6 +327,14 @@ namespace ACharacter {
 inline constexpr std::uint32_t CharacterMovement = 0x318;
 inline constexpr std::uint32_t Mesh = 0x310;
 inline constexpr std::uint32_t CapsuleComponent = 0x320;
+inline constexpr std::uint32_t BasedMovement = 0x328;
+}
+namespace FBasedMovementInfo {
+inline constexpr std::uint32_t MovementBase = 0x0;
+inline constexpr std::uint32_t BoneName = 0x8;
+inline constexpr std::uint32_t Location = 0x10;
+inline constexpr std::uint32_t Rotation = 0x1C;
+inline constexpr std::uint32_t bRelativeRotation = 0x29;
 }
 namespace AController {
 inline constexpr std::uint32_t Pawn = 0x2E0;
@@ -452,6 +460,7 @@ inline constexpr std::uint32_t UpdatedComponent = 0xC0;
 inline constexpr std::uint32_t UpdatedPrimitive = 0xC8;
 }
 namespace UCharacterMovementComponent {
+inline constexpr std::uint32_t CharacterOwner = 0x158;
 inline constexpr std::uint32_t MovementMode = 0x178;
 inline constexpr std::uint32_t WalkableFloorAngle = 0x170;
 inline constexpr std::uint32_t WalkableFloorZ = 0x174;
@@ -459,6 +468,8 @@ inline constexpr std::uint32_t MaxStepHeight = 0x164;
 inline constexpr std::uint32_t RootMotionParams = 0xB50;
 inline constexpr std::uint32_t CurrentRootMotion = 0xA50;
 inline constexpr std::uint32_t PendingLaunchVelocity = 0x3D4;
+inline constexpr std::uint32_t OldBaseLocation = 0x190;
+inline constexpr std::uint32_t OldBaseQuat = 0x180;
 }
 namespace UCapsuleComponent {
 inline constexpr std::uint32_t CapsuleHalfHeight = 0x4A8;
@@ -663,6 +674,11 @@ inline constexpr std::uint32_t FHitResult = 0x8C;
 }  // namespace size
 
 namespace bits {
+namespace UCharacterMovementComponent {
+inline constexpr std::uint32_t bForceNextFloorCheck_Offset = 0x201;
+inline constexpr std::uint32_t bForceNextFloorCheck_Shift = 3;
+inline constexpr std::uint32_t bForceNextFloorCheck_Width = 1;
+}
 namespace UBehaviorTreeComponent {
 inline constexpr std::uint32_t bIsRunning_Offset = 0x283;
 inline constexpr std::uint32_t bIsRunning_Shift = 5;
@@ -733,12 +749,16 @@ namespace fn {
 inline constexpr std::uintptr_t FKey_Copy = 0x1BA9B10;
 inline constexpr std::uintptr_t FKey_Destructor = 0xF523F0;
 inline constexpr std::uintptr_t LaunchImpactInternal = 0x1A64D30;
+inline constexpr std::uintptr_t SaveBaseLocation = 0x33D0DD0;
 }  // namespace fn
 
 // Virtual slots used for calls through an object's own vtable.
 namespace slot {
 namespace UObject {
 inline constexpr std::uint32_t ProcessEvent = 0x220;
+}
+namespace UCharacterMovementComponent {
+inline constexpr std::uint32_t SaveBaseLocation = 0x660;
 }
 }  // namespace slot
 

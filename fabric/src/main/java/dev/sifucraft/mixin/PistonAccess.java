@@ -13,4 +13,6 @@ public interface PistonAccess {
     @Invoker("moveCollidedEntities") static void sifucraft$collide(Level level,BlockPos pos,float next,PistonMovingBlockEntity piston){throw new AssertionError();}
     @Invoker("moveStuckEntities") static void sifucraft$carry(Level level,BlockPos pos,float next,PistonMovingBlockEntity piston){throw new AssertionError();}
     @Accessor("NOCLIP") static ThreadLocal<Direction> sifucraft$noClip(){throw new AssertionError();}
+    @Accessor("progress") void sifucraft$progress(float value);
+    @Accessor("progressO") void sifucraft$previousProgress(float value);
 }

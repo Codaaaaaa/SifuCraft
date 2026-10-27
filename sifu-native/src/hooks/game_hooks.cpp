@@ -248,12 +248,14 @@ VtableHook g_movement_tick;
 void MovementTickHook(void* component, float delta_time, int tick_type, void* tick_function) {
     if (g_stage >= 5 && g_pose_active.load(std::memory_order_relaxed) &&
         reinterpret_cast<std::uintptr_t>(component) == g_movement.load(std::memory_order_relaxed)) {
+        world_motion::PoseOwnedMovement(reinterpret_cast<std::uintptr_t>(component));
         g_pose_stats.movement_ticks_skipped.fetch_add(1, std::memory_order_relaxed);
         return;
     }
     const auto address = reinterpret_cast<std::uintptr_t>(component);
     if (world_motion::Skip(address,combat::motion::Part::Movement)) return;
     if (combat::motion::SkipMovement(address)) return;
+    world_motion::BeforeOriginalMovement(address);
     g_movement_tick.original<TickComponentFn>()(component, delta_time, tick_type, tick_function);
     combat::motion::AfterOriginalMovement(address);
     world_motion::AfterOriginal(address,combat::motion::Part::Movement);

@@ -47,7 +47,7 @@ public final class PistonContacts {
 
     /** Diagnostics only: this scope has no bridge/save identity and is not a wire credential. */
     public static final class Capture {
-        private final UUID id=UUID.randomUUID();
+        private final UUID id;
         private final ServerLevel level;
         private final IdentityHashMap<PistonMovingBlockEntity,Long> actions=new IdentityHashMap<>();
         private final List<Contact> contacts=new ArrayList<>();
@@ -58,8 +58,10 @@ public final class PistonContacts {
         public Capture(ServerLevel level){this(level,null,null);}
         public Capture(ServerLevel level,PistonMovePlans planner){this(level,planner,null);}
         public Capture(ServerLevel level,PistonMovePlans planner,Consumer<PistonMovePlans.Attempt> onPlan){this(level,planner,onPlan,null);}
-        private Capture(ServerLevel level,PistonMovePlans planner,Consumer<PistonMovePlans.Attempt> onPlan,Consumer<Move> preview){this.level=level;this.planner=planner;this.onPlan=onPlan;this.preview=preview;}
+        private Capture(ServerLevel level,PistonMovePlans planner,Consumer<PistonMovePlans.Attempt> onPlan,Consumer<Move> preview){this(level,planner,onPlan,preview,UUID.randomUUID());}
+        private Capture(ServerLevel level,PistonMovePlans planner,Consumer<PistonMovePlans.Attempt> onPlan,Consumer<Move> preview,UUID id){this.id=id;this.level=level;this.planner=planner;this.onPlan=onPlan;this.preview=preview;}
         static Capture preview(ServerLevel level,Consumer<Move> move){return new Capture(level,null,null,move);}
+        static Capture preview(ServerLevel level,UUID source,Consumer<Move> move){return new Capture(level,null,null,move,source);}
         public List<Contact> contacts(){return List.copyOf(contacts);}
         public List<PistonMovePlans.Attempt> plans(){return List.copyOf(plans);}
         public void run(Runnable action){
@@ -82,6 +84,7 @@ public final class PistonContacts {
     }
 
     public static void move(Entity entity,MoverType type,Vec3 movement){
+        if(type==MoverType.PISTON&&PistonMachines.suppress(entity))return;
         var active=ACTIVE.get();
         if(active==null||type!=MoverType.PISTON||entity.level()!=active.capture.level){entity.move(type,movement);return;}
         if(active.capture.preview!=null){active.capture.preview.accept(new Move(active,entity,movement));return;}

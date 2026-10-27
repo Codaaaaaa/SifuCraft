@@ -5,9 +5,11 @@
 #include <deque>
 #include "blocks/block_mirror.h"
 #include "combat/ai_tick_gate.h"
+#include "combat/base_sync.h"
 #include "combat/world_motion_engine.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
+#include "probe/combat_sample.h"
 #include "ue/transform.h"
 
 namespace sifucraft::world_motion {
@@ -27,7 +29,6 @@ unsigned g_gate_users=0; // game thread only, shared forwarding-hook ownership
 std::atomic<std::uint32_t> g_flags{kScripted};
 std::atomic<bool> g_ready{false};
 std::uintptr_t g_base=0;
-std::uint64_t g_frame=0;
 unsigned PartIndex(motion::Part part){return part==motion::Part::Movement?0:part==motion::Part::AI?1:2;}
 class NativeBackend final:public Backend {
 public:
@@ -40,8 +41,15 @@ public:
         const auto movement=mem::ReadPtr(it->actor+off::ACharacter::CharacterMovement);
         const auto id=ue::IdentityOf(movement);
         target_={it->actor,movement,it->id,it->spawn,it->identity.serial,id.index,id.serial};
-        if(motion::CheckBody(g_current.actors,target_,&sample_,true)||
-           motion::CheckPeers(g_base,g_current.actors,target_,&peers_,true)||!combat::ai_gate::Install(g_base,peers_))return false;
+        // Original terrain and MC platforms share the actual root sweep. Do not
+        // infer eligibility from UE Walking alone: Sifu's verified idle grunts use
+        // mode None(0), including the successful M1/M3 live fixtures.
+        if(const auto why=motion::CheckBody(g_current.actors,target_,&sample_,true,false))return Refuse(why);
+        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers_,true))return Refuse(why);
+        hit_=mem::ReadPtr(target_.actor+off::AFightingCharacter::m_HitCapsule);hit_id_=ue::IdentityOf(hit_);
+        if(!hit_id_.valid()||ue::OuterOf(hit_)!=target_.actor)return false;
+        if(!combat::ai_gate::Install(g_base,peers_))return false;
+        mode_=sample_.mode;
         gate_=true;++g_gate_users;
         // Opaque identity token, never an address supplied back to dereference.
         const std::uint64_t identity[]={g_current.actors.scope.native_session,g_current.actors.scope.peer_session,
@@ -50,7 +58,7 @@ public:
             static_cast<std::uint64_t>(peers_.ai.serial),static_cast<std::uint64_t>(peers_.behavior.index),static_cast<std::uint64_t>(peers_.behavior.serial)};
         token_=Hash(identity,sizeof(identity));if(!token_)token_=1;
         g_wrong_thread[slot_].store(0);g_watches[slot_][0].store(movement);g_watches[slot_][1].store(peers_.ai.pointer);g_watches[slot_][2].store(peers_.behavior.pointer);
-        *out=Convert(sample_);
+        if(!Convert(sample_,out))return false;
         SC_LOG("[world-motion] observe target=%u/%u/%d token=%016llX thread=%lu",target_.id,target_.spawn,target_.serial,token_,GetCurrentThreadId());
         return true;
     }
@@ -60,6 +68,7 @@ public:
             ue::IdentityOf(target_.movement)==ue::ObjectIdentity{target_.movement_index,target_.movement_serial}&&
             mem::ReadPtr(target_.movement+off::UActorComponent::OwnerPrivate)==target_.actor&&
             mem::ReadPtr(target_.actor+off::ACharacter::CharacterMovement)==target_.movement&&
+            mem::ReadPtr(target_.actor+off::AFightingCharacter::m_HitCapsule)==hit_&&ue::IdentityOf(hit_)==hit_id_&&ue::OuterOf(hit_)==target_.actor&&
             ue::IdentityOf(peers_.ai.pointer)==ue::ObjectIdentity{peers_.ai.index,peers_.ai.serial}&&
             ue::IdentityOf(peers_.behavior.pointer)==ue::ObjectIdentity{peers_.behavior.index,peers_.behavior.serial}&&
             !motion::CheckPeers(g_base,g_current.actors,target_,&peers,false)&&peers==peers_;
@@ -68,23 +77,49 @@ public:
         if(g_wrong_thread[slot_].load()||!Identity()||motion::CheckWorld(g_base,g_current.actors,GetTickCount64()))return false;
         motion::Peers peers;
         if(motion::CheckBody(g_current.actors,target_,&sample_,false,false)||
-           motion::CheckPeers(g_base,g_current.actors,target_,&peers,true)||peers!=peers_)return false;
-        *out=Convert(sample_);return true;
+           sample_.mode!=mode_||motion::CheckPeers(g_base,g_current.actors,target_,&peers,true)||peers!=peers_)return false;
+        return Convert(sample_,out);
+    }
+    bool Observe(Body* out)override{
+        if(!Identity()||motion::CheckWorld(g_base,g_current.actors,GetTickCount64())||
+           mem::ReadPtr(target_.actor+off::AActor::RootComponent)!=sample_.root||
+           mem::ReadPtr(target_.actor+off::AFightingCharacter::m_HealthComponent)!=sample_.health)return false;
+        probe::HealthSample health;
+        if(!ue::ReadWorldTransform(sample_.root,&sample_.position,&sample_.rotation)||!probe::ReadHealthSample(sample_.health,&health))return false;
+        sample_.hp=health.health;return Convert(sample_,out);
     }
     Sweep Move(const Body&,const std::array<float,3>& delta)override {
         motion::SweepResult result;
         const bool valid=motion::SweepBody(g_current.actors,target_,sample_,{delta[0],delta[1],delta[2]},&result);
         if(result.invoked)sample_=result.body;
-        return {Convert(sample_),result.invoked,valid,result.returned,result.blocking,result.penetrating};
+        Body body;const bool anchor=Convert(sample_,&body);
+        return {body,result.invoked,valid&&anchor,result.returned,result.blocking,result.penetrating};
     }
     void Forget()override {
         for(auto& watch:g_watches[slot_])watch.store(0);
         if(gate_){gate_=false;if(g_gate_users&&!--g_gate_users&&!combat::ai_gate::Uninstall())SC_LOG("[world-motion] cleanup slot changed; all filters cleared");}
-        target_={};peers_={};sample_={};token_=0;
+        target_={};peers_={};sample_={};token_=0;hit_=0;hit_id_={};
     }
 private:
-    Body Convert(const motion::BodySample& s)const{return {target_.serial,token_,{s.position.x,s.position.y,s.position.z},s.hp,s.radius,s.half};}
-    motion::Target target_;motion::Peers peers_;motion::BodySample sample_;std::uint64_t token_=0;std::size_t slot_=0;bool gate_=false;
+    bool Refuse(const char* reason){
+        static unsigned logged=0;if(logged<32){++logged;SC_LOG("[world-motion] qualification REFUSE target=%u/%u class=%s reason=%s mode=%d",target_.id,target_.spawn,ue::ClassName(target_.actor).c_str(),reason,sample_.mode);}return false;
+    }
+    bool Convert(const motion::BodySample& s,Body* out)const{
+        // EnemyFrame and the MC reference body use the hit capsule anchor. The
+        // swept root capsule is a different component (90cm vs 92cm in this build).
+        // Read the real child transform after every sweep/original Tick; never
+        // invent a constant offset or send the mirror's hit pose to the actor root.
+        if(!hit_id_.valid()||ue::IdentityOf(hit_)!=hit_id_||mem::ReadPtr(target_.actor+off::AFightingCharacter::m_HitCapsule)!=hit_)return false;
+        ue::Affine transform;ue::FVector position;
+        if(!ue::ReadComponentToWorld(hit_,&transform)||!ue::ReadWorldLocation(hit_,&position))return false;
+        const auto scale=transform.MinAxisScale();
+        const auto radius=mem::ReadOr<float>(hit_+off::UCapsuleComponent::CapsuleRadius,NAN)*scale;
+        const auto half=mem::ReadOr<float>(hit_+off::UCapsuleComponent::CapsuleHalfHeight,NAN)*scale;
+        *out={target_.serial,token_,{position.x,position.y,position.z},s.hp,radius,half,
+            {s.position.x-position.x,s.position.y-position.y,s.position.z-position.z},s.radius,s.half};return true;
+    }
+    motion::Target target_;motion::Peers peers_;motion::BodySample sample_;std::uint64_t token_=0;std::size_t slot_=0;bool gate_=false;int mode_=-1;
+    std::uintptr_t hit_=0;ue::ObjectIdentity hit_id_;
 };
 std::array<NativeBackend,kTargets> g_backends;
 std::array<Backend*,kTargets> BackendPointers(){
@@ -136,7 +171,8 @@ void ApplyOnGameThread(std::uintptr_t base) {
         g_current.actors.updated_ms<=now&&now-g_current.actors.updated_ms<=200;
     const bool settled=blocks::ShapesSettled();
     g_flags.store(flags);g_ready.store(ready&&settled);
-    const Environment env{scope.native_session,scope.peer_session,g_current.save,g_current.map,blocks::ShapesAppliedRevision(),++g_frame,scope.generation,flags,ready,settled};
+    base_sync::Context(base,&g_current.actors,g_current.enabled);
+    const Environment env{scope.native_session,scope.peer_session,g_current.save,g_current.map,blocks::ShapesAppliedRevision(),g_current.actors.native_frame,scope.generation,flags,ready,settled};
     g_fleet.Update(env,now);
     for(std::size_t i=0;i<kTargets;++i){
         auto& engine=g_fleet.at(i);
@@ -165,6 +201,8 @@ bool Skip(std::uintptr_t component,motion::Part part) {
     }
     return false;
 }
+void PoseOwnedMovement(std::uintptr_t component){base_sync::PoseOwned(component);}
+void BeforeOriginalMovement(std::uintptr_t component){base_sync::BeforeOriginal(component);}
 void AfterOriginal(std::uintptr_t component,motion::Part part) {
     if(!component)return;
     for(std::size_t i=0;i<kTargets;++i)if(component==g_watches[i][PartIndex(part)].load()){

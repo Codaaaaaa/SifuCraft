@@ -146,5 +146,19 @@ void MultipleTargets(){
     send(stepA);pop(Status::Applied);Require(a.moves==1,"replay remains inert after its original slot was reassigned");
     env.peer++;fleet.Update(env,now);Require(fleet.at(0).phase()==Engine::Phase::Free&&fleet.at(1).phase()==Engine::Phase::Free,"peer change releases all target filters together");
 }
+void ReleaseObservation(){
+    Case c;c.Acquire();c.Send(c.CommandFor(Op::Release));
+    c.backend.body.position[0]=3; // original movement resumes before the final receipt
+    c.Restore();auto r=c.Pop(Status::Released);Require(r.position[0]==3,"release reports the pose after original movement, not the cached last external step");
 }
-int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();GeometryBarrier();MultipleTargets();std::printf("world motion arbiter PASS %u assertions\n",checks);}
+void PhysicalBinding(){
+    Case c;c.backend.body.root_offset={0,0,2.5f};c.backend.body.root_radius=30;c.backend.body.root_half=88;
+    c.Send(c.CommandFor());for(auto part:{1u,2u,4u})c.engine.Original(part);c.Tick();auto r=c.Pop(Status::Prepared);
+    Require(r.delta[2]==2.5f&&r.root_radius==30&&r.root_half_height==88,"prepared binds real root geometry separately from hit anchor");
+    c.Send(c.CommandFor(Op::Step));r=c.Pop(Status::Applied);
+    Require(r.delta[0]==10&&r.delta[2]==0&&r.root_half_height==88,"applied delta remains actual displacement, not prepared root offset");
+    c.backend.body.root_half=87;Require(!c.engine.Skip(c.now),"physical capsule change releases active ownership");c.Restore();
+    Case invalid;invalid.backend.body.root_radius=30;invalid.backend.body.root_half=29;invalid.Send(invalid.CommandFor());invalid.Pop(Status::TargetLost);
+}
+}
+int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();std::printf("world motion arbiter PASS %u assertions\n",checks);}

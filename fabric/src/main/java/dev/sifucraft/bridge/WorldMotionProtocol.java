@@ -6,7 +6,7 @@ import java.nio.ByteOrder;
 /** Reliable world commands, independent of presentation and player input epochs. */
 public final class WorldMotionProtocol {
     private WorldMotionProtocol(){}
-    public static final int MAGIC=0x4D574353,VERSION=1,SLOTS=32,SLOT_BYTES=256,HEADER_BYTES=128;
+    public static final int MAGIC=0x4D574353,VERSION=2,SLOTS=32,SLOT_BYTES=256,HEADER_BYTES=128;
     public static final int MAPPING_BYTES=HEADER_BYTES+2*SLOTS*SLOT_BYTES,COMMAND_BYTES=208,REPLY_BYTES=128;
     public static final int FREE=0,WRITING=1,READY=2,READING=3,RESERVE=1,STEP=2,RELEASE=3,CANCEL=4,DAMAGE=5;
     public static final int MACHINE=1,FLUID=2,WORLD_EFFECT=3,PLAYER=1;
@@ -15,7 +15,7 @@ public final class WorldMotionProtocol {
     private static final int[] LAYOUT={MAGIC,VERSION,SLOTS,SLOT_BYTES,HEADER_BYTES,MAPPING_BYTES,208,128,
         0,4,8,12,16,24,32,40,48,56,60,64,72,80,88,96,104,
         0,4,8,16,24,32,40,48,56,64,72,80,88,92,96,100,104,116,128,132,136,140,144,156,160,164,168,176,184,192,200,
-        0,8,16,24,32,36,40,44,48,52,56,64,72,84,96,100,104,112,120,FREE,WRITING,READY,READING,
+        0,8,16,24,32,36,40,44,48,52,56,64,72,84,96,100,104,112,116,120,FREE,WRITING,READY,READING,
         1,2,3,4,5,1,2,3,0,1,2,3,4,5,6,7,8,9,10,11,12,13,PLAYER,PAUSED,SCRIPTED,1,2,4};
     public static final long LAYOUT_HASH;
     static {long h=0xcbf29ce484222325L;for(int v:LAYOUT)for(int s=0;s<32;s+=8){h^=v>>>s&255;h*=0x100000001b3L;}LAYOUT_HASH=h;}
@@ -27,7 +27,14 @@ public final class WorldMotionProtocol {
                           int world,int target,int spawn,int durationMs,SifuFrame.Vec3 position,SifuFrame.Vec3 delta,float health,float radius,float halfHeight,int flags,
                           int blockX,int blockY,int blockZ,float progress,float nextProgress,float amount,long stateHash,long sectionRevision,long actorStamp,long componentToken){}
     public record Reply(long id,long lease,long nativeFrame,long atMs,int world,int target,int spawn,int status,int actorSerial,int restored,
-                        long componentToken,long sourceHash,SifuFrame.Vec3 position,SifuFrame.Vec3 delta,float health,int flags,long shapeRevision){}
+                        long componentToken,long sourceHash,SifuFrame.Vec3 position,SifuFrame.Vec3 delta,float health,int flags,long shapeRevision,float rootRadius,float rootHalfHeight){
+        public Reply(long id,long lease,long nativeFrame,long atMs,int world,int target,int spawn,int status,int actorSerial,int restored,
+                     long componentToken,long sourceHash,SifuFrame.Vec3 position,SifuFrame.Vec3 delta,float health,int flags,long shapeRevision){
+            this(id,lease,nativeFrame,atMs,world,target,spawn,status,actorSerial,restored,componentToken,sourceHash,position,delta,health,flags,shapeRevision,0,0);
+        }
+        /** Prepared has made no move; its delta binds the root capsule to the hit anchor. */
+        public SifuFrame.Vec3 rootOffset(){if(status!=1)throw new IllegalStateException("root binding requires Prepared");return delta;}
+    }
     private static boolean finite(SifuFrame.Vec3 v){return v!=null&&Float.isFinite(v.x())&&Float.isFinite(v.y())&&Float.isFinite(v.z());}
     public static void validate(Command c){
         if(c==null||c.op<1||c.op>5||c.source<1||c.source>3||c.id==0||c.issuedMs==0||(c.sourceHi|c.sourceLo)==0||c.action==0||c.save==0||c.map==0||c.world==0||
@@ -53,10 +60,12 @@ public final class WorldMotionProtocol {
     public static Reply decodeReply(byte[] bytes){
         if(bytes.length!=REPLY_BYTES)throw new IllegalArgumentException("world reply size");var b=ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         var r=new Reply(b.getLong(),b.getLong(),b.getLong(),b.getLong(),b.getInt(),b.getInt(),b.getInt(),b.getInt(),b.getInt(),b.getInt(),
-            b.getLong(),b.getLong(),get(b),get(b),b.getFloat(),b.getInt(),b.getLong());
-        long digest=b.getLong(),reserved=b.getLong();
-        if(r.id==0||r.atMs==0||r.world==0||r.status<0||r.status>13||r.restored<0||r.restored>7||reserved!=0||!finite(r.position)||!finite(r.delta)||
-            !Float.isFinite(r.health)||r.health<0||digest!=hash(bytes,112))throw new IllegalArgumentException("invalid world reply");
+            b.getLong(),b.getLong(),get(b),get(b),b.getFloat(),b.getInt(),b.getLong(),b.getFloat(),b.getFloat());
+        long digest=b.getLong();
+        if(r.id==0||r.atMs==0||r.world==0||r.status<0||r.status>13||r.restored<0||r.restored>7||!finite(r.position)||!finite(r.delta)||
+            !Float.isFinite(r.health)||r.health<0||!Float.isFinite(r.rootRadius)||!Float.isFinite(r.rootHalfHeight)||
+            (r.rootRadius!=0||r.rootHalfHeight!=0)&&(r.rootRadius<10||r.rootRadius>100||r.rootHalfHeight<r.rootRadius||r.rootHalfHeight>200)||
+            r.status==1&&r.rootRadius==0||digest!=hash(bytes,120))throw new IllegalArgumentException("invalid world reply");
         return r;
     }
     private static void put(ByteBuffer b,SifuFrame.Vec3 v){b.putFloat(v.x()).putFloat(v.y()).putFloat(v.z());}

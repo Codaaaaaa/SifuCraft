@@ -68,10 +68,10 @@ int main(int argc,char** argv){try{
     player.actor_stamp=0;Seal(player);Check(!Valid(player),"player cannot use unbound pawn lifetime");
     auto broken=c;broken.position[0]=11;Check(!Valid(broken),"packet digest protects mutation");
     Reply r{};r.id=11;r.lease=12;r.native_frame=100;r.at_ms=1100;r.world=7;r.target=42;r.spawn=2;r.status=Status::Released;r.actor_serial=99;r.restored=7;
-    r.component_token=55;r.source_hash=66;r.position[0]=10;r.position[1]=20;r.position[2]=90;r.delta[0]=10;r.health=60;r.shape_revision=9;Seal(r);
+    r.component_token=55;r.source_hash=66;r.position[0]=10;r.position[1]=20;r.position[2]=90;r.delta[0]=10;r.health=60;r.shape_revision=9;r.root_radius=35;r.root_half_height=90;Seal(r);
     bytes=Hex(argv[2]);Check(Valid(r)&&bytes.size()==sizeof(r)&&std::memcmp(bytes.data(),&r,sizeof(r))==0,"independent reply golden bytes");
-    r.reserved=1;Check(!Valid(r),"reserved tail is not unvalidated data");
-    r.reserved=0;
+    auto bad_root=r;bad_root.root_half_height=34;Seal(bad_root);Check(!Valid(bad_root),"physical capsule dimensions reject a correctly hashed malformed reply");
+    bad_root=r;bad_root.root_radius=36;Check(!Valid(bad_root),"physical capsule metadata protected by reply digest");
     alignas(64) std::array<std::uint8_t,kMappingBytes> memory{};
     auto& h=*reinterpret_cast<Header*>(memory.data());h.magic=kMagic;h.version=kVersion;h.mapping_bytes=kMappingBytes;h.slot_bytes=kSlotBytes;
     h.mc_session=11;h.native_session=22;h.layout_hash=kLayoutHash;

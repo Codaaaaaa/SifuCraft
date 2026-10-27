@@ -815,6 +815,7 @@ void Run(std::uintptr_t image_base) {
                 world,generation,world_id.index,world_id.serial};
             context.actors.pawn=player.pawn;context.actors.pawn_identity=ue::IdentityOf(player.pawn);
             context.actors.updated_ms=GetTickCount64();
+            context.actors.native_frame=g_bridge.frame();
             const auto& peer=g_bridge.peer_state();
             context.actors.enabled=g_bridge.peer_connected()&&peer.valid&&world&&player.pawn&&
                 peer.sifu_session==g_bridge.session()&&peer.world_generation==generation&&

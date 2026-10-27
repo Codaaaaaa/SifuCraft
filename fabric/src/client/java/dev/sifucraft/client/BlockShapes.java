@@ -38,6 +38,9 @@ public final class BlockShapes implements AutoCloseable {
     private long failures, nextLogNs;
 
     public boolean active() { return active; }
+    public dev.sifucraft.blocks.WorldMotionWorld.Geometry geometry(){
+        return new dev.sifucraft.blocks.WorldMotionWorld.Geometry(lastIndex,lastMotion,latest==null?0:latest.revision,caughtUp());
+    }
     public boolean caughtUp() {
         var index = WorldBlocks.index();
         return active && writer != null && latest != null && index != null && !building.get() &&

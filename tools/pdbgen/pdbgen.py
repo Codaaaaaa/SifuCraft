@@ -55,10 +55,12 @@ FUNCTIONS = {
     "FKey_Copy": "FKey::FKey",
     "FKey_Destructor": "FKey::~FKey",
     "LaunchImpactInternal": "UHitComponent::LaunchImpactInternal",
+    "SaveBaseLocation": "UCharacterMovementComponent::SaveBaseLocation",
 }
 
 # Virtual slots used for calls (dispatched through the object's own vtable): introducing class -> methods.
-CALL_SLOTS = {"UObject": ["ProcessEvent"]}
+CALL_SLOTS = {"UObject": ["ProcessEvent"], "UCharacterMovementComponent": ["SaveBaseLocation"]}
+CALL_VERIFY = [("UFightingMovementComponent", "UCharacterMovementComponent", "SaveBaseLocation", "UCharacterMovementComponent::SaveBaseLocation")]
 
 # Short C++ namespaces for PDB template types used by native inspection.
 TYPE_ALIASES = {
@@ -159,7 +161,8 @@ MEMBERS = {
     "FRootMotionSourceGroup": ["RootMotionSources", "PendingAddRootMotionSources"],
     "FHitResult": ["Time", "Location"],
     "APawn": ["Controller"],
-    "ACharacter": ["CharacterMovement", "Mesh", "CapsuleComponent"],
+    "ACharacter": ["CharacterMovement", "Mesh", "CapsuleComponent", "BasedMovement"],
+    "FBasedMovementInfo": ["MovementBase", "BoneName", "Location", "Rotation", "bRelativeRotation"],
     "AController": ["Pawn", "IgnoreMoveInput", "IgnoreLookInput"],
     "APlayerController": ["PlayerCameraManager", "AcknowledgedPawn"],
     "APlayerCameraManager": ["CameraCachePrivate", "LastFrameCameraCachePrivate", "ViewTarget"],
@@ -189,7 +192,7 @@ MEMBERS = {
     "UStaticMesh": ["BodySetup"],
     "UInstancedStaticMeshComponent": ["PerInstanceSMData"],
     "UMovementComponent": ["Velocity", "UpdatedComponent", "UpdatedPrimitive"],
-    "UCharacterMovementComponent": ["MovementMode", "WalkableFloorAngle", "WalkableFloorZ", "MaxStepHeight", "RootMotionParams", "CurrentRootMotion", "PendingLaunchVelocity"],
+    "UCharacterMovementComponent": ["CharacterOwner", "MovementMode", "WalkableFloorAngle", "WalkableFloorZ", "MaxStepHeight", "RootMotionParams", "CurrentRootMotion", "PendingLaunchVelocity", "OldBaseLocation", "OldBaseQuat"],
     "UCapsuleComponent": ["CapsuleHalfHeight", "CapsuleRadius"],
     "UEngine": ["GameViewport"],
     # Sifu
@@ -241,6 +244,7 @@ SIZES = ["InternationalizationStore", "FCulture", "FUObjectItem", "UObjectBase",
 
 # type -> bitfield members whose bit position/width are emitted.
 BITFIELDS = {
+    "UCharacterMovementComponent": ["bForceNextFloorCheck"],
     "UBehaviorTreeComponent": ["bIsRunning", "bIsPaused"],
     "FNameEntryHeader": ["bIsWide", "Len"],
     "APlayerController": ["bShowMouseCursor", "bCinematicMode"],
@@ -612,6 +616,14 @@ def main() -> int:
                     slots[type_name][method] = pdb.virtual_slot(type_name, method)
                 except LookupError as e:
                     errors.append(str(e))
+        for owner, introducer, method, impl in CALL_VERIFY:
+            try:
+                table = pdb.rva(f"{owner}::`vftable'")
+                slot = slots[introducer][method]
+                if image.read_va_as_rva(table + slot) != pdb.rva(impl):
+                    errors.append(f"call {owner}::{method}: unexpected implementation")
+            except LookupError as e:
+                errors.append(f"call {owner}::{method}: {e}")
         for name, (owner, introducer, method, impl) in HOOKS.items():
             try:
                 vftable = pdb.rva(f"{owner}::`vftable'")

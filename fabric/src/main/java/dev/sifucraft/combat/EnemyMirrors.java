@@ -84,7 +84,8 @@ public final class EnemyMirrors {
             if (loggedDetails++ < 200) LOG.info("[combat] proxy removed {}", entry.getKey());
             return true;
         });
-        for (var enemy : enemies.entries()) {
+        for (var incoming : enemies.entries()) {
+            var enemy=dev.sifucraft.blocks.PistonMachines.pose(enemies,incoming);
             if (!enemy.alive()) continue;
             EnemyProxy proxy = proxies.get(enemy.key());
             if (proxy == null) {
