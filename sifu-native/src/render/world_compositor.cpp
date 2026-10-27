@@ -23,6 +23,8 @@ cbuffer World : register(b0) {
     float4 cameraScale;
     float4 imageTarget;
     float4 allocation;
+    float4 fogColor;
+    float4 fogRanges;
 };
 float4 field(uint offset) { return asfloat(nativeView.Load4(offset)); }
 float4x4 worldToClip() {
@@ -82,6 +84,43 @@ float4 pixelMain(Pixel pixel) : SV_Target {
     if (any(pixel.source < 0) || any(pixel.source >= imageTarget.xy)) discard;
     return sourceColor.Load(int3(int2(floor(pixel.source)),0));
 }
+float4 fogVertex(uint id : SV_VertexID) : SV_Position {
+    float2 uv=float2((id<<1)&2,id&2);
+    return float4(uv*float2(2,-2)+float2(-1,1),0,1);
+}
+float fogValue(float distance,float start,float end){
+    if(distance<=start)return 0;
+    if(distance>=end)return 1;
+    return (distance-start)/(end-start);
+}
+float4 fogPixel(float4 pixel : SV_Position) : SV_Target {
+    if(!validView())discard;
+    float2 uv=(pixel.xy/imageTarget.zw-.5)/outputScale()+.5+jitter()*float2(.5,-.5);
+    if(any(uv<0)||any(uv>=1))discard;
+    int2 at=int2(floor(field(VIEW_ORIGIN).xy+uv*field(VIEW_SIZE).xy));
+    float z=sceneDepth.Load(int3(at,0));
+    if(!isfinite(z)||z<0||z>1)discard;
+    float4 p0=field(VIEW_CLIP),p1=field(VIEW_CLIP+16),p2=field(VIEW_CLIP+32);
+    float4x4 w=worldToClip();
+    if(!all(isfinite(p0))||!all(isfinite(p1))||!all(isfinite(p2))||abs(p0.x)<1e-6||abs(p1.y)<1e-6||abs(p2.w)<1e-6)discard;
+    float3 forward=float3(w[0][3],w[1][3],w[2][3])/p2.w;
+    float3 right=(float3(w[0][0],w[1][0],w[2][0])-forward*p2.x)/p0.x;
+    float3 up=(float3(w[0][1],w[1][1],w[2][1])-forward*p2.y)/p1.y;
+    if(!all(isfinite(forward))||!all(isfinite(right))||!all(isfinite(up))||
+        abs(dot(forward,forward)-1)>.002||abs(dot(right,right)-1)>.002||abs(dot(up,up)-1)>.002||
+        abs(dot(forward,right))>.002||abs(dot(forward,up))>.002||abs(dot(right,up))>.002)discard;
+    float value=1;
+    if(z>0){
+        float distance=linearDepth(z);
+        if(!isfinite(distance)||distance<=0)discard;
+        float2 ndc=uv*float2(2,-2)+float2(-1,1);
+        float3 relative=(forward+right*((ndc.x-p2.x)/p0.x)+up*((ndc.y-p2.y)/p1.y))*distance/100;
+        float spherical=length(relative),cylindrical=max(length(relative.xy),abs(relative.z));
+        value=max(fogValue(spherical,fogRanges.x,fogRanges.y),fogValue(cylindrical,fogRanges.z,fogRanges.w));
+    }
+    float alpha=value*fogColor.a;
+    return float4(fogColor.rgb*alpha,alpha);
+}
 )hlsl";
 bool InverseViewProjection(const world_image::FrameHeader& h, float* output) {
     double m[4][8]{};
@@ -121,7 +160,7 @@ HRESULT Compile(const char* entry, const char* profile, Com<ID3DBlob>& result) {
 void WorldCompositor::ResetGpu() {
     gpu_timer_.Reset();
     instances_.reset(); constants_buffer_.reset(); depth_.reset(); raster_.reset(); blend_.reset(); layout_.reset();
-    pixel_.reset(); vertex_.reset(); context_.reset(); device_.reset(); capacity_ = 0; upload_ = true;
+    pixel_.reset(); vertex_.reset();fog_vertex_.reset();fog_pixel_.reset(); context_.reset(); device_.reset(); capacity_ = 0; upload_ = true;
     color_view_.reset(); color_texture_.reset(); color_width_ = color_height_ = 0;
 }
 void WorldCompositor::Reset() { ResetGpu(); points_.clear(); source_corners_.clear(); source_distances_.clear(); source_color_.clear(); prepared_id_ = 0; pixel_count_ = missing_depth_ = 0; constants_ = {}; }
@@ -132,6 +171,8 @@ HRESULT WorldCompositor::Prepare(const world_image::Frame& frame) {
     if (!world_image::ValidFrame(h,h.captured_ms) || frame.pixels.size()!=h.payload_bytes || !InverseViewProjection(h,constants_.inverse_mc)) return E_INVALIDARG;
     std::copy(std::begin(h.camera_cm),std::end(h.camera_cm),constants_.camera_scale); constants_.camera_scale[3]=h.cm_per_block;
     constants_.image_target[0]=float(h.width); constants_.image_target[1]=float(h.height);
+    std::copy(std::begin(h.fog_color),std::end(h.fog_color),constants_.fog_color);
+    std::copy(std::begin(h.fog_ranges),std::end(h.fog_ranges),constants_.fog_ranges);
     const bool bottom_up=(h.flags&world_image::kBottomUp)!=0;
     constants_.allocation[2]=bottom_up?1.f:-1.f;
     const auto plane=std::size_t(h.stride)*h.height;
@@ -303,6 +344,8 @@ HRESULT WorldCompositor::Initialize(ID3D11Device* device) {
     if (FAILED(hr = device->CreateInputLayout(input, 2, code->GetBufferPointer(), code->GetBufferSize(), layout_.put()))) return hr;
     if (FAILED(hr = Compile("pixelMain", "ps_5_0", code))) return hr;
     if (FAILED(hr = device->CreatePixelShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, pixel_.put()))) return hr;
+    if(FAILED(hr=Compile("fogVertex","vs_5_0",code))||FAILED(hr=device->CreateVertexShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,fog_vertex_.put())))return hr;
+    if(FAILED(hr=Compile("fogPixel","ps_5_0",code))||FAILED(hr=device->CreatePixelShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,fog_pixel_.put())))return hr;
     D3D11_BLEND_DESC blend{}; auto& rt = blend.RenderTarget[0]; rt.BlendEnable = TRUE;
     rt.SrcBlend = D3D11_BLEND_ONE; rt.DestBlend = D3D11_BLEND_INV_SRC_ALPHA; rt.BlendOp = D3D11_BLEND_OP_ADD;
     rt.SrcBlendAlpha = D3D11_BLEND_ZERO; rt.DestBlendAlpha = D3D11_BLEND_ONE; rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
@@ -318,8 +361,9 @@ HRESULT WorldCompositor::Initialize(ID3D11Device* device) {
 }
 HRESULT WorldCompositor::Draw(ID3D11Device* device, ID3D11Texture2D* backbuffer, const WorldScene& scene) {
     if (!device || !backbuffer) return E_INVALIDARG;
-    if (!prepared_id_ || points_.empty() || !scene.depth() || !scene.parameters()) return S_FALSE;
+    if (!hasContent() || !scene.depth() || !scene.parameters()) return S_FALSE;
     auto hr = Initialize(device); if (FAILED(hr)) { ResetGpu(); return hr; }
+    if(!points_.empty()){
     if (capacity_ < points_.size() || !instances_) {
         UINT capacity=std::max(1024u,capacity_);while(capacity<points_.size())capacity*=2;
         D3D11_BUFFER_DESC desc{}; desc.ByteWidth = capacity * sizeof(Point); desc.Usage = D3D11_USAGE_DYNAMIC;
@@ -344,6 +388,7 @@ HRESULT WorldCompositor::Draw(ID3D11Device* device, ID3D11Texture2D* backbuffer,
         for(UINT y=0;y<height;++y)std::memcpy(static_cast<std::uint8_t*>(mapped.pData)+std::size_t(y)*mapped.RowPitch,source_color_.data()+std::size_t(y)*width*4,width*4);
         context_->Unmap(color_texture_.get(),0);upload_=false;
     }
+    }
     D3D11_TEXTURE2D_DESC desc{}; backbuffer->GetDesc(&desc);
     if (desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM &&
         desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB && desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB &&
@@ -367,7 +412,13 @@ HRESULT WorldCompositor::Draw(ID3D11Device* device, ID3D11Texture2D* backbuffer,
     ID3D11ShaderResourceView* views[] = {scene.depth(), scene.parameters(),color_view_.get()};
     context_->VSSetShaderResources(0, 3, views); context_->PSSetShaderResources(0, 3, views);
     const bool timed=gpu_timer_.Begin(device,context_.get());
-    context_->DrawInstanced(6, UINT(points_.size()), 0, 0);
+    if(constants_.fog_color[3]>0){
+        context_->IASetInputLayout(nullptr);
+        context_->VSSetShader(fog_vertex_.get(),nullptr,0);context_->PSSetShader(fog_pixel_.get(),nullptr,0);
+        context_->Draw(3,0);
+        context_->IASetInputLayout(layout_.get());context_->VSSetShader(vertex_.get(),nullptr,0);context_->PSSetShader(pixel_.get(),nullptr,0);
+    }
+    if(!points_.empty())context_->DrawInstanced(6, UINT(points_.size()), 0, 0);
     if(timed)gpu_timer_.End(context_.get());
     return S_OK;
 }

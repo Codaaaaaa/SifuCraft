@@ -40,6 +40,13 @@ int main() {
     Check(!Consume(memory.data(), 1, 2, 3, 4, 1100, &last, &result) && held->state == Reading, "claimed slot untouched");
     Put(memory, 1, 17); ++global.layout_hash;
     Check(!Consume(memory.data(), 1, 2, 3, 4, 1100, &last, &result), "foreign layout cannot enter world renderer");
+    auto fog=*Put(memory,2,18);fog.fog_kind=kFogWater;fog.fog_color[0]=.1f;fog.fog_color[1]=.2f;fog.fog_color[2]=.3f;fog.fog_color[3]=1;fog.fog_ranges[0]=-8;fog.fog_ranges[1]=96;fog.fog_ranges[2]=32;fog.fog_ranges[3]=64;
+    Check(ValidFrame(fog,1100),"finite original water fog metadata");
+    fog.fog_kind=3;Check(!ValidFrame(fog,1100),"unknown fog kind rejected");fog.fog_kind=kFogWater;
+    fog.fog_ranges[1]=-8;Check(!ValidFrame(fog,1100),"degenerate fog rejected");fog.fog_ranges[1]=96;
+    fog.fog_color[0]=NAN;Check(!ValidFrame(fog,1100),"NaN fog rejected");fog.fog_color[0]=.1f;
+    fog.reserved[0]=1;Check(!ValidFrame(fog,1100),"unknown extension rejected");fog.reserved[0]=0;
+    fog.fog_kind=kFogNone;Check(!ValidFrame(fog,1100),"dry frames cannot retain stale liquid fog");
     std::printf("World transport %s schema=%u layout=%016llX (%d failures)\n", failures ? "FAIL" : "PASS", kVersion,
                 static_cast<unsigned long long>(kLayoutHash), failures);
     return failures ? 1 : 0;

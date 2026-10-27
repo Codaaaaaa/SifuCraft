@@ -3,13 +3,14 @@ package dev.sifucraft.bridge;
 /** Paired world RGBA8 and raw D32F. Consumer reconstructs linear depth using the source projection. */
 public final class WorldProtocol {
     private WorldProtocol() {}
-    public static final int MAGIC = 0x57574653, VERSION = 1, MAX_WIDTH = 1920, MAX_HEIGHT = 1080, SLOTS = 3;
+    public static final int MAGIC = 0x57574653, VERSION = 2, MAX_WIDTH = 1920, MAX_HEIGHT = 1080, SLOTS = 3;
+    public static final int FOG_NONE=0,FOG_WATER=1,FOG_LAVA=2;
     public static final int PLANE_BYTES = MAX_WIDTH * MAX_HEIGHT * 4, SLOT_BYTES = 256 + 2 * PLANE_BYTES;
     public static final int MAPPING_BYTES = 64 + SLOTS * SLOT_BYTES, RGBA8_DEPTH32 = 1;
     public static final int FREE = 0, WRITING = 1, READY = 2, READING = 3, PREMULTIPLIED = 1, BOTTOM_UP = 2, ZERO_TO_ONE = 4;
     private static final int[] LAYOUT = {MAGIC, VERSION, MAX_WIDTH, MAX_HEIGHT, SLOTS, SLOT_BYTES, MAPPING_BYTES, RGBA8_DEPTH32,
             64, 256, 0, 4, 8, 12, 16, 24, 32, 36, 40, 44, 48, 60, 64, 128, 192,
-            FREE, WRITING, READY, READING, PREMULTIPLIED, BOTTOM_UP, ZERO_TO_ONE};
+            FREE, WRITING, READY, READING, PREMULTIPLIED, BOTTOM_UP, ZERO_TO_ONE,200,204,220,236,FOG_NONE,FOG_WATER,FOG_LAVA};
     public static final long LAYOUT_HASH;
     static {
         long hash = 0xcbf29ce484222325L;

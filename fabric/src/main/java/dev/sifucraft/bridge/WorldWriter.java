@@ -9,8 +9,19 @@ import java.lang.invoke.VarHandle;
 
 /** One producer; readers must claim READY before inspecting either plane or the camera. */
 public final class WorldWriter implements AutoCloseable {
-    public record Camera(float x, float y, float z, float[] projection, float[] viewRotation) {
+    public record Fog(int kind,float r,float g,float b,float alpha,float environmentalStart,float environmentalEnd,float renderStart,float renderEnd){
+        public static final Fog NONE=new Fog(FOG_NONE,0,0,0,0,0,0,0,0);
+        public Fog{
+            if(kind<FOG_NONE||kind>FOG_LAVA)throw new IllegalArgumentException("world fog kind");
+            for(float v:new float[]{r,g,b,alpha})if(!Float.isFinite(v)||v<0||v>1||kind==FOG_NONE&&v!=0)throw new IllegalArgumentException("world fog color");
+            for(float v:new float[]{environmentalStart,environmentalEnd,renderStart,renderEnd})if(!Float.isFinite(v)||v < -1024||v>1e6||kind==FOG_NONE&&v!=0)throw new IllegalArgumentException("world fog range");
+            if(kind!=FOG_NONE&&(environmentalEnd<=environmentalStart||renderEnd<=renderStart))throw new IllegalArgumentException("world fog range order");
+        }
+    }
+    public record Camera(float x, float y, float z, float[] projection, float[] viewRotation,Fog fog) {
+        public Camera(float x,float y,float z,float[] projection,float[] viewRotation){this(x,y,z,projection,viewRotation,Fog.NONE);}
         public Camera {
+            if(fog==null)throw new IllegalArgumentException("world fog");
             if (!Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(z) || projection.length != 16 || viewRotation.length != 16)
                 throw new IllegalArgumentException("world camera");
             projection = projection.clone(); viewRotation = viewRotation.clone();
@@ -75,6 +86,10 @@ public final class WorldWriter implements AutoCloseable {
                     memory.set(JAVA_FLOAT, at + 128 + i * 4, camera.viewRotation[i]);
                 }
                 memory.set(JAVA_LONG, at + 192, sifuFrame);
+                memory.asSlice(at+200,56).fill((byte)0);
+                memory.set(JAVA_INT,at+200,camera.fog.kind);
+                float[] fogValues={camera.fog.r,camera.fog.g,camera.fog.b,camera.fog.alpha,camera.fog.environmentalStart,camera.fog.environmentalEnd,camera.fog.renderStart,camera.fog.renderEnd};
+                for(int i=0;i<fogValues.length;i++)memory.set(JAVA_FLOAT,at+204+i*4,fogValues[i]);
                 MemorySegment.copy(pair, 0, memory, at + 256, plane * 2L);
                 INT.setRelease(memory, at, READY); return true;
             } catch (RuntimeException e) { INT.setRelease(memory, at, FREE); throw e; }

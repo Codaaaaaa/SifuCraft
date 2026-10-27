@@ -328,7 +328,7 @@ void Tick(IDXGISwapChain* chain) {
             world_patches = probe.world_renderer.patches();
             world_peak_pixels = std::max(world_peak_pixels.load(), world_pixels.load());
             world_peak_no_depth = std::max(world_peak_no_depth.load(), world_no_depth.load());
-            if (world_pixels.load() && world_capture.exchange(false)) {
+            if (probe.world_renderer.hasContent() && world_capture.exchange(false)) {
                 FILE* file = _wfopen((log::RootDirectory() + L"\\world-frame.bin").c_str(), L"wb");
                 bool ok = false;
                 if (file) {
@@ -340,7 +340,7 @@ void Tick(IDXGISwapChain* chain) {
                 SC_LOG("[world-image] frame capture %s -> world-frame.bin", ok ? "PASS" : "FAIL");
             }
         }
-        const bool drawable = world_image::ValidFrame(probe.world_frame.header, now) && probe.world_renderer.pixels() &&
+        const bool drawable = world_image::ValidFrame(probe.world_frame.header, now) && probe.world_renderer.hasContent() &&
             probe.world_frame.header.world_generation == c.scope.world && probe.world_frame.header.anchor_epoch == c.scope.epoch;
         if (drawable && correct_context && depth_observer::Installed() && expected.identity.resource) {
             if (now >= probe.world_wait_log_ms) {

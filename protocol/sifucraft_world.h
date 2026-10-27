@@ -6,7 +6,8 @@
 
 namespace sifucraft::world_image {
 inline constexpr std::uint32_t kMagic = 0x57574653; // SFWW
-inline constexpr std::uint32_t kVersion = 1, kMaxWidth = 1920, kMaxHeight = 1080, kSlots = 3;
+inline constexpr std::uint32_t kVersion = 2, kMaxWidth = 1920, kMaxHeight = 1080, kSlots = 3;
+inline constexpr std::uint32_t kFogNone=0,kFogWater=1,kFogLava=2;
 inline constexpr std::uint32_t kPlaneBytes = kMaxWidth * kMaxHeight * 4;
 inline constexpr std::uint32_t kSlotBytes = 256 + 2 * kPlaneBytes;
 inline constexpr std::uint32_t kMappingBytes = 64 + kSlots * kSlotBytes;
@@ -23,16 +24,19 @@ struct FrameHeader {
     float camera_cm[3], cm_per_block;
     float projection[16], view_rotation[16]; // JOML column-major, relative MC world -> camera
     std::uint64_t sifu_frame;
-    std::uint32_t reserved[14];
+    std::uint32_t fog_kind;
+    float fog_color[4],fog_ranges[4]; // environmental start/end, render-distance start/end, metres
+    std::uint32_t reserved[5];
 };
 static_assert(sizeof(Header) == 64 && sizeof(FrameHeader) == 256);
 static_assert(offsetof(FrameHeader, captured_ms) == 24 && offsetof(FrameHeader, camera_cm) == 48 &&
               offsetof(FrameHeader, projection) == 64 && offsetof(FrameHeader, view_rotation) == 128 &&
-              offsetof(FrameHeader, sifu_frame) == 192);
+              offsetof(FrameHeader, sifu_frame) == 192 && offsetof(FrameHeader,fog_kind)==200 &&
+              offsetof(FrameHeader,fog_color)==204 && offsetof(FrameHeader,fog_ranges)==220);
 inline constexpr std::uint32_t kLayout[] = {
     kMagic, kVersion, kMaxWidth, kMaxHeight, kSlots, kSlotBytes, kMappingBytes, kRgba8Depth32,
     sizeof(Header), sizeof(FrameHeader), 0, 4, 8, 12, 16, 24, 32, 36, 40, 44, 48, 60, 64, 128, 192,
-    Free, Writing, Ready, Reading, kPremultiplied, kBottomUp, kZeroToOne
+    Free, Writing, Ready, Reading, kPremultiplied, kBottomUp, kZeroToOne,200,204,220,236,kFogNone,kFogWater,kFogLava
 };
 inline constexpr std::uint64_t kLayoutHash = [] {
     std::uint64_t hash = 14695981039346656037ull;
@@ -47,6 +51,11 @@ inline bool ValidFrame(const FrameHeader& f, std::uint64_t now) {
     for (float v : f.camera_cm) if (!std::isfinite(v)) return false;
     for (float v : f.projection) if (!std::isfinite(v)) return false;
     for (float v : f.view_rotation) if (!std::isfinite(v)) return false;
+    if(f.fog_kind>kFogLava)return false;
+    for(float v:f.fog_color)if(!std::isfinite(v)||v<0||v>1||(!f.fog_kind&&v!=0))return false;
+    for(float v:f.fog_ranges)if(!std::isfinite(v)||v < -1024||v>1e6f||(!f.fog_kind&&v!=0))return false;
+    if(f.fog_kind&&(f.fog_ranges[1]<=f.fog_ranges[0]||f.fog_ranges[3]<=f.fog_ranges[2]))return false;
+    for(auto v:f.reserved)if(v)return false;
     // A finite all-zero matrix must not masquerade as a usable camera.
     return std::fabs(f.projection[0]) > .0001f && std::fabs(f.projection[5]) > .0001f &&
         std::fabs(f.projection[11]) > .0001f && std::fabs(f.view_rotation[15] - 1) < .0001f;

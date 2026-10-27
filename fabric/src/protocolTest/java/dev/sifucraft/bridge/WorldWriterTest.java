@@ -29,6 +29,16 @@ public final class WorldWriterTest {
                         "world channel cannot overwrite claimed frames or wait on the consumer");
                 try { writer.publish(pixels.asSlice(0, 63), 4, 2, 8, 1000, 3, 4, 99, camera, true); throw new AssertionError("short pair"); }
                 catch (IllegalArgumentException expected) { }
+                memory.set(JAVA_INT,slotOffset(0),FREE);
+                var fog=new WorldWriter.Fog(FOG_WATER,.1f,.2f,.3f,.8f,-8,96,32,64);
+                var wet=new WorldWriter.Camera(123,456,789,camera.projection(),camera.viewRotation(),fog);
+                check(writer.publish(pixels,4,2,9,1000,3,4,99,wet,true),"water fog shares paired image slot");
+                check(memory.get(JAVA_INT,at+200)==FOG_WATER&&memory.get(JAVA_FLOAT,at+204)==.1f&&memory.get(JAVA_FLOAT,at+216)==.8f&&memory.get(JAVA_FLOAT,at+220)==-8&&memory.get(JAVA_FLOAT,at+232)==64,"fog ABI offsets");
+                memory.set(JAVA_INT,slotOffset(0),FREE);
+                check(writer.publish(pixels,4,2,10,1000,3,4,99,camera,true),"dry frame reuses wet slot");
+                for(int i=200;i<256;i++)check(memory.get(JAVA_BYTE,at+i)==0,"dry frame clears all fog and reserved bytes");
+                try{new WorldWriter.Fog(FOG_LAVA,1,0,0,1,0,0,1,2);throw new AssertionError("zero fog range");}catch(IllegalArgumentException expected){}
+                try{new WorldWriter.Fog(FOG_WATER,Float.NaN,0,0,1,0,1,1,2);throw new AssertionError("nonfinite fog");}catch(IllegalArgumentException expected){}
                 try { writer.publish(pixels, 4, 2, 8, 1000, 0, 4, 99, camera, true); throw new AssertionError("missing scope"); }
                 catch (IllegalArgumentException expected) { }
             }

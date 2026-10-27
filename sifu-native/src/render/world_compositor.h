@@ -13,6 +13,7 @@ public:
     std::size_t pixels() const { return pixel_count_; }
     std::size_t patches() const { return points_.size(); }
     std::size_t missing_depth() const { return missing_depth_; }
+    bool hasContent()const{return prepared_id_&&(!points_.empty()||constants_.fog_color[3]>0);}
     GpuTimer::Stats gpuStats()const{return gpu_timer_.stats();}
 #ifdef SIFUCRAFT_GEOMETRY_DIAGNOSTICS
     std::uint64_t geometryHash()const{
@@ -29,6 +30,7 @@ private:
         float camera_scale[4];
         float image_target[4];
         float allocation[4];
+        float fog_color[4],fog_ranges[4];
     } constants_{};
     void ResetGpu();
     HRESULT Initialize(ID3D11Device* device);
@@ -47,6 +49,8 @@ private:
     Com<ID3D11DeviceContext1> context_;
     Com<ID3D11VertexShader> vertex_;
     Com<ID3D11PixelShader> pixel_;
+    Com<ID3D11VertexShader> fog_vertex_;
+    Com<ID3D11PixelShader> fog_pixel_;
     Com<ID3D11InputLayout> layout_;
     Com<ID3D11Buffer> instances_, constants_buffer_;
     Com<ID3D11Texture2D> color_texture_;

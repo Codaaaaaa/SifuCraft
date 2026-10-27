@@ -253,6 +253,41 @@ int main(int argc,char** argv) {
         Check(Color(pixels,0,2,51,102,153)&&Color(pixels,4,2,153,51,76),"fit the native projection inside a differently shaped output without drawing into letterbox bars");
         ++h.frame_id;std::fill(frame.pixels.begin()+128,frame.pixels.end(),0);world.Prepare(frame);
         Check(world.pixels()==0&&world.missing_depth()==32&&world.Draw(device.get(),image.get(),scene)==S_FALSE,"missing source depth cannot leave a stale world image");
+        // Fog-only frames still affect the Native scene; MC surfaces already contain vanilla fog.
+        std::memcpy(parameters.data()+f::WorldToClip,world_clip,sizeof(world_clip));
+        put(f::ViewToClip+20,2);put(f::ViewToClipNoAA+20,2);
+        context->UpdateSubresource(cb.get(),0,nullptr,parameters.data(),0,0);scene.Capture(context.get(),identity,srv.get(),cb.get(),8192);
+        std::fill(frame.pixels.begin(),frame.pixels.end(),0);
+        h.fog_kind=world_image::kFogWater;h.fog_color[2]=h.fog_color[3]=1;
+        h.fog_ranges[0]=0;h.fog_ranges[1]=10;h.fog_ranges[2]=10000;h.fog_ranges[3]=10001;
+        ++h.frame_id;Check(world.Prepare(frame)==S_OK&&world.hasContent()&&world.pixels()==0,"empty MC image still carries liquid atmosphere");
+        context->ClearRenderTargetView(rtv.get(),background);Check(world.Draw(device.get(),image.get(),scene)==S_OK,"draw depth-dependent Native liquid fog");
+        Check(Color(Read(device.get(),context.get(),image.get()),1,1,0,0,255),"zero reverse depth denotes distant sky and receives full liquid fog");
+        for(int y=1;y<5;y++)for(int x=2;x<10;x++)z[y*12+x]=x<6?.05f:.02f;
+        context->UpdateSubresource(native_depth.get(),0,nullptr,z.data(),12*4,0);scene.Capture(context.get(),identity,srv.get(),cb.get(),8192);
+        context->ClearRenderTargetView(rtv.get(),background);world.Draw(device.get(),image.get(),scene);
+        pixels=Read(device.get(),context.get(),image.get());unsigned fog_errors=0;
+        for(int y=0;y<4;y++)for(int x=0;x<8;x++){
+            const float nx=2*(x+.5f)/8-1,ny=1-2*(y+.5f)/4,distance=x<4?2.f:5.f;
+            const float a=distance*std::sqrt(1+nx*nx+ny*ny/4)/10;
+            if(!Color(pixels,x,y,int(std::round(51*(1-a))),int(std::round(102*(1-a))),int(std::round(153*(1-a)+255*a))))fog_errors++;
+        }
+        Check(!fog_errors,"water fog follows original spherical metres at every pixel with padded depth rect");
+        h.fog_ranges[1]=10000;h.fog_ranges[2]=0;h.fog_ranges[3]=10;++h.frame_id;world.Prepare(frame);
+        context->ClearRenderTargetView(rtv.get(),background);world.Draw(device.get(),image.get(),scene);pixels=Read(device.get(),context.get(),image.get());fog_errors=0;
+        for(int y=0;y<4;y++)for(int x=0;x<8;x++){
+            const float nx=2*(x+.5f)/8-1,ny=1-2*(y+.5f)/4,distance=x<4?2.f:5.f;
+            const float a=std::max(distance*std::sqrt(1+nx*nx),distance*std::abs(ny)/2)/10;
+            if(!Color(pixels,x,y,int(std::round(51*(1-a))),int(std::round(102*(1-a))),int(std::round(153*(1-a)+255*a))))fog_errors++;
+        }
+        Check(!fog_errors,"render-distance fog uses world vertical cylinder");
+        h.fog_color[3]=.5f;++h.frame_id;world.Prepare(frame);context->ClearRenderTargetView(rtv.get(),background);world.Draw(device.get(),image.get(),scene);pixels=Read(device.get(),context.get(),image.get());
+        const float a=.5f*5*std::sqrt(1+.625f*.625f)/10;
+        Check(Color(pixels,6,1,int(std::round(51*(1-a))),int(std::round(102*(1-a))),int(std::round(153*(1-a)+255*a))),"fog color alpha scales premultiplied blending");
+        render::WorldCompositor fog_only;Check(fog_only.Prepare(frame)==S_OK,"prepare fresh fog-only compositor");context->ClearRenderTargetView(rtv.get(),background);
+        Check(fog_only.Draw(device.get(),image.get(),scene)==S_OK&&Color(Read(device.get(),context.get(),image.get()),6,1,int(std::round(51*(1-a))),int(std::round(102*(1-a))),int(std::round(153*(1-a)+255*a))),"fog-only startup needs no geometry instance or color texture upload");
+        h.fog_kind=world_image::kFogNone;std::fill(std::begin(h.fog_color),std::end(h.fog_color),0);std::fill(std::begin(h.fog_ranges),std::end(h.fog_ranges),0);++h.frame_id;world.Prepare(frame);context->ClearRenderTargetView(rtv.get(),background);
+        Check(world.Draw(device.get(),image.get(),scene)==S_FALSE&&Color(Read(device.get(),context.get(),image.get()),4,2,51,102,153),"exit water clears Native background fog");
     }
     MovingSurface(device.get(),context.get());
     context->OMSetRenderTargets(0,nullptr,nullptr);

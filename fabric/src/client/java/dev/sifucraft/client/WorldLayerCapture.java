@@ -73,7 +73,9 @@ final class WorldLayerCapture implements AutoCloseable {
                     if (Boolean.getBoolean("sifucraft.avatarSelfTest"))
                         AvatarCheck.inspect(data.asSlice(0, plane), data.asSlice(plane, plane), newest.width, newest.height);
                     if (writer.publish(data, newest.width, newest.height, newest.frame, newest.capturedMs,
-                            newest.scope.world(), newest.scope.epoch(), newest.sourceFrame, newest.wireCamera, true)) published++;
+                            newest.scope.world(), newest.scope.epoch(), newest.sourceFrame, newest.wireCamera, true)) {published++;
+                        if(Boolean.getBoolean("sifucraft.fluidAtmosphereSelfTest"))FluidAtmosphereCheck.published(newest.wireCamera.fog());
+                    }
                     else skipped++;
                 }
                 long shipped = newest.frame;
@@ -103,8 +105,14 @@ final class WorldLayerCapture implements AutoCloseable {
                     free.camera = new Snapshot(camera.pos.x, camera.pos.y, camera.pos.z,
                             new Matrix4f(projection), new Matrix4f(camera.viewRotationMatrix));
                     var origin = space.toUnreal(camera.pos.x, camera.pos.y, camera.pos.z);
+                    var fog=WorldWriter.Fog.NONE;
+                    int fogKind=camera.fogType==net.minecraft.world.level.material.FogType.WATER?dev.sifucraft.bridge.WorldProtocol.FOG_WATER:
+                            camera.fogType==net.minecraft.world.level.material.FogType.LAVA?dev.sifucraft.bridge.WorldProtocol.FOG_LAVA:dev.sifucraft.bridge.WorldProtocol.FOG_NONE;
+                    if(fogKind!=dev.sifucraft.bridge.WorldProtocol.FOG_NONE&&camera.fogData!=null){var f=camera.fogData;
+                        fog=new WorldWriter.Fog(fogKind,f.color.x,f.color.y,f.color.z,f.color.w,f.environmentalStart,f.environmentalEnd,f.renderDistanceStart,f.renderDistanceEnd);
+                    }
                     free.wireCamera = new WorldWriter.Camera(origin.x(), origin.y(), origin.z(),
-                            projection.get(new float[16]), camera.viewRotationMatrix.get(new float[16]));
+                            projection.get(new float[16]), camera.viewRotationMatrix.get(new float[16]),fog);
                     free.colorDone = free.depthDone = false; free.pending = true;
                     Transfer pending = free;
                     encoder.copyTextureToBuffer(target.getColorTexture(), free.buffer, 0, () -> pending.colorDone = true, 0);
