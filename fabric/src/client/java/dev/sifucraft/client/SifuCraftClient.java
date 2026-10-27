@@ -102,6 +102,8 @@ public final class SifuCraftClient implements ClientModInitializer {
     private PistonTransactionCheck pistonTransactionCheck;
     private NativePistonCheck nativePistonCheck;
     private FluidSceneCheck fluidSceneCheck;
+    private EnvironmentDamageCheck environmentDamageCheck;
+    private NativePauseCheck nativePauseCheck;
     private SignalCheck signalCheck;
     private PlayerSignalCheck playerSignalCheck;
     private SensorCheck sensorCheck;
@@ -334,6 +336,13 @@ public final class SifuCraftClient implements ClientModInitializer {
             fluidSceneCheck=new FluidSceneCheck();ServerTickEvents.END_SERVER_TICK.register(fluidSceneCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(fluidSceneCheck::restore);
         }
+        if(Boolean.getBoolean("sifucraft.environmentDamageSelfTest")){
+            environmentDamageCheck=new EnvironmentDamageCheck();ServerTickEvents.END_SERVER_TICK.register(environmentDamageCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(environmentDamageCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.nativePauseSelfTest")){
+            nativePauseCheck=new NativePauseCheck();ServerTickEvents.END_SERVER_TICK.register(nativePauseCheck::tick);
+        }
         if (Boolean.getBoolean("sifucraft.sceneSupportSelfTest")) {
             var check=new BlockSupportCheck();
             ServerTickEvents.END_SERVER_TICK.register(check::tick);
@@ -543,6 +552,8 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(pistonTransactionCheck!=null)pistonTransactionCheck.clientTick(minecraft,guiAvailable(frame));
         if(nativePistonCheck!=null)nativePistonCheck.clientTick(minecraft,guiAvailable(frame),frame);
         if(fluidSceneCheck!=null)fluidSceneCheck.clientTick(minecraft,guiAvailable(frame));
+        if(environmentDamageCheck!=null)environmentDamageCheck.clientTick(minecraft,frame);
+        if(nativePauseCheck!=null)nativePauseCheck.clientTick(minecraft);
         if (signalCheck != null) signalCheck.clientTick(minecraft,guiAvailable(frame));
         if (playerSignalCheck != null) playerSignalCheck.clientTick(minecraft,guiAvailable(frame),frame);
         if (sensorCheck != null) sensorCheck.clientTick(minecraft,guiAvailable(frame));
@@ -808,6 +819,12 @@ public final class SifuCraftClient implements ClientModInitializer {
             bridge.enemies(),SifuCollision.active(),worldMotion.status(),blockShapes.geometry()));
     }
     private static boolean worldBlocksAvailable(){return dev.sifucraft.blocks.WorldBlocks.ENABLED&&BlockShapes.ENABLED;}
+    public static boolean worldPaused(){
+        var view=dev.sifucraft.blocks.WorldMotionWorld.current();if(view==null||view.nativeStatus()==null)return false;
+        var status=view.nativeStatus();long now=dev.sifucraft.bridge.WorldWriter.clockMillis();
+        return status.world()==view.scope().world()&&status.atMs()<=now&&now-status.atMs()<=500&&(status.capabilities()&dev.sifucraft.bridge.WorldMotionProtocol.PAUSE_CAPABILITY)!=0&&
+            (status.flags()&dev.sifucraft.bridge.WorldMotionProtocol.PAUSED)!=0;
+    }
 
     private void publishPlayerSignals(SifuFrame frame) {
         if(playerSignalCheck!=null)return;

@@ -171,6 +171,7 @@ int main(int argc, char** argv) {
     bool interaction_scenario = false;
     std::string door_closed, door_open;
     std::string fluid_gate_control,fluid_gate_closed,fluid_gate_open;
+    std::string motion_pause_control;
     int fluid_gate_state=-1;std::uint32_t fluid_gate_revision=0;
     bool respawn_scenario = false;
     bool gui_test = false;
@@ -244,6 +245,8 @@ int main(int argc, char** argv) {
             interaction_scenario = true; door_closed = argv[++i]; door_open = argv[++i];
         } else if (std::strcmp(argv[i], "--fluid-gate") == 0 && i + 3 < argc) {
             fluid_gate_control=argv[++i];fluid_gate_closed=argv[++i];fluid_gate_open=argv[++i];
+        } else if (std::strcmp(argv[i], "--motion-pause") == 0 && i + 1 < argc) {
+            motion_pause_control=argv[++i];
         } else if (std::strcmp(argv[i], "--motion-scenario") == 0) {
             motion_scenario=true;with_enemies=true;shapes_test=true;
         } else if (std::strcmp(argv[i], "--enemies") == 0) {
@@ -386,7 +389,10 @@ int main(int argc, char** argv) {
                 SC_LOG("[shape-test] received revision=%llu sections=%zu",(unsigned long long)shape_frame.header.revision,shape_frame.parts.size());
             if (shape_frame.header.revision) shape_reader.Acknowledge(shape_frame,true,now);
         }
-        if(motion_scenario)motion.Tick(bridge.session(),bridge.peer_connected()?bridge.peer_session():0,bridge.frame(),frame.world_generation,now,shape_frame);
+        if(motion_scenario){
+            std::uint32_t motion_flags=0;if(!motion_pause_control.empty()){std::ifstream pause(motion_pause_control);char value=0;pause.get(value);if(value=='1')motion_flags=world_motion::kPaused;}
+            motion.Tick(bridge.session(),bridge.peer_connected()?bridge.peer_session():0,bridge.frame(),frame.world_generation,now,shape_frame,motion_flags);
+        }
         if (interaction_scenario) {
             protocol::InteractionSnapshot candidate{};
             candidate.frame = now; candidate.revision = 7; candidate.world = frame.world_generation; candidate.epoch = frame.anchor_epoch;

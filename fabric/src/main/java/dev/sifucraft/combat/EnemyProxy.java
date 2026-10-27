@@ -82,8 +82,13 @@ public final class EnemyProxy extends Mob {
 
     @Override
     public void tick() {
+        var nativePosition=position();
         setDeltaMovement(Vec3.ZERO);
         super.tick();
+        // Fluid observation may calculate a passive MC displacement. NativeFree
+        // has no receipt for it, so keep this hit mirror at the actual Native pose.
+        setPos(nativePosition);
+        WorldEffects.touch(this);
         setDeltaMovement(Vec3.ZERO);
     }
 
@@ -102,6 +107,7 @@ public final class EnemyProxy extends Mob {
     @Override public void push(Vec3 motion) { CombatHits.push(this, motion.x, motion.z); }
 
     @Override public boolean hurtServer(ServerLevel level, DamageSource source, float amount) {
+        if(Float.isFinite(amount)&&amount>0&&WorldEffects.canCapture(this,source))return super.hurtServer(level,source,amount);
         if (!(source.getEntity() instanceof Player attacker) ||
                 (source.getDirectEntity() != attacker && !(source.getDirectEntity() instanceof Projectile)) ||
                 !Float.isFinite(amount) || amount <= 0 || !CombatHits.canCapture(this)) return false;
@@ -113,7 +119,10 @@ public final class EnemyProxy extends Mob {
         capturingDamage = true;
         try { super.actuallyHurt(level, source, amount); }
         finally { capturingDamage = false; }
-        if (capturedDamage > 0) CombatHits.record(this, source, capturedDamage);
+        if (capturedDamage > 0) {
+            if(WorldEffects.canCapture(this,source))WorldEffects.record(this,source,capturedDamage);
+            else CombatHits.record(this, source, capturedDamage);
+        }
     }
 
     @Override public void setHealth(float value) {

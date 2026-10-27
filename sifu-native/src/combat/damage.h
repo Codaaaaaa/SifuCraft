@@ -13,6 +13,12 @@ void InstallObserver(std::uintptr_t image_base, std::uintptr_t pawn);
 bool UninstallObserver();
 bool OwnsObserver(std::uintptr_t slot_value);
 bool ObserverReady();
+bool WorldReady();
+// H1 only. The world-motion ledger owns admission/replay and checks world pause/scope.
+// Reuses the same checked Light impact and H7 observation, independently of input ownership.
+struct WorldApplication {protocol::DamageResultPayload result;bool invoked=false;};
+WorldApplication ApplyWorld(std::uintptr_t image_base,std::uintptr_t world,std::uint32_t generation,
+                            std::uint64_t peer,std::uint64_t event,const Enemies::Target& target,float mc_damage);
 void UpdateContext(std::uintptr_t world, std::uint32_t generation, std::uintptr_t pawn, bool active,
                    std::uint32_t epoch, std::uint64_t peer_session, const std::vector<Enemies::Target>& targets,
                    const std::vector<protocol::EnemyEntry>& entries, bool impulses_allowed);

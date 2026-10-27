@@ -36,6 +36,13 @@ class Harness {
             actor->body.position[axis]+=amount;
             return {actor->body,true,true,amount==delta[axis],amount!=delta[axis],penetrating};
         }
+        Effect Hurt(const Command& c)override{
+            for(auto& target:owner->actors_)if(target.id==c.target&&target.spawn==c.spawn){
+                target.body.health=std::max(0.f,target.body.health-c.amount*3);
+                return {Status::Applied,true,target.body.serial,target.body.health,target.body.position,0};
+            }
+            return {Status::TargetLost};
+        }
         void Forget()override{actor=nullptr;}
     };
     std::array<Actor,2> actors_{};
@@ -51,16 +58,16 @@ public:
         initialized_=true;
         for(unsigned i=0;i<2;++i){auto& a=actors_[i];a.id=101+i;a.body={static_cast<int>(1001+i),818+i,{player.x+450,player.y+50+i*200,92},60,35,92};}
     }
-    void Tick(std::uint64_t native,std::uint64_t mc,std::uint64_t frame,std::uint32_t world,std::uint64_t now,const shape_data::Frame& shapes){
+    void Tick(std::uint64_t native,std::uint64_t mc,std::uint64_t frame,std::uint32_t world,std::uint64_t now,const shape_data::Frame& shapes,std::uint32_t flags=0){
         shapes_=&shapes;const bool ready=mc&&shapes.header.revision&&shapes.source_mc==mc&&shapes.header.world==world;
         const auto map=ready?shape_data::Hash(shapes.header.map,std::strlen(shapes.header.map)):0;
-        Environment env{native,mc,ready?shapes.header.save_key:0,map,ready?shapes.header.revision:0,frame,world,0,ready,true};
+        Environment env{native,mc,ready?shapes.header.save_key:0,map,ready?shapes.header.revision:0,frame,world,flags,ready,true};
         fleet_.Update(env,now);
-        for(unsigned i=0;i<2;++i)for(auto part:{1u,2u,4u})fleet_.at(i).Original(part); // simulated original ticks, never UE hooks
+        if(!flags)for(unsigned i=0;i<2;++i)for(auto part:{1u,2u,4u})fleet_.at(i).Original(part); // simulated original ticks, never UE hooks
         fleet_.Update(env,now);
         if(!mc){mailbox_.Close();replies_.clear();return;}
         if(!mailbox_.Open(mc,native))return;
-        mailbox_.Status(world,ready?kMotionCapability:0,now,73,env.revision);
+        mailbox_.Status(world,ready?(kMotionCapability|kDamageCapability|kPauseCapability):0,now,73,env.revision,flags);
         while(!replies_.empty()&&mailbox_.Write(replies_.front()))replies_.pop_front();
         if(replies_.size()<32&&mailbox_.CanReply())for(unsigned n=0;n<8;++n){
             Command command;bool valid;if(!mailbox_.Read(&command,&valid))break;

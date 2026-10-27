@@ -8,11 +8,12 @@ unsigned checks=0;
 void Require(bool value,const char* label){++checks;if(!value){std::fprintf(stderr,"FAIL %s\n",label);std::exit(1);}}
 struct Fake final:Backend {
     Body body{19,818,{0,0,90},60,30,90};
-    int binds=0,moves=0,forgets=0;bool valid=true,bind=true,block=false,penetrate=false,returned=true,read=true;
+    int binds=0,moves=0,forgets=0,hurts=0;bool valid=true,bind=true,block=false,penetrate=false,returned=true,read=true,effects=false;
     float fraction=1;
     bool Bind(const Command&,Body* out)override{++binds;*out=body;return bind;}
     bool Check(Body* out)override{*out=body;return valid;}
     Sweep Move(const Body&,const std::array<float,3>& d)override{++moves;for(int i=0;i<3;++i)body.position[i]+=d[i]*fraction;return {body,true,read,returned,block,penetrate};}
+    Effect Hurt(const Command& c)override{if(!effects)return {};hurts++;body.health=std::max(0.f,body.health-c.amount*3);return {Status::Applied,true,body.serial,body.health,body.position,0};}
     void Forget()override{++forgets;}
 };
 struct Case {
@@ -160,5 +161,15 @@ void PhysicalBinding(){
     c.backend.body.root_half=87;Require(!c.engine.Skip(c.now),"physical capsule change releases active ownership");c.Restore();
     Case invalid;invalid.backend.body.root_radius=30;invalid.backend.body.root_half=29;invalid.Send(invalid.CommandFor());invalid.Pop(Status::TargetLost);
 }
+void WorldEffects(){
+    Case c;c.backend.effects=true;auto hurt=c.CommandFor(Op::Damage);hurt.source=Source::WorldEffect;hurt.action=EffectTag("minecraft:lava");hurt.lease=0;hurt.amount=2;
+    c.Send(hurt);auto applied=c.Pop(Status::Applied);Require(c.backend.hurts==1&&c.backend.body.health==54&&applied.health==54&&applied.actor_serial==19,"world source applies final MC damage without a movement reservation/input epoch");
+    c.Send(hurt);auto replay=c.Pop(Status::Applied);Require(c.backend.hurts==1&&!std::memcmp(&applied,&replay,sizeof(replay)),"world damage exact retry returns cached actual HP without a second effect");
+    auto conflict=hurt;conflict.amount=3;c.Send(conflict);c.Pop(Status::Conflict);Require(c.backend.hurts==1,"changed world damage cannot reuse an applied ID");
+    auto unknown=c.CommandFor(Op::Damage);unknown.source=Source::WorldEffect;unknown.action=EffectTag("minecraft:generic_kill");c.Send(unknown);c.Pop(Status::Unsupported);Require(c.backend.hurts==1,"unknown environment type does not reach a backend");
+    auto old=c.CommandFor(Op::Damage);old.source=Source::WorldEffect;old.action=hurt.action;old.world++;c.Send(old);c.Pop(Status::Stale);Require(c.backend.hurts==1,"old world source cannot damage current targets");
+    Case moving;moving.Acquire();moving.backend.effects=true;auto during=moving.CommandFor(Op::Damage);during.source=Source::WorldEffect;during.action=EffectTag("minecraft:drown");moving.Send(during);moving.Pop(Status::Applied);
+    Require(!moving.engine.Skip(moving.now)&&moving.engine.phase()==Engine::Phase::Releasing,"actual world damage yields physical ownership to native hit/death processing");moving.Restore();
 }
-int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();std::printf("world motion arbiter PASS %u assertions\n",checks);}
+}
+int main(){HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();Lifetime();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();std::printf("world motion arbiter PASS %u assertions\n",checks);}

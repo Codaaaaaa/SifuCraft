@@ -74,6 +74,7 @@ hooks::VtableHook g_observer;
 LaunchImpactFn g_launch = nullptr;
 std::uintptr_t g_health_class = 0, g_hit_class = 0, g_settings_class = 0, g_settings = 0, g_table_class = 0;
 std::atomic<bool> g_ready{false}, g_failed{false};
+std::atomic<DWORD> g_game_thread{0};
 std::atomic<std::uint64_t> g_received{0}, g_applied{0}, g_rejected{0}, g_duplicate{0}, g_observed{0}, g_mismatch{0}, g_reply_overflow{0};
 int g_logged = 0; // game thread only
 int g_light_refusals = 0; // game thread only
@@ -191,11 +192,11 @@ void FinishLocked(const Job& job, const protocol::DamageResultPayload& result, b
     else g_reply_overflow.fetch_add(1, std::memory_order_relaxed);
 }
 
-protocol::DamageResultPayload Apply(std::uintptr_t base, const Context& context, const Job& job) {
+protocol::DamageResultPayload Apply(std::uintptr_t base, const Context& context, const Job& job,bool world_source=false,bool* invoked=nullptr) {
     if (!g_ready.load(std::memory_order_acquire) || g_failed.load()) return Result(job, DamageOutcome::Unavailable);
     if (job.shield_feedback && g_shield_failed.load()) return Result(job, DamageOutcome::Unavailable);
-    if (!context.active || input::Router().owner() != protocol::InputOwner::Minecraft || !hooks::PoseActive() ||
-        job.session != context.session || job.payload.anchor_epoch != context.epoch) return Result(job, DamageOutcome::NotOwned);
+    if (job.session != context.session || (!world_source&&(!context.active || input::Router().owner() != protocol::InputOwner::Minecraft || !hooks::PoseActive() ||
+        job.payload.anchor_epoch != context.epoch))) return Result(job, DamageOutcome::NotOwned);
     const auto world = mem::ReadPtr(base + gen::rva::GWorld);
     if (!world || world != context.world || job.payload.world_generation != context.generation ||
         GetTickCount64() - job.queued_ms > 2000) return Result(job, DamageOutcome::Stale);
@@ -241,6 +242,7 @@ protocol::DamageResultPayload Apply(std::uintptr_t base, const Context& context,
     const float requested = job.payload.mc_damage * protocol::kEnemySifuHpPerMcHp;
     Application observation{health_component};
     g_application = job.shield_feedback ? nullptr : &observation;
+    if(invoked)*invoked=true;
     LaunchLightImpact(g_launch, reinterpret_cast<void*>(hit_component), location,
                       ImpactDamage(requested, health.health, health.can_die));
     g_application = nullptr;
@@ -316,6 +318,17 @@ bool OwnsObserver(std::uintptr_t value) {
 }
 
 bool ObserverReady() { return g_ready.load(std::memory_order_acquire); }
+bool WorldReady(){return ObserverReady()&&!g_failed.load();}
+
+WorldApplication ApplyWorld(std::uintptr_t base,std::uintptr_t world,std::uint32_t generation,
+                             std::uint64_t peer,std::uint64_t event,const Enemies::Target& target,float mc_damage){
+    Job job;job.session=peer;job.id=event;job.queued_ms=GetTickCount64();job.target=target;
+    job.payload={target.id,target.spawn,mc_damage,kLightStunSeconds,0,generation,0,0};
+    if(GetCurrentThreadId()!=g_game_thread.load()||!std::isfinite(mc_damage)||mc_damage<=0||mc_damage>1e7f)return {Result(job,DamageOutcome::Invalid)};
+    AcquireSRWLockShared(&g_lock);const Context context=g_context;ReleaseSRWLockShared(&g_lock);
+    if(context.world!=world||context.generation!=generation||context.session!=peer)return {Result(job,DamageOutcome::Stale)};
+    WorldApplication result;result.result=Apply(base,context,job,true,&result.invoked);return result;
+}
 
 void UpdateContext(std::uintptr_t world, std::uint32_t generation, std::uintptr_t pawn, bool active,
                    std::uint32_t epoch, std::uint64_t peer_session, const std::vector<Enemies::Target>& targets,
@@ -435,6 +448,8 @@ void SubmitImpulse(const protocol::Event& event) {
 }
 
 void ApplyOnGameThread(std::uintptr_t base) {
+    DWORD zero=0;const auto thread=GetCurrentThreadId();g_game_thread.compare_exchange_strong(zero,thread);
+    if(g_game_thread.load()!=thread)return;
     AcquireSRWLockShared(&g_lock);
     const auto schema_pawn = g_context.impulses_allowed ? g_context.pawn : 0;
     ReleaseSRWLockShared(&g_lock);

@@ -16,7 +16,7 @@ public final class EnemyEntities {
     public static final EntityType<EnemyProxy> ENEMY_PROXY = Registry.register(BuiltInRegistries.ENTITY_TYPE,
             Identifier.fromNamespaceAndPath("sifucraft", "enemy_proxy"),
             EntityType.Builder.<EnemyProxy>of(EnemyProxy::new, MobCategory.MISC).sized(0.7f, 1.84f)
-                    .noSave().noSummon().noLootTable().fireImmune().clientTrackingRange(8).updateInterval(1)
+                    .noSave().noSummon().noLootTable().clientTrackingRange(8).updateInterval(1)
                     .build(ResourceKey.create(Registries.ENTITY_TYPE, Identifier.fromNamespaceAndPath("sifucraft", "enemy_proxy"))));
 
     public static void register() {

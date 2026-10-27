@@ -6,6 +6,7 @@
 #include "blocks/block_mirror.h"
 #include "combat/ai_tick_gate.h"
 #include "combat/base_sync.h"
+#include "combat/damage.h"
 #include "combat/world_motion_engine.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
@@ -95,6 +96,29 @@ public:
         Body body;const bool anchor=Convert(sample_,&body);
         return {body,result.invoked,valid&&anchor,result.returned,result.blocking,result.penetrating};
     }
+    Effect Hurt(const Command& c)override{
+        Effect out;
+        if(!combat::damage::WorldReady())return out;
+        if(motion::CheckWorld(g_base,g_current.actors,GetTickCount64())){out.status=Status::Busy;return out;}
+        const auto& targets=g_current.actors.targets;
+        const auto it=std::find_if(targets.begin(),targets.end(),[&](const auto& t){return t.id==c.target&&t.spawn==c.spawn;});
+        if(it==targets.end()){out.status=Status::TargetLost;return out;}
+        const auto target=*it;out.serial=target.identity.serial;
+        const auto hit=mem::ReadPtr(target.actor+off::AFightingCharacter::m_HitCapsule);ue::FVector position;
+        if(!ue::IsLive(hit)||ue::OuterOf(hit)!=target.actor||!ue::ReadWorldLocation(hit,&position)){out.status=Status::TargetLost;return out;}
+        out.position={position.x,position.y,position.z};
+        const auto application=combat::damage::ApplyWorld(g_base,g_current.actors.scope.world,g_current.actors.scope.generation,
+            g_current.actors.scope.peer_session,c.id,target,c.amount);
+        const auto& result=application.result;
+        const auto outcome=static_cast<protocol::DamageOutcome>(result.result);
+        out.health=result.health_after;out.invoked=application.invoked;
+        out.flags=result.result<<8;
+        out.status=outcome==protocol::DamageOutcome::Applied?Status::Applied:
+            (outcome==protocol::DamageOutcome::Invincible||outcome==protocol::DamageOutcome::Dead)?Status::Blocked:
+            outcome==protocol::DamageOutcome::Unavailable?Status::Unsupported:Status::TargetLost;
+        SC_LOG("[world-effect] id=%llu target=%u/%u type=%016llX mc_final=%.3f native_lost=%.3f HP_after=%.3f outcome=%u",c.id,c.target,c.spawn,c.action,c.amount,result.sifu_damage,result.health_after,result.result);
+        return out;
+    }
     void Forget()override {
         for(auto& watch:g_watches[slot_])watch.store(0);
         if(gate_){gate_=false;if(g_gate_users&&!--g_gate_users&&!combat::ai_gate::Uninstall())SC_LOG("[world-motion] cleanup slot changed; all filters cleared");}
@@ -152,8 +176,15 @@ void Exchange(Context context,Mailbox& mailbox) {
         else SC_LOG("[world-motion] malformed command discarded");
     }
     const auto stamp=(std::uint64_t(static_cast<std::uint32_t>(g_published.actors.pawn_identity.index))<<32)|static_cast<std::uint32_t>(g_published.actors.pawn_identity.serial);
-    mailbox.Status(scope.generation,g_ready.load()&&!changed?kMotionCapability:0,GetTickCount64(),stamp,
-        blocks::ShapesAppliedRevision(),g_flags.load());
+    // H1 may stop while UE is truly paused. Runtime must still report the real
+    // PauserPlayerState, so MC does not run scheduled world ticks during that pause.
+    const auto level=mem::ReadPtr(scope.world+off::UWorld::PersistentLevel);
+    const auto settings=mem::ReadPtr(level+off::ULevel::WorldSettings);
+    const bool settings_live=ue::IsLive(settings);
+    const auto flags=(g_flags.load()&~kPaused)|(settings_live&&mem::ReadOr<std::uintptr_t>(settings+off::AWorldSettings::PauserPlayerState,0)?kPaused:0);
+    const auto capabilities=changed?0ull:((g_ready.load()?kMotionCapability:0)|(g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kDamageCapability:0)|(settings_live?kPauseCapability:0));
+    mailbox.Status(scope.generation,capabilities,GetTickCount64(),stamp,
+        blocks::ShapesAppliedRevision(),flags);
     ReleaseSRWLockExclusive(&g_lock);
 }
 void ApplyOnGameThread(std::uintptr_t base) {
@@ -179,7 +210,7 @@ void ApplyOnGameThread(std::uintptr_t base) {
         if(g_wrong_thread[i].load())engine.CallbackThreadLost();
         if(engine.phase()!=Engine::Phase::Free&&!g_backends[i].Identity())engine.Lost();
     }
-    while(!commands.empty()&&g_fleet.Submit(commands.front(),now))commands.pop_front();
+    for(unsigned n=0;n<8&&!commands.empty()&&g_fleet.Submit(commands.front(),now);++n)commands.pop_front();
     g_fleet.Update(env,now);
     AcquireSRWLockExclusive(&g_lock);
     if(g_io_native==scope.native_session&&g_io_peer==scope.peer_session) {

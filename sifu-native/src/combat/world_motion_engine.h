@@ -6,6 +6,7 @@
 #include <optional>
 #include <memory>
 #include "combat/world_motion_ledger.h"
+#include "combat/world_effect_types.h"
 
 namespace sifucraft::world_motion {
 struct Environment {
@@ -25,6 +26,10 @@ struct Sweep {
     Body body;
     bool invoked=false,valid=false,returned=false,blocking=false,penetrating=false;
 };
+struct Effect {
+    Status status=Status::Unsupported;bool invoked=false;
+    std::int32_t serial=0;float health=0;std::array<float,3> position{};std::uint32_t flags=0;
+};
 class Backend {
 public:
     virtual ~Backend()=default;
@@ -32,6 +37,7 @@ public:
     virtual bool Check(Body*)=0;
     virtual bool Observe(Body* body){return Check(body);} // final original-Tick pose, without requiring an idle AI
     virtual Sweep Move(const Body&,const std::array<float,3>&)=0;
+    virtual Effect Hurt(const Command&){return {};}
     // Clears only this service's filters. It never rewrites an actor's old pose/state.
     virtual void Forget()=0;
 };
@@ -83,7 +89,15 @@ public:
         }
         if(!Scope(command)||command.issued_ms>now||now-command.issued_ms>200) {Finish(command,Status::Stale,now);return true;}
         if(!env_.ready||env_.flags) {Finish(command,Status::Busy,now);return true;}
-        if(command.op==Op::Damage||(command.flags&kPlayer)) {Finish(command,Status::Unsupported,now);return true;}
+        if(command.flags&kPlayer) {Finish(command,Status::Unsupported,now);return true;}
+        if(command.op==Op::Damage){
+            if(command.source!=Source::WorldEffect||!EnvironmentEffect(command.action)){Finish(command,Status::Unsupported,now);return true;}
+            const auto effect=backend_.Hurt(command);
+            if(effect.invoked&&phase_!=Phase::Free)BeginRelease(Status::TargetLost);
+            auto reply=Make(command,effect.status,now);reply.actor_serial=effect.serial;reply.health=effect.health;reply.flags=effect.flags;
+            for(int i=0;i<3;++i){reply.position[i]=effect.position[i];reply.delta[i]=0;}
+            Seal(reply);if(ledger_->Finish(command.id,reply))out_.push_back(reply);return true;
+        }
         if(command.op==Op::Reserve) {
             if(phase_!=Phase::Free) {Finish(command,Status::Busy,now);return true;}
             if(!env_.settled){Finish(command,Status::Busy,now);return true;}
