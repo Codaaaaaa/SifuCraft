@@ -76,7 +76,7 @@ final class CatalogLogicCheck {
         if(stage==0){if(!ready||server.getPlayerList().getPlayers().isEmpty())return;level=server.overworld();player=server.getPlayerList().getPlayers().getFirst();deadline=System.currentTimeMillis()+45000;
             for(int x=0;x<=32;x++)for(int z=0;z<=61;z++){var at=origin.offset(x,0,z);var c=new ChunkPos(at.getX()>>4,at.getZ()>>4);if(chunks.add(c)&&level.setChunkForced(c.x(),c.z(),true))forced.add(c);}for(int i=0;i<player.getInventory().getContainerSize();i++)inventory.add(player.getInventory().getItem(i).copy());stage=1;return;}
         require(System.currentTimeMillis()<deadline,"bounded world-tick matrix");
-        if(stage==1){if(chunks.stream().anyMatch(c->!level.isPositionEntityTicking(new BlockPos(c.x()*16+8,origin.getY(),c.z()*16+8))))return;setup();analog();check(false,false);stage=2;return;}
+        if(stage==1){if(chunks.stream().anyMatch(c->!level.isPositionEntityTicking(new BlockPos(c.x()*16+8,origin.getY(),c.z()*16+8))))return;setup();analog();if(Boolean.getBoolean("sifucraft.catalogContainerSelfTest"))reports.addAll(CatalogContainerCases.run(level,player,analog));check(false,false);stage=2;return;}
         tick++;if(tick==1||tick==40)power(true);if(tick==21||tick==50)power(false);
         if(tick==5||tick==20)check(true,true);if(tick==25)check(false,true);if(tick==30)manual(true);if(tick==35)manual(false);if(tick==45)check(true,false);if(tick<55)return;check(false,false);
         for(int i=0;i<inventory.size();i++)require(ItemStack.matches(inventory.get(i),player.getInventory().getItem(i)),"all player inventory components conserved");
