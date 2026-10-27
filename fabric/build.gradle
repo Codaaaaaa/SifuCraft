@@ -63,6 +63,7 @@ loom {
 			property "sifucraft.environmentNativeTest", providers.gradleProperty("sifucraft.environmentNativeTest").getOrElse("false")
 			property "sifucraft.nativePauseSelfTest", providers.gradleProperty("sifucraft.nativePauseSelfTest").getOrElse("false")
 			property "sifucraft.fluidMotionSelfTest", providers.gradleProperty("sifucraft.fluidMotionSelfTest").getOrElse("false")
+			property "sifucraft.airEnvironmentSelfTest", providers.gradleProperty("sifucraft.airEnvironmentSelfTest").getOrElse("false")
 			property "sifucraft.fluidPartialSelfTest", providers.gradleProperty("sifucraft.fluidPartialSelfTest").getOrElse("false")
 			property "sifucraft.environmentPathSelfTest", providers.gradleProperty("sifucraft.environmentPathSelfTest").getOrElse("false")
 			property "sifucraft.pistonTicketsSelfTest", providers.gradleProperty("sifucraft.pistonTicketsSelfTest").getOrElse("false")
