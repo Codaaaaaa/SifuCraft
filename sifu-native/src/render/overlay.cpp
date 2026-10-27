@@ -21,6 +21,7 @@ namespace {
 using Present = HRESULT(WINAPI*)(IDXGISwapChain*, UINT, UINT);
 std::atomic<Present> original{nullptr};
 std::atomic<IDXGISwapChain*> target{nullptr};
+std::atomic<HWND> target_window{nullptr};
 std::atomic<std::int32_t> pixel_color_space{-1};
 std::atomic<bool> exiting{false}, drawing{false}, capture{false}, pattern{false};
 std::atomic<std::uint64_t> presents{0}, draws{0}, uploads{0}, expired{0}, failures{0}, active{0};
@@ -173,8 +174,15 @@ HRESULT WINAPI PresentHook(IDXGISwapChain* chain, UINT interval, UINT flags) {
     bool attempted = false;
     if (!exiting.load() && drawing.load() && chain == target.load() && !(flags & DXGI_PRESENT_TEST) &&
         TryAcquireSRWLockExclusive(&render_lock)) {
-        attempted = true;
-        try { depth_probe::Tick(chain); candidate = Paint(chain); }
+        try {
+            // DXGI may synchronously send window messages. Keep its COM calls
+            // on the game's Present thread, never the Runtime discovery worker.
+            DXGI_SWAP_CHAIN_DESC desc{};
+            const auto window=target_window.load();
+            if(window&&SUCCEEDED(chain->GetDesc(&desc))&&desc.OutputWindow==window&&chain==target.load()){
+                attempted=true;depth_probe::Tick(chain);candidate=Paint(chain);
+            }
+        }
         catch (...) { ++failures; received_ms = 0; }
         ReleaseSRWLockExclusive(&render_lock);
     }
@@ -193,7 +201,7 @@ HRESULT WINAPI PresentHook(IDXGISwapChain* chain, UINT interval, UINT flags) {
     return hr;
 }
 
-IDXGISwapChain* FindSwapChain(std::uintptr_t base) {
+IDXGISwapChain* FindSwapChain(std::uintptr_t base,HWND* expected_window) {
     const auto rhi = mem::ReadPtr(base + gen::rva::GD3D11RHI);
     if (!rhi || rhi != mem::ReadPtr(base + gen::rva::GDynamicRHI)) return nullptr;
     mem::RawArray viewports;
@@ -207,10 +215,11 @@ IDXGISwapChain* FindSwapChain(std::uintptr_t base) {
         const auto vtable = mem::ReadPtr(reinterpret_cast<std::uintptr_t>(chain));
         const auto entry = mem::ReadPtr(vtable + 8 * sizeof(void*));
         if (!DxgiCode(entry) && entry != reinterpret_cast<std::uintptr_t>(&PresentHook)) continue;
-        // GetDesc (slot 12) must also resolve to DXGI code before any COM dispatch.
+        // Verify the later render-thread query without dispatching COM here:
+        // even GetDesc can enter DXGI's window handling and deadlock the worker
+        // against the game's message-pump thread during a mode/focus change.
         if (!DxgiCode(mem::ReadPtr(vtable + 12 * sizeof(void*)))) continue;
-        DXGI_SWAP_CHAIN_DESC desc{};
-        if (FAILED(chain->GetDesc(&desc)) || desc.OutputWindow != window) continue;
+        *expected_window=window;
         pixel_color_space = mem::ReadOr<std::int32_t>(viewport + gen::off::FD3D11Viewport::PixelColorSpace, -1);
         return chain;
     }
@@ -251,11 +260,12 @@ void Maintain(std::uintptr_t image_base, const Scope& scope, int stage) {
     if (GetFileAttributesW(request.c_str()) != INVALID_FILE_ATTRIBUTES && DeleteFileW(request.c_str())) capture = true;
     const auto pattern_request = root + L"\\overlay-pattern";
     if (GetFileAttributesW(pattern_request.c_str()) != INVALID_FILE_ATTRIBUTES && DeleteFileW(pattern_request.c_str())) pattern = true;
-    auto* chain = FindSwapChain(image_base);
+    HWND window=nullptr;
+    auto* chain = FindSwapChain(image_base,&window);
     if (!chain) { drawing = false; return; }
     const auto vtable = mem::ReadPtr(reinterpret_cast<std::uintptr_t>(chain));
     if (hook.installed()) {
-        if (vtable == plan.vftable) target = chain;
+        if (vtable == plan.vftable) {target_window=window;target=chain;}
         drawing = target.load() == chain;
         return;
     }
@@ -264,7 +274,7 @@ void Maintain(std::uintptr_t image_base, const Scope& scope, int stage) {
     // using another swap-chain implementation's signature/address after a device recreation.
     if (original.load() && original.load() != reinterpret_cast<Present>(entry)) return;
     plan.vftable = vtable; plan.original = entry;
-    original = reinterpret_cast<Present>(entry); target = chain;
+    original = reinterpret_cast<Present>(entry);target_window=window;target=chain;
     if (!hook.Install(0, plan, reinterpret_cast<std::uintptr_t>(chain), reinterpret_cast<void*>(&PresentHook))) return;
     if (!hook.Uninstall() || !hook.Install(0, plan, reinterpret_cast<std::uintptr_t>(chain), reinterpret_cast<void*>(&PresentHook))) {
         drawing = false;
