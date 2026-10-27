@@ -30,7 +30,7 @@ final class AirEnvironmentCheck {
     private static final class Reference extends Cow {
         Reference(ServerLevel level){super(EntityTypes.COW,level);setNoAi(true);setNoGravity(true);setSilent(true);getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH).setBaseValue(20);setHealth(20);refreshDimensions();}
         @Override public EntityDimensions getDefaultDimensions(Pose pose){return EntityDimensions.scalable(.7f,1.84f);}
-        void follow(EnemyProxy proxy){var at=proxy.position();setPos(at);setDeltaMovement(Vec3.ZERO);tick();setPos(at);setDeltaMovement(Vec3.ZERO);}
+        void follow(EnemyProxy proxy){var at=proxy.position();setPos(at);setDeltaMovement(Vec3.ZERO);((ServerLevel)level()).tickNonPassenger(this);setPos(at);setDeltaMovement(Vec3.ZERO);}
     }
     private final Map<BlockPos,BlockState> originals=new LinkedHashMap<>();
     private final Map<Integer,Reference> references=new LinkedHashMap<>();

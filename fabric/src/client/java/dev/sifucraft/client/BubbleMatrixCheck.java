@@ -106,9 +106,15 @@ final class BubbleMatrixCheck implements FluidMotion.Observer {
     @Override public void prepared(FluidMotion.Sample sample){require(!references.containsKey(sample.key()),"same reference cannot silently restart");references.put(sample.key(),new Reference(level,sample));starts.put(sample.key(),sample.position());actuals.put(sample.key(),sample.position());minima.put(sample.key(),sample.position().y);maxima.put(sample.key(),sample.position().y);}
     private static long randomState(net.minecraft.util.RandomSource random){try{var field=random.getClass().getDeclaredField("seed");field.setAccessible(true);return ((java.util.concurrent.atomic.AtomicLong)field.get(random)).get();}catch(ReflectiveOperationException e){throw new AssertionError("diagnostic random layout "+random.getClass(),e);}}
     @Override public void beforeSimulation(FluidMotion.Sample sample,dev.sifucraft.combat.VanillaFluidBody body){var r=references.get(sample.key());long nativeRandom=randomState(body.getRandom()),refRandom=randomState(r.getRandom());String state="count="+counts.getOrDefault(sample.key(),0)+" native_ground="+sample.grounded()+" ref_ground="+r.onGround()+" native_pos="+sample.position()+" ref_pos="+r.position().subtract(20,0,0)+" velocity="+sample.velocity()+" native_random="+nativeRandom+" ref_random="+refRandom+" native_air="+body.getAirSupply()+" ref_air="+r.getAirSupply()+" native_water="+body.getFluidHeight(net.minecraft.tags.FluidTags.WATER)+" ref_water="+r.getFluidHeight(net.minecraft.tags.FluidTags.WATER);beforeStates.put(sample.key(),state);require(nativeRandom==refRandom,"random stream differs before tick target="+sample.key()+" "+state);}
-    @Override public void simulated(FluidMotion.Sample sample){var r=references.get(sample.key());var before=r.position().subtract(20,0,0);var oldVelocity=r.getDeltaMovement();r.tick();double p=r.position().subtract(20,0,0).distanceTo(sample.position()),v=r.getDeltaMovement().distanceTo(sample.velocity());planError=Math.max(planError,p);velocityError=Math.max(velocityError,v);require(p<1e-4&&v<1e-5,"original FloatGoal/travel differs height="+height+" target="+sample.key()+" pre="+beforeStates.get(sample.key())+" entity_tick="+r.tickCount+" world_tick="+sample.tick()+" before="+before+" old_v="+oldVelocity+" native_plan="+sample.position()+" native_v="+sample.velocity()+" ref="+r.position().subtract(20,0,0)+" ref_v="+r.getDeltaMovement()+" position="+p+" velocity="+v);}
+    @Override public void simulated(FluidMotion.Sample sample){
+        var r=references.get(sample.key());var before=r.position().subtract(20,0,0);var oldVelocity=r.getDeltaMovement();level.tickNonPassenger(r);
+        require(r.tickCount==sample.entityTick(),"full original server tick differs target="+sample.key()+" native_entity_tick="+sample.entityTick()+" original_entity_tick="+r.tickCount);
+        double p=r.position().subtract(20,0,0).distanceTo(sample.position()),v=r.getDeltaMovement().distanceTo(sample.velocity());planError=Math.max(planError,p);velocityError=Math.max(velocityError,v);
+        require(p<1e-4&&v<1e-5,"original FloatGoal/travel differs height="+height+" target="+sample.key()+" pre="+beforeStates.get(sample.key())+" entity_tick="+r.tickCount+" world_tick="+sample.tick()+" before="+before+" old_v="+oldVelocity+" native_plan="+sample.position()+" native_v="+sample.velocity()+" ref="+r.position().subtract(20,0,0)+" ref_v="+r.getDeltaMovement()+" position="+p+" velocity="+v);
+    }
     @Override public void completed(FluidMotion.Sample sample){
-        double error=references.get(sample.key()).position().subtract(20,0,0).distanceTo(sample.position());physicalError=Math.max(physicalError,error);require(error<.001,"actual physical endpoint differs from original by "+error);
+        var reference=references.get(sample.key());double error=reference.position().subtract(20,0,0).distanceTo(sample.position());physicalError=Math.max(physicalError,error);require(error<.001,"actual physical endpoint differs from original by "+error);
+        double velocity=reference.getDeltaMovement().distanceTo(sample.velocity());velocityError=Math.max(velocityError,velocity);require(velocity<1e-5,"receipt changed original post-collision fluid forces target="+sample.key()+" original="+reference.getDeltaMovement()+" actual="+sample.velocity());
         if(!pathGapChecked&&sample.key().id()==101&&sample.position().distanceTo(starts.get(sample.key()))>.1){
             var before=WorldEffects.stats();var proxy=EnemyMirrors.hitAttacker(sample.key().id(),sample.key().spawn());
             require(before.pathSegments()>0,"actual physical contact path exists before status miss");
@@ -116,6 +122,11 @@ final class BubbleMatrixCheck implements FluidMotion.Observer {
             require(before.equals(WorldEffects.stats()),"unavailable status neither executes nor discards a fresh actual contact path");pathGapChecked=true;
         }
         actuals.put(sample.key(),sample.position());minima.merge(sample.key(),sample.position().y,Math::min);maxima.merge(sample.key(),sample.position().y,Math::max);counts.merge(sample.key(),1,Integer::sum);compared++;
+        // The next prediction starts at the external transport's actual pose.
+        // Compare FIRST; retain the reference's own velocity, RNG and counters.
+        // An unquantized free trajectory can cross water's 1mm threshold a tick
+        // earlier after hundreds of float-centimetre wire round trips.
+        reference.setPos(sample.position().add(20,0,0));
     }
     void restore(MinecraftServer ignored){FluidMotion.observe(null);if(level!=null){for(int id:new int[]{101,102}){var p=EnemyMirrors.hitAttacker(id,1);if(p!=null){p.removeEffect(MobEffects.FIRE_RESISTANCE);p.removeEffect(MobEffects.WATER_BREATHING);p.removeEffect(MobEffects.RESISTANCE);}}for(var e:originals.entrySet())level.setBlockAndUpdate(e.getKey(),e.getValue());}originals.clear();for(var r:references.values())r.discard();references.clear();}
 }

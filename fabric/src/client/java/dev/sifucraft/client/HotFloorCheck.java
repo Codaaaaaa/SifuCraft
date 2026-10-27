@@ -62,7 +62,7 @@ final class HotFloorCheck {
             }
             require(System.currentTimeMillis()-started<15000,"bounded deadline stage="+stage+" "+FluidMotion.stats()+" "+WorldEffects.stats());
             for(int id:new int[]{101,102}){
-                var p=EnemyMirrors.hitAttacker(id,1);require(p!=null,"unchanged activation");var r=references.get(id);r.setPos(p.position());r.tick();comparisons++;
+                var p=EnemyMirrors.hitAttacker(id,1);require(p!=null,"unchanged activation");var r=references.get(id);r.setPos(p.position());level.tickNonPassenger(r);comparisons++;
             }
             float referenceHealth=references.get(101).getHealth();
             if(referenceHealth<previousHealth){referenceTicks.add(level.getGameTime());previousHealth=referenceHealth;}

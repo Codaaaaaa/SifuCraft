@@ -7,6 +7,7 @@ import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.ai.goal.FloatGoal;
 import net.minecraft.world.entity.animal.cow.Cow;
@@ -17,6 +18,7 @@ import net.minecraft.world.level.gameevent.GameEvent;
 public final class VanillaFluidBody extends Cow {
     public record Landing(double distance,BlockPos pos){}
     private double beforeFall;private Landing landing;
+    private int clippedAxes;
     private EntityDimensions physical=EntityDimensions.scalable(.7f,1.8f);
     public VanillaFluidBody(ServerLevel level,float radius,float half,long seed,boolean swim){
         super(EntityTypes.COW,level);physical=EntityDimensions.scalable(radius*2/100,half*2/100);refreshDimensions();
@@ -46,7 +48,15 @@ public final class VanillaFluidBody extends Cow {
         if(!isInWater()&&dy<0)fallDistance-=(float)dy;
         if(ground){if(fallDistance>0)landing=new Landing(fallDistance,pos.immutable());resetFallDistance();}
     }
-    public void beginPrediction(){beforeFall=fallDistance;landing=null;}
+    @Override public void move(MoverType type,net.minecraft.world.phys.Vec3 movement){
+        var from=position();super.move(type,movement);var actual=position().subtract(from);
+        if(Math.abs(movement.x-actual.x)>1e-7)clippedAxes|=1;
+        if(Math.abs(movement.y-actual.y)>1e-7)clippedAxes|=2;
+        if(Math.abs(movement.z-actual.z)>1e-7)clippedAxes|=4;
+    }
+    /** Vanilla has already resolved these contacts before later fluid forces. */
+    public boolean clipped(int axis){return (clippedAxes&axis)!=0;}
+    public void beginPrediction(){beforeFall=fallDistance;landing=null;clippedAxes=0;}
     public void reconcileFall(double actualY,boolean ground){
         fallDistance=beforeFall;landing=null;var pos=BlockPos.containing(getX(),getY()-.01,getZ());checkFallDamage(actualY,ground,level().getBlockState(pos),pos);
     }

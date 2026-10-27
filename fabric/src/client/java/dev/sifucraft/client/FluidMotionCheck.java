@@ -83,7 +83,7 @@ final class FluidMotionCheck implements FluidMotion.Observer {
     }
     @Override public void prepared(FluidMotion.Sample sample){require(!references.containsKey(sample.key()),"no silent reacquisition/reset of original reference");references.put(sample.key(),new Reference(level,sample));starts.put(sample.key(),sample.position());}
     @Override public void simulated(FluidMotion.Sample sample){
-        var ref=references.get(sample.key());ref.tick();double error=ref.position().subtract(20,0,0).distanceTo(sample.position());
+        var ref=references.get(sample.key());level.tickNonPassenger(ref);double error=ref.position().subtract(20,0,0).distanceTo(sample.position());
         // Native coordinates cross the wire as float centimetres, while the
         // independent Cow retains double metres across ticks. Allow 0.01cm of
         // quantization; the actual endpoint comparison below is still separate.
@@ -91,7 +91,8 @@ final class FluidMotionCheck implements FluidMotion.Observer {
     }
     @Override public void completed(FluidMotion.Sample sample){
         var ref=references.get(sample.key());double error=ref.position().subtract(20,0,0).distanceTo(sample.position());maxActualError=Math.max(maxActualError,error);
-        require(error<.001,"actual independent endpoint differs from original Cow by "+error+"m");counts.merge(sample.key(),1,Integer::sum);compared++;
+        require(error<.001&&ref.getDeltaMovement().distanceTo(sample.velocity())<1e-5,"actual independent endpoint/velocity differs from original Cow by "+error+"m");counts.merge(sample.key(),1,Integer::sum);compared++;
+        ref.setPos(sample.position().add(20,0,0)); // only after comparison; velocity/RNG remain independent
     }
     void restore(MinecraftServer ignored){FluidMotion.observe(null);if(level!=null)for(var e:originals.entrySet())level.setBlockAndUpdate(e.getKey(),e.getValue());originals.clear();for(var r:references.values())r.discard();references.clear();}
 }
