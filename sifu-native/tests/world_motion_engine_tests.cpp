@@ -298,6 +298,18 @@ void ExplosionEventIdentity(){
     }
 }
 void PassengerPose(){
+    for(bool partial:{false,true}){
+        Case batch;auto reserve=batch.CommandFor();reserve.source=Source::Passenger;batch.Send(reserve);
+        for(auto part:{1u,2u,4u})batch.engine.Original(part);batch.Tick();batch.Pop(Status::Prepared);
+        batch.backend.block=partial;batch.backend.fraction=partial?.5f:1.f;
+        for(int i=0;i<8;i++){
+            auto step=batch.CommandFor(Op::Step);step.source=Source::Passenger;step.position[0]=9.9f*i;step.delta[0]=9.9f;
+            batch.Send(step);auto reply=batch.Pop(!partial?Status::Applied:i==0?Status::Partial:Status::Stale);
+            if(partial&&i>0)Require(reply.flags==kStepNotExecuted,"later predicted passenger steps cannot move after an earlier partial sweep");
+        }
+        Require(batch.backend.moves==(partial?1:8)&&batch.engine.Skip(batch.now),"bounded same-tick passenger batch retains per-step sweep and ownership checks");
+        Require(std::fabs(batch.backend.body.position[0]-(partial?4.95f:79.2f))<.01f,"batch endpoint is actual swept travel, never a predicted endpoint");
+    }
     {Case ride;auto reserve=ride.CommandFor();reserve.source=Source::Passenger;ride.Send(reserve);for(auto part:{1u,2u,4u})ride.engine.Original(part);ride.Tick();ride.Pop(Status::Prepared);
      std::optional<Command> retired;
      for(int i=0;i<1000;i++){

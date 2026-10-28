@@ -129,6 +129,8 @@ loom {
 			property "sifucraft.nativeMachineEffects", providers.gradleProperty("sifucraft.nativeMachineEffects").getOrElse("false")
 			property "sifucraft.nativeWindSelfTest", providers.gradleProperty("sifucraft.nativeWindSelfTest").getOrElse("false")
 			property "sifucraft.boatDrivingSelfTest", providers.gradleProperty("sifucraft.boatDrivingSelfTest").getOrElse("false")
+			property "sifucraft.boatBubbleSelfTest", providers.gradleProperty("sifucraft.boatBubbleSelfTest").getOrElse("false")
+			property "sifucraft.boatBubbleDirection", providers.gradleProperty("sifucraft.boatBubbleDirection").getOrElse("up")
 			property "sifucraft.nativeSuffocationSelfTest", providers.gradleProperty("sifucraft.nativeSuffocationSelfTest").getOrElse("false")
 			property "sifucraft.boatDrivingControl", file('../build/p11-boat-driving-control.txt').canonicalPath
 			property "sifucraft.pistonAftermathSelfTest", providers.gradleProperty("sifucraft.pistonAftermathSelfTest").getOrElse("false")

@@ -18,7 +18,17 @@ import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.Vec3;
 
 /** Real LocalPlayer keyboard, original boat physics, one actual native passenger and F8 handoffs. */
-final class BoatDrivingCheck {
+final class BoatDrivingCheck implements FluidMotion.Observer {
+    private static final class LandingReference extends net.minecraft.world.entity.animal.cow.Cow {
+        private EntityDimensions size;
+        LandingReference(ServerLevel level,FluidMotion.Sample sample){super(EntityTypes.COW,level);size=EntityDimensions.scalable(sample.width(),sample.height());refreshDimensions();getRandom().setSeed(sample.seed());goalSelector.addGoal(0,new net.minecraft.world.entity.ai.goal.FloatGoal(this));setSilent(true);setId(sample.entityId());setPos(sample.position());setDeltaMovement(sample.velocity());setOnGround(sample.grounded());}
+        @Override protected void registerGoals(){}
+        @Override public EntityDimensions getDefaultDimensions(Pose pose){return size==null?EntityDimensions.scalable(.7f,1.8f):size;}
+    }
+    private final boolean bubble=Boolean.getBoolean("sifucraft.boatBubbleSelfTest");
+    private final boolean bubbleDown=System.getProperty("sifucraft.boatBubbleDirection","up").equals("down");
+    private double bubbleBoatY,bubbleSeatOffset,bubbleBoatRise,bubbleNativeRise,bubbleLag;
+    private LandingReference landingReference;private float landingReferenceHp,landingLoss;private int landingTicks,landingCompleted;
     private static final java.nio.file.Path CONTROL=java.nio.file.Path.of(System.getProperty("sifucraft.boatDrivingControl"));
     private static void control(String value){try{java.nio.file.Files.writeString(CONTROL,value);}catch(java.io.IOException error){throw new java.io.UncheckedIOException(error);}}
     private static String control(){try{return java.nio.file.Files.readString(CONTROL).trim();}catch(java.io.IOException error){throw new java.io.UncheckedIOException(error);}}
@@ -33,7 +43,10 @@ final class BoatDrivingCheck {
     private float driveYaw;private double npcMoved;
     private BlockPos basin;private boolean boatAdded;
     private net.minecraft.world.level.ChunkPos warmCenter;private java.util.concurrent.CompletableFuture<?> warmChunks;
-    BoatDrivingCheck(){require(DevWorld.LEVEL_ID.startsWith("sifucraft-boat-driving-check-"),"disposable world required");control("starting");}
+    BoatDrivingCheck(){require(DevWorld.LEVEL_ID.startsWith("sifucraft-boat-driving-check-"),"disposable world required");control("starting");if(bubble)FluidMotion.observe(this);}
+    @Override public void prepared(FluidMotion.Sample sample){if(!bubble||enemy==null||!sample.key().equals(enemy.key())||stage<9)return;require(landingReference==null,"one physical landing continuation");landingReference=new LandingReference(level,sample);landingReferenceHp=landingReference.getHealth();}
+    @Override public void simulated(FluidMotion.Sample sample){if(landingReference==null||!sample.key().equals(enemy.key()))return;level.tickNonPassenger(landingReference);landingTicks++;landingLoss=landingReferenceHp-landingReference.getHealth();require(sample.position().distanceTo(landingReference.position())<.15,"original independent landing trajectory");}
+    @Override public void completed(FluidMotion.Sample sample){if(landingReference!=null&&sample.key().equals(enemy.key()))landingCompleted++;}
     private static void require(boolean ok,String why){if(!ok)throw new AssertionError("boat driving: "+why);}
     private static void key(InputInjector input,KeyMapping binding,boolean down){var code=((KeyMappingAccessor)binding).sifucraft$key();require(code.getType()==com.mojang.blaze3d.platform.InputConstants.Type.KEYBOARD,"keyboard binding");input.key(code.getValue(),down?InputInjector.PRESS:InputInjector.RELEASE,0);}
     void clientTick(Minecraft mc,InputInjector input,SifuFrame snapshot,boolean anchored){
@@ -86,7 +99,7 @@ final class BoatDrivingCheck {
         require(System.currentTimeMillis()<(stage==4||stage==5?began+180000:deadline),"bounded stage="+stage+" passenger="+BoatPassengers.stats()+" fluid="+FluidMotion.stats());
         if(v==null||v.nativeStatus()==null)return; // A seqlock miss grants no work; keep the bounded fixture state.
         var e=v==null||v.enemies()==null?null:v.enemies().entries().stream().filter(x->x.key().equals(enemy.key())).findFirst().orElse(null);
-        if(e!=null){require(e.alive()&&e.health()==enemy.health(),"same native passenger activation/HP stage="+stage+" expected="+enemy.health()+" actual="+e.health());npcMoved=Math.max(npcMoved,Math.hypot(e.location().x()-enemy.location().x(),e.location().y()-enemy.location().y())/100);}
+        if(e!=null){require(e.alive()&&(bubble&&stage>=9||e.health()==enemy.health()),"same native passenger activation/HP stage="+stage+" expected="+enemy.health()+" actual="+e.health());npcMoved=Math.max(npcMoved,Math.hypot(e.location().x()-enemy.location().x(),e.location().y()-enemy.location().y())/100);}
         if(stage==1){
             if(!boatAdded){if(v==null||!v.shapesCurrent()||v.geometry().index()!=WorldBlocks.index().revision()||v.nativeStatus().shapeRevision()!=v.geometry().revision())return;require(level.addFreshEntity(boat),"one real boat");boatAdded=true;return;}
             if(boat.getPassengers().size()!=1)return;require(boat.getFirstPassenger() instanceof EnemyProxy,"native acquisition precedes MC passenger link");
@@ -97,6 +110,11 @@ final class BoatDrivingCheck {
             require(BoatPassengers.holds(enemy.key())&&boat.getPassengers().size()==1,"native passenger remains attached during flotation warmup");
             if(ticks%20==0){var proxy=EnemyMirrors.hitAttacker(enemy.id(),enemy.spawn());org.slf4j.LoggerFactory.getLogger("sifucraft").info("[boat-driving-test] flotation tick={} basin={} boat={} wet={} seats={} proxy={} eye={} air={} stats={}",ticks,basin,boat.position(),boat.isInWater(),boat.getPassengers().size(),proxy==null?null:proxy.position(),proxy==null?0:proxy.getEyeY(),proxy==null?0:proxy.getAirSupply(),BoatPassengers.stats());}
             if(++ticks<30||!ready||!boat.isInWater()||boat.getPassengers().size()!=1)return;
+            if(bubble){
+                bubbleBoatY=boat.getY();var proxy=EnemyMirrors.hitAttacker(enemy.id(),enemy.spawn());bubbleSeatOffset=proxy.getY()-boat.getY();
+                put(BlockPos.containing(boat.getX(),basin.getY()-1,boat.getZ()),(bubbleDown?Blocks.MAGMA_BLOCK:Blocks.SOUL_SAND).defaultBlockState());
+                stage=20;ticks=0;deadline=System.currentTimeMillis()+20000;return;
+            }
             player.teleportTo(level,boat.getX(),boat.getY()+.5,boat.getZ(),Set.of(),driveYaw,0,true);require(player.startRiding(boat),"original player boarding");
             require(boat.getFirstPassenger()==player&&boat.getPassengers().size()==2,"vanilla inserts player into driving seat");stage=3;deadline=System.currentTimeMillis()+20000;return;
         }
@@ -104,14 +122,31 @@ final class BoatDrivingCheck {
         if(stage==4){if(!control().equals("native_sent")||frame.minecraftOwnsInput())return;if(++ticks<20)return;require(BoatPassengers.holds(enemy.key())&&boat.getPassengers().size()==2,"F8 Native keeps the native passenger's boat relation");stage=5;ticks=0;control("mc_ready");org.slf4j.LoggerFactory.getLogger("sifucraft").info("[boat-driving-test] F8_MC_READY Native interval passed; switch back to MC");return;}
         if(stage==5){if(!control().equals("mc_sent")||!ready)return;require(boat.getPassengers().size()==2,"F8 return keeps both seats");stage=6;deadline=System.currentTimeMillis()+20000;return;}
         if(stage==7)return;
+        if(stage==20){
+            if(bubbleDown&&boat.getPassengers().isEmpty()){
+                require(ticks>=40,"original downward bubble timer precedes ejection");boat.discard();stage=9;ticks=0;deadline=System.currentTimeMillis()+20000;return;
+            }
+            require(BoatPassengers.holds(enemy.key())&&boat.getPassengers().size()==1,"bubble retains native passenger authority");
+            if(e!=null){double feet=v.placement().mcY(e.location().z()-e.halfHeight());bubbleBoatRise=Math.max(bubbleBoatRise,boat.getY()-bubbleBoatY);bubbleNativeRise=Math.max(bubbleNativeRise,feet-bubbleBoatY-bubbleSeatOffset);bubbleLag=Math.max(bubbleLag,Math.abs(feet-boat.getY()-bubbleSeatOffset));}
+            if(++ticks%20==0)org.slf4j.LoggerFactory.getLogger("sifucraft").info("[boat-bubble-test] tick={} boat_rise={} native_rise={} max_seat_lag={} stats={}",ticks,bubbleBoatRise,bubbleNativeRise,bubbleLag,BoatPassengers.stats());
+            if(bubbleDown){require(ticks<180,"original downward bubble ejects its passenger");return;}
+            if(ticks<100)return;
+            require(bubbleBoatRise>.2&&bubbleNativeRise>bubbleBoatRise-.5&&bubbleLag<1,"original upward bubble impulse reaches the actual passenger at bounded seat lag");
+            boat.discard();stage=9;ticks=0;deadline=System.currentTimeMillis()+20000;return;
+        }
         if(stage==8){require(!player.isPassenger(),"real shift dismount reached server");boat.discard();stage=9;ticks=0;deadline=System.currentTimeMillis()+20000;return;}
         if(stage==9){if(BoatPassengers.stats().active()!=0)return;require(BoatPassengers.stats().failed()==0,"passenger handback has no failed lease");restore(server);stage=10;ticks=0;return;}
         if(stage==10){if(++ticks<25||v==null||!v.shapesCurrent()||BoatPassengers.stats().active()!=0||FluidMotion.stats().active()!=0||v.requests().pending()!=0)return;
+            if(bubble){
+                require(landingTicks>1&&landingCompleted>0&&e!=null&&Math.abs(enemy.health()-e.health()-landingLoss*3)<.02,"original reference landing HP maps once to the actual NPC");
+                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p11-native-boat-bubble.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(Map.of("passed",true,"direction",bubbleDown?"down":"up","boat_rise_m",bubbleBoatRise,"native_rise_m",bubbleNativeRise,"max_seat_lag_m",bubbleLag,"reference_landing_loss",landingLoss,"landing_ticks",landingTicks,"passengers",BoatPassengers.stats()),out));
+                org.slf4j.LoggerFactory.getLogger("sifucraft").info("[boat-bubble-test] PASS original {} bubble, actual NPC seat/ejection and reference landing, cleanup ACK",bubbleDown?"downward":"upward");FluidMotion.observe(null);if(landingReference!=null)landingReference.discard();finished=true;control("passed");return;
+            }
             require(npcMoved>.1&&player.position().distanceTo(original)<.05,"actual NPC travelled and original player location restored");
             AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p11-actual-driving.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(Map.of("passed",true,"actual_local_player",true,"native_npc",enemy.key(),"keyboard_distance_m",driven,"npc_distance_m",npcMoved,"f5_cameras",cameras.toString(),"f8_roundtrip",true,"native_hp",nativeHp,"passengers",BoatPassengers.stats()),out));
             org.slf4j.LoggerFactory.getLogger("sifucraft").info("[boat-driving-test] PASS actual LocalPlayer keyboard/water/F5/F8/player+NPC/shift dismount, NPC={}m, cleanup native ACK",npcMoved);finished=true;
             control("passed");
         }
     }catch(Exception|AssertionError error){restore(server);org.slf4j.LoggerFactory.getLogger("sifucraft").error("[boat-driving-test] FAIL",error);failure=new AssertionError(error);}}
-    void restore(MinecraftServer ignored){release=true;if(player!=null&&original!=null){player.stopRiding();player.teleportTo(level,original.x,original.y,original.z,Set.of(),yaw,pitch,true);player.setDeltaMovement(Vec3.ZERO);}if(boat!=null&&!boat.isRemoved())boat.discard();if(level!=null){for(var pos:originals.keySet())if(!level.getFluidState(pos).isEmpty())level.setBlock(pos,Blocks.AIR.defaultBlockState(),18);for(var entry:originals.entrySet())level.setBlock(entry.getKey(),entry.getValue(),18);originals.clear();if(warmCenter!=null){level.getChunkSource().removeTicketWithRadius(TicketType.FORCED,warmCenter,3);warmCenter=null;}}}
+    void restore(MinecraftServer ignored){release=true;if(player!=null&&original!=null){player.stopRiding();player.teleportTo(level,original.x,original.y,original.z,Set.of(),yaw,pitch,true);player.setDeltaMovement(Vec3.ZERO);}if(boat!=null&&!boat.isRemoved())boat.discard();if(level!=null){for(var pos:originals.keySet())if(!level.getFluidState(pos).isEmpty())level.setBlock(pos,Blocks.AIR.defaultBlockState(),18);for(var entry:originals.entrySet())level.setBlock(entry.getKey(),entry.getValue(),18);originals.clear();if(warmCenter!=null){level.getChunkSource().removeTicketWithRadius(TicketType.FORCED,warmCenter,3);warmCenter=null;}}if(ignored!=null&&!ignored.isRunning()){FluidMotion.observe(null);if(landingReference!=null)landingReference.discard();}}
 }

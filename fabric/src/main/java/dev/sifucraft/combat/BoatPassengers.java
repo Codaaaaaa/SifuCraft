@@ -37,10 +37,12 @@ public final class BoatPassengers {
         try{p.boat.positionRider(p.proxy);}finally{if(old==null)seatQuery.remove();else seatQuery.set(old);}
     }
     private enum Phase { ACQUIRE,SEATED,RELEASE }
+    private record PendingStep(CompletableFuture<Reply> result,float facing){}
     private static final class Passenger {
         final AbstractBoat boat;final EnemyProxy proxy;final EnemyFrame.Entry initial;final WorldMotionRequests.Scope scope;
         final AtomicBoolean queued=new AtomicBoolean();
         Phase phase=Phase.ACQUIRE;CompletableFuture<Reply> pending;Reply binding,last;
+        List<PendingStep> batch;
         long lease,deadline,renewAt;int operation;float facing,sentFacing;boolean closing,failed,obstructed;
         SifuFrame.Vec3 wanted;float targetYaw;
         Passenger(AbstractBoat boat,EnemyProxy proxy,EnemyFrame.Entry initial,WorldMotionWorld.View view){
@@ -132,15 +134,36 @@ public final class BoatPassengers {
     private static void send(WorldMotionWorld.View v,Passenger p,int op,SifuFrame.Vec3 position,SifuFrame.Vec3 delta,float facing){
         long now=WorldWriter.clockMillis();p.operation=op;p.sentFacing=facing;
         if(op==RESERVE||op==RENEW){p.deadline=now+500;p.renewAt=now+200;}
+        p.pending=request(v,p,op,position,delta,facing,now);
+        p.pending.whenComplete((reply,error)->wake(p));
+    }
+    private static CompletableFuture<Reply> request(WorldMotionWorld.View v,Passenger p,int op,SifuFrame.Vec3 position,SifuFrame.Vec3 delta,float facing,long now){
         var uuid=p.boat.getUUID();var pos=p.boat.blockPosition();
-        p.pending=v.requests().request(p.scope,id->{if(op==RESERVE)p.lease=id;
+        return v.requests().request(p.scope,id->{if(op==RESERVE)p.lease=id;
             return new Command(op,PASSENGER,id,op==RESERVE?0:p.lease,now,uuid.getMostSignificantBits(),uuid.getLeastSignificantBits(),ACTION,p.boat.level().getGameTime(),
                 p.scope.save(),p.scope.map(),v.nativeStatus().shapeRevision(),p.scope.world(),p.initial.id(),p.initial.spawn(),op==RESERVE||op==RENEW?500:0,
                 position,delta,p.initial.health(),p.initial.radius(),p.initial.halfHeight(),0,pos.getX(),pos.getY(),pos.getZ(),0,0,0,0,0,
                 p.binding==null?0:p.binding.actorSerial(),p.binding==null?0:p.binding.componentToken(),facing);
         });
+    }
+    private static void sendSteps(WorldMotionWorld.View v,Passenger p,Vec3 delta,float turn){
+        int total=Math.max(1,(int)Math.ceil(delta.length()/9.9));
+        int count=Math.min(Math.min(8,total),24-v.requests().pending());if(count<=0)return;
+        var part=delta.scale(1.0/total);var at=p.last.position();long now=WorldWriter.clockMillis();
+        var batch=new ArrayList<PendingStep>(count);p.operation=STEP;
+        for(int i=0;i<count;i++){
+            float facing=Mth.wrapDegrees(p.facing+Math.clamp(turn,-15f*(i+1),15f*(i+1)));
+            var position=new SifuFrame.Vec3((float)(at.x()+part.x*i),(float)(at.y()+part.y*i),(float)(at.z()+part.z*i));
+            var movement=new SifuFrame.Vec3((float)part.x,(float)part.y,(float)part.z);
+            batch.add(new PendingStep(request(v,p,STEP,position,movement,facing,now),facing));
+        }
+        p.batch=List.copyOf(batch);
+        p.pending=CompletableFuture.allOf(batch.stream().map(PendingStep::result).toArray(CompletableFuture[]::new))
+            .thenApply(ignored->batch.getLast().result.getNow(null));
         p.pending.whenComplete((reply,error)->wake(p));
     }
+    private static boolean unexecuted(Passenger p,Reply r){return r!=null&&p.binding!=null&&r.actorSerial()==p.binding.actorSerial()&&r.componentToken()==p.binding.componentToken()&&
+        (r.status()==8||r.status()==9)&&r.flags()==STEP_NOT_EXECUTED&&r.restored()==0&&r.health()==p.initial.health();}
     private static void mirror(Passenger p,WorldMotionWorld.View view,Reply r){
         poses.put(p.initial.key(),new Pose(p.scope,r,WorldWriter.clockMillis()+600));
         p.proxy.setPos(view.placement().mcX(r.position().x()),view.placement().mcY(r.position().z()-p.initial.halfHeight()),view.placement().mcZ(r.position().y()));
@@ -182,8 +205,25 @@ public final class BoatPassengers {
         if(p.pending!=null){
             if(!p.pending.isDone())return;
             var r=p.pending.isCompletedExceptionally()?null:p.pending.getNow(null);p.pending=null;
+            int executed=1;
+            if(p.batch!=null){
+                executed=0;Reply actual=null;boolean refused=false;
+                for(var step:p.batch){
+                    var receipt=step.result.isCompletedExceptionally()?null:step.result.getNow(null);
+                    if(unexecuted(p,receipt))continue;
+                    boolean current=receipt!=null&&receipt.actorSerial()==p.binding.actorSerial()&&receipt.componentToken()==p.binding.componentToken()&&receipt.restored()==0&&receipt.health()==p.initial.health();
+                    if(!current||receipt.status()!=2&&receipt.status()!=4&&receipt.status()!=5){actual=receipt;refused=true;break;}
+                    actual=receipt;p.sentFacing=step.facing;executed++;
+                }
+                if(refused||actual!=null)r=actual;
+                p.batch=null;
+                if(refused){
+                    org.slf4j.LoggerFactory.getLogger("sifucraft").info("[boat-passenger] batch refused target={} receipt={} status={}",p.initial.key(),r==null?0:r.id(),r==null?-1:r.status());
+                    close(v,p,true);return;
+                }
+            }
             boolean identity=r!=null&&(p.binding==null||r.actorSerial()==p.binding.actorSerial()&&r.componentToken()==p.binding.componentToken());
-            boolean unexecuted=identity&&p.binding!=null&&p.operation==STEP&&(r.status()==8||r.status()==9)&&r.flags()==STEP_NOT_EXECUTED&&r.restored()==0&&r.health()==p.initial.health();
+            boolean unexecuted=p.operation==STEP&&unexecuted(p,r);
             if(!unexecuted){
                 boolean contact=identity&&p.operation==STEP&&(r.status()==4||r.status()==5)&&r.restored()==0&&r.health()==p.initial.health();
                 if(!identity||p.operation==RESERVE&&r.status()!=1||p.operation!=RESERVE&&r.status()!=2&&!contact){
@@ -195,7 +235,7 @@ public final class BoatPassengers {
                     p.binding=r;
                     if(p.closing||!candidateAfterReservation(p)||!p.proxy.startRiding(p.boat)){close(v,p,true);return;}
                     p.phase=Phase.SEATED;boarded++;
-                }else if(p.operation==STEP){p.facing=p.sentFacing;steps++;p.obstructed=contact;}
+                }else if(p.operation==STEP){p.facing=p.sentFacing;steps+=executed;p.obstructed=contact;}
                 mirror(p,v,r);
             } // A proven unexecuted STEP keeps the last actual pose; retry under the current geometry.
         }
@@ -216,12 +256,11 @@ public final class BoatPassengers {
         }
         if(p.wanted==null)return;
         var wanted=p.wanted;var at=p.last.position();var delta=new Vec3(wanted.x()-at.x(),wanted.y()-at.y(),wanted.z()-at.z());
-        float turn=Mth.wrapDegrees(p.targetYaw-p.facing);float facing=Mth.wrapDegrees(p.facing+Math.clamp(turn,-15,15));
+        float turn=Mth.wrapDegrees(p.targetYaw-p.facing);
         if(!Double.isFinite(delta.lengthSqr())||delta.length()>300){close(v,p,true);return;}
         if(delta.length()<.01&&Math.abs(turn)<.01)return;
         if(v.requests().pending()>=24)return;
-        var step=delta.length()>9.9?delta.normalize().scale(9.9):delta;
-        send(v,p,STEP,at,new SifuFrame.Vec3((float)step.x,(float)step.y,(float)step.z),facing);
+        sendSteps(v,p,delta,turn);
     }
     private static boolean candidateAfterReservation(Passenger p){
         return !p.boat.isRemoved()&&!p.proxy.isPassenger()&&p.boat.hasEnoughSpaceFor(p.proxy)&&
