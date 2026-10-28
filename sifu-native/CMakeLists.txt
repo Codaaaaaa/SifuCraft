@@ -150,7 +150,7 @@ add_executable(sifucraft_native_tests
     src/collision/walk_check.cpp
 )
 add_dependencies(sifucraft_native_tests sifucraft_native)
-add_test(NAME native_tests COMMAND sifucraft_native_tests $<TARGET_FILE:sifucraft_native>)
+add_test(NAME native_tests COMMAND sifucraft_native_tests $<TARGET_FILE:sifucraft_native> "${PROJECT_SOURCE_DIR}/protocol/fixtures/collision_coverage.hex")
 
 foreach(target sifucraft_native sifucraft_fake_sifu sifucraft_collision_replay sifucraft_native_tests sifucraft_overlay_tests sifucraft_world_tests sifucraft_world_render_tests sifucraft_prepare_simd_tests sifucraft_prepare_scalar_tests sifucraft_render_tests sifucraft_depth_tests sifucraft_hud_tests sifucraft_shape_tests sifucraft_motion_tests sifucraft_world_motion_tests sifucraft_world_motion_engine_tests)
     set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)

@@ -9,6 +9,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <fstream>
 
 #include "collision/shape_file.h"
 #include "collision/builder.h"
@@ -23,6 +24,7 @@
 #include "combat/impulse_ledger.h"
 #include "combat/launch_params.h"
 #include "collision/voxels.h"
+#include "collision/export.h"
 #include "collision/walk_check.h"
 #include "core/build_guard.h"
 #include "core/log.h"
@@ -110,6 +112,26 @@ void TestGridPublication() {
     Expect(!content.Matches(request,reordered),"same geometry in another map is not suppressed");
     request.map="map";request.file_tag="";
     Expect(!content.Matches(request,reordered),"static and dynamic grids keep separate publications");
+    request.file_tag="-doors";request.coverage=Coverage{{{{-8,0,0},{16,8,8}}},{}};
+    Expect(!content.Matches(request,reordered),"adding a coverage certificate republishes identical solid voxels");
+    content.Confirm(request,first);request.coverage->unknown.push_back({{0,0,0},{1,1,1}});
+    Expect(!content.Matches(request,reordered),"unknown holes invalidate the published generation independently of occupancy");
+}
+
+void TestCoverageFile(const char* fixture){
+    using namespace sifucraft::collision;
+    Coverage c{{{{-8,0,0},{16,8,8}}},{{{0,0,0},{1,1,1}}}};
+    Expect(c.valid()&&c.Known(-8,0,0)&&c.Known(4,4,4)&&!c.Known(0,0,0)&&!c.Known(-9,0,0)&&!c.Known(16,4,4),"finite known empty region, negative coordinates, unknown hole and exclusive boundary");
+    wchar_t directory[MAX_PATH];GetTempPathW(MAX_PATH,directory);auto path=std::wstring(directory)+L"sifucraft_coverage_test.scvx";
+    VoxelGrid grid;grid.Set(-1,7,0);Expect(WriteVoxelFile(path,grid,"CoverageFixture",{0,0,0},&c),"write coverage-bearing SCVXv2");
+    std::vector<std::uint8_t> actual;
+    if(auto file=_wfopen(path.c_str(),L"rb")){std::fseek(file,0,SEEK_END);actual.resize(std::ftell(file));std::rewind(file);std::fread(actual.data(),1,actual.size(),file);std::fclose(file);}
+    if(fixture){
+        std::ifstream file(fixture);std::vector<std::uint8_t> expected;std::string word;
+        while(file>>word)expected.push_back(static_cast<std::uint8_t>(std::stoul(word,nullptr,16)));
+        Expect(!expected.empty()&&expected==actual,"native SCVXv2 writer matches independent shared golden bytes");
+    }
+    c.known[0].max[0]=c.known[0].min[0];Expect(!WriteVoxelFile(path,grid,"CoverageFixture",{0,0,0},&c),"invalid coverage cannot be exported");DeleteFileW(path.c_str());
 }
 
 void TestGuardedReads() {
@@ -1125,6 +1147,7 @@ void TestDoorViewHandover() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    TestCoverageFile(argc>2?argv[2]:nullptr);
     {
         using namespace sifucraft::collision;
         OwnedSceneActors registry;registry.Add(100,7,0,50);

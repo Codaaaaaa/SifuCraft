@@ -105,7 +105,7 @@ std::optional<PublishedGrid> Builder::Publish(const BuildRequest& request, const
     out.path = directory + L"\\" + Widen(request.map + request.file_tag) + L"-" + std::to_wstring(out.generation) + L".scvx";
     // Written aside and renamed into place, so Minecraft never sees a partial file.
     const std::wstring partial = out.path + L".partial";
-    if (!WriteVoxelFile(partial, grid, request.map, request.pawn_feet) ||
+    if (!WriteVoxelFile(partial, grid, request.map, request.pawn_feet,request.coverage?&*request.coverage:nullptr) ||
         !MoveFileExW(partial.c_str(), out.path.c_str(), MOVEFILE_REPLACE_EXISTING)) {
         SC_LOG("[collision] could not write the grid file for %s (error %lu)", request.map.c_str(), GetLastError());
         DeleteFileW(partial.c_str());

@@ -233,6 +233,15 @@ tasks.register('p9GeometryTest', JavaExec) {
 }
 tasks.named('check') { dependsOn tasks.named('p9GeometryTest') }
 
+tasks.register('coverageFileTest', JavaExec) {
+	group = 'verification'
+	classpath = sourceSets.offlineTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.collision.CoverageFileTest'
+	args rootProject.file('../protocol/fixtures/collision_coverage.hex').absolutePath
+	jvmArgs nativeAccess
+}
+tasks.named('check') { dependsOn tasks.named('coverageFileTest') }
+
 tasks.register('p10GeometryTest', JavaExec) {
 	group = 'verification'
 	classpath = sourceSets.offlineTest.runtimeClasspath

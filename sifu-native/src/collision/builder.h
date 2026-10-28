@@ -10,6 +10,7 @@
 
 #include "collision/shapes.h"
 #include "collision/voxels.h"
+#include "collision/coverage.h"
 
 // Turns extracted shapes into the voxel grid off the runtime thread and publishes each grid as a
 // file Minecraft loads (SifuCraft\collision\<map>-<generation>.scvx; the last two are kept). One
@@ -23,6 +24,7 @@ struct BuildRequest {
     std::uint32_t generation = 0;  // the runtime's world generation the shapes came from
     std::string file_tag;
     bool diagnostics = true;
+    std::optional<Coverage> coverage;
 };
 
 // The latest grid written for Minecraft.
@@ -41,11 +43,12 @@ struct PublishedContent {
     std::shared_ptr<const VoxelGrid> grid;
     std::uint32_t world = 0;
     std::string map, tag;
+    std::optional<Coverage> coverage;
     bool Matches(const BuildRequest& request, const VoxelGrid& candidate) const {
-        return grid && world == request.generation && map == request.map && tag == request.file_tag && *grid == candidate;
+        return grid && world == request.generation && map == request.map && tag == request.file_tag && coverage==request.coverage && *grid == candidate;
     }
     void Confirm(const BuildRequest& request, std::shared_ptr<const VoxelGrid> accepted) {
-        grid = std::move(accepted); world = request.generation; map = request.map; tag = request.file_tag;
+        grid = std::move(accepted); world = request.generation; map = request.map; tag = request.file_tag;coverage=request.coverage;
     }
 };
 
