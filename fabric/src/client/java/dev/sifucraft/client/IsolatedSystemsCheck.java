@@ -34,6 +34,7 @@ final class IsolatedSystemsCheck {
     private boolean started, hidden;
     private volatile boolean finished;
     private int stage;
+    private MachineEffectsCheck machineEffects;
     private long deadline = System.currentTimeMillis() + 120000;
 
     static void install() {
@@ -144,6 +145,16 @@ final class IsolatedSystemsCheck {
     }
 
     private void tick(MinecraftServer server) {
+        if(Boolean.getBoolean("sifucraft.machineEffectsSelfTest")){
+            if(finished||server.getPlayerList().getPlayers().isEmpty()||!server.overworld().isPositionEntityTicking(new BlockPos(24,201,8)))return;
+            try{
+                if(machineEffects==null)machineEffects=new MachineEffectsCheck(server.overworld());
+                if(!machineEffects.tick())return;
+                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p8-machine-effects.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(machineEffects.reports(),out));
+                finished=true;
+            }catch(Exception error){throw new RuntimeException(error);}
+            return;
+        }
         if (finished || stage != 0 || server.getPlayerList().getPlayers().isEmpty()) return;
         if (!server.overworld().isPositionEntityTicking(new BlockPos(24,201,8))) return;
         stage = 1;

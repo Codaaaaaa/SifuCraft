@@ -131,6 +131,8 @@ public final class WorldEffects {
         return view;
     }
     private static Evidence evidence(EnemyProxy proxy,DamageSource source){
+        var timed=MachineEffects.evidence(proxy,source);
+        if(timed!=null)return new Evidence(source.typeHolder().unwrapKey().orElseThrow().identifier().toString(),timed.pos(),timed);
         var blast=SceneExplosions.proof(proxy,source);
         if(blast!=null)return new Evidence(source.typeHolder().unwrapKey().orElseThrow().identifier().toString(),blast.center(),null,blast.event());
         var floor=landing.get();
@@ -166,6 +168,7 @@ public final class WorldEffects {
         return null;
     }
     public static boolean canCapture(EnemyProxy proxy,DamageSource source){return view(proxy)!=null&&evidence(proxy,source)!=null;}
+    static boolean effectsReady(EnemyProxy proxy){return view(proxy)!=null;}
     public static void record(EnemyProxy proxy,DamageSource source,float amount){
         var view=view(proxy);var proof=evidence(proxy,source);if(view==null||proof==null||!Float.isFinite(amount)||amount<=0)return;
         var entry=view.enemies().entries().stream().filter(e->e.key().equals(proxy.sifuKey())&&e.alive()).findFirst().orElse(null);if(entry==null||entry.radius()<10||entry.radius()>100||entry.halfHeight()>200)return;

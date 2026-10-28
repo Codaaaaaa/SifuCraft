@@ -94,6 +94,12 @@ public final class EnemyProxy extends Mob {
 
     /** Native snapshots own lifetime; MC distance/difficulty must not discard a live mirror. */
     @Override public void checkDespawn() {}
+    @Override public boolean addEffect(net.minecraft.world.effect.MobEffectInstance effect,Entity source){
+        MachineEffects.prepare(this);
+        boolean applied=super.addEffect(effect,source);MachineEffects.added(this,effect,source,applied);return applied;
+    }
+    @Override protected void tickEffects(){MachineEffects.tick(this,super::tickEffects);}
+    @Override public void remove(Entity.RemovalReason reason){MachineEffects.detached(this);super.remove(reason);}
     @Override protected boolean isAffectedByBlocks(){return BlockEnvironment.active(this)?!isRemoved():super.isAffectedByBlocks();}
 
     @Override public boolean isPickable() { return !isRemoved() && isAlive(); }

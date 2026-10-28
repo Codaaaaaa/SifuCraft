@@ -26,7 +26,7 @@ public final class MachineProjectiles {
     public interface Carrier {Origin sifucraft$machineOrigin();void sifucraft$machineOrigin(Origin origin);}
     private static final ThreadLocal<Origin> dispensing=new ThreadLocal<>();
     private static volatile java.util.function.Consumer<Projectile> observer;
-    public static void observe(java.util.function.Consumer<Projectile> value){if(value!=null&&!Boolean.getBoolean("sifucraft.machineProjectileSelfTest")&&!Boolean.getBoolean("sifucraft.nativeMachineSelfTest")&&!Boolean.getBoolean("sifucraft.machineSpecialSelfTest"))throw new IllegalStateException("isolated fixture only");observer=value;}
+    public static void observe(java.util.function.Consumer<Projectile> value){if(value!=null&&!Boolean.getBoolean("sifucraft.machineProjectileSelfTest")&&!Boolean.getBoolean("sifucraft.nativeMachineSelfTest")&&!Boolean.getBoolean("sifucraft.machineSpecialSelfTest")&&!Boolean.getBoolean("sifucraft.machineEffectsSelfTest"))throw new IllegalStateException("isolated fixture only");observer=value;}
     public static void dispense(ServerLevel level,BlockPos pos,Runnable original){
         var previous=dispensing.get();var v=WorldMotionWorld.current();Origin origin=null;
         if(WorldBlocks.ENABLED&&level.dimension()==Level.OVERWORLD&&level.getServer().isSameThread()&&v!=null&&v.placement().containsX(pos.getX())&&v.scope().save()==PistonMovePlans.saveKey(level)&&
@@ -55,6 +55,11 @@ public final class MachineProjectiles {
         };
     }
     private static boolean unowned(Entity entity){return entity instanceof Projectile projectile?projectile.getOwner()==null:entity instanceof AreaEffectCloud cloud&&cloud.getOwner()==null;}
+    static Origin effectOrigin(Entity source,EnemyProxy target){
+        if(source==null||source.level()!=target.level()||!(source instanceof Carrier carrier)||!unowned(source))return null;
+        var origin=carrier.sifucraft$machineOrigin();var view=WorldMotionWorld.current();
+        return origin!=null&&view!=null&&origin.save==view.scope().save()&&origin.map==view.scope().map()?origin:null;
+    }
     /** The original lingering potion creates exactly one cloud; retain its machine credential. */
     public static void cloud(Projectile potion,Entity cloud){
         if(potion.getOwner()==null&&potion instanceof Carrier from&&cloud instanceof AreaEffectCloud&&cloud instanceof Carrier to)

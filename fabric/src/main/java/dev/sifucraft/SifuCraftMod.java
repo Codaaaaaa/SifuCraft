@@ -15,6 +15,8 @@ public final class SifuCraftMod implements ModInitializer {
         dev.sifucraft.blocks.SignalEntities.register();
         dev.sifucraft.blocks.PistonActionTickets.register();
         ServerLifecycleEvents.SERVER_STARTING.register(server -> dev.sifucraft.blocks.PlayerSignalContacts.stop());
+        ServerLifecycleEvents.SERVER_STARTING.register(dev.sifucraft.combat.MachineEffects::open);
+        ServerTickEvents.END_SERVER_TICK.register(dev.sifucraft.combat.MachineEffects::save);
         if (WorldBlocks.ENABLED) {
             ServerLifecycleEvents.SERVER_STARTING.register(server -> WorldBlocks.open());
             ServerLifecycleEvents.SERVER_STOPPED.register(server -> WorldBlocks.close());
@@ -32,6 +34,7 @@ public final class SifuCraftMod implements ModInitializer {
         ServerTickEvents.END_SERVER_TICK.register(dev.sifucraft.combat.BoatPassengers::tick);
         ServerTickEvents.START_SERVER_TICK.register(dev.sifucraft.blocks.PlayerSignalContacts::tick);
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PlayerSignalContacts.stop());
+        ServerLifecycleEvents.SERVER_STOPPING.register(dev.sifucraft.combat.MachineEffects::flush);
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> EnemyMirrors.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PistonMachines.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PistonActionTickets.stop());
