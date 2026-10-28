@@ -63,6 +63,10 @@ final class CoverageSceneCheck {
                 restore(server);stage=2;return;
             }
             if(stage==2){
+                // Wider than a single finite native query: its centre alone
+                // cannot certify both ends. The production query must advance
+                // toward actual missing cells without ticking the waiting TNT.
+                if(!SceneFluidGeometry.knownVolume(level,new net.minecraft.world.phys.AABB(outside).inflate(24,1,1)))return;
                 if(!SceneFluidGeometry.knownVolume(level,waiting.getBoundingBox().expandTowards(waiting.getDeltaMovement())))return;
                 if(!SceneFluidGeometry.knownVolume(level,waitingBoat.getBoundingBox().expandTowards(waitingBoat.getDeltaMovement()).inflate(1)))return;
                 require(scene.knownBlock(outside)&&SceneFluidGeometry.canOccupy(level,outside),"remote request publishes independently certified air");
@@ -79,7 +83,7 @@ final class CoverageSceneCheck {
                 }
                 if(!residual.isEmpty())AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p9-residual-fluid.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(residual,out));
                 require(residual.isEmpty(),"zero residual liquid after both finite basins are restored: "+residual.stream().limit(6).toList());
-                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p9-coverage-scene.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(Map.of("passed",true,"backend","real Sifu finite physics query and SCVXv2","unknown_tnt_ticks_retained",12,"remote_tnt_resumed",true,"unknown_boat_ticks_retained",12,"remote_boat_resumed",true,"remote_water_resumed",true,"known_water_ticks",40,"native_hp",health),out));
+                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p9-coverage-scene.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(Map.of("passed",true,"backend","real Sifu finite physics query and SCVXv2","unknown_tnt_ticks_retained",12,"remote_tnt_resumed",true,"unknown_boat_ticks_retained",12,"remote_boat_resumed",true,"remote_water_resumed",true,"known_water_ticks",40,"wide_known_volume_m",49,"native_hp",health),out));
                 finished=true;org.slf4j.LoggerFactory.getLogger("sifucraft").info("[coverage-scene-test] PASS known air/water, unknown TNT/boat retention, remote query and original TNT/boat/water resume, MC exclusion and cleanup");
             }
         }catch(Exception|AssertionError error){restore(server);finished=true;org.slf4j.LoggerFactory.getLogger("sifucraft").error("[coverage-scene-test] FAIL",error);Minecraft.getInstance().execute(()->{throw new AssertionError(error);});}

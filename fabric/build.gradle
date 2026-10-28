@@ -72,6 +72,8 @@ loom {
 			property "sifucraft.isolatedSystemsSelfTest", providers.gradleProperty("sifucraft.isolatedSystemsSelfTest").getOrElse("false")
 			property "sifucraft.cannonSelfTest", providers.gradleProperty("sifucraft.cannonSelfTest").getOrElse("false")
 			property "sifucraft.cannonLive", providers.gradleProperty("sifucraft.cannonLive").getOrElse("false")
+			property "sifucraft.cannonGroundSelfTest", providers.gradleProperty("sifucraft.cannonGroundSelfTest").getOrElse("false")
+			property "sifucraft.cannonGroundScenario", providers.gradleProperty("sifucraft.cannonGroundScenario").getOrElse("survey")
 			property "sifucraft.cannonShots", providers.gradleProperty("sifucraft.cannonShots").getOrElse("12")
 			property "sifucraft.cannonFirstShot", providers.gradleProperty("sifucraft.cannonFirstShot").getOrElse("0")
 			property "sifucraft.machineSpecialSelfTest", providers.gradleProperty("sifucraft.machineSpecialSelfTest").getOrElse("false")

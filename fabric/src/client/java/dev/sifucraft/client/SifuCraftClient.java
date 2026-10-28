@@ -103,6 +103,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private PistonTransactionCheck pistonTransactionCheck;
     private NativePistonCheck nativePistonCheck;
     private PistonObstructionCheck pistonObstructionCheck;
+    private CannonGroundCheck cannonGroundCheck;
     private AirEnvironmentCheck airEnvironmentCheck;
     private HotFloorCheck hotFloorCheck;
     private BubbleMatrixCheck bubbleMatrixCheck;
@@ -182,6 +183,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         ServerLifecycleEvents.SERVER_STARTING.register(server->dev.sifucraft.blocks.SceneFluidGeometry.publish(true,false,null));
         bridge = new McBridge(new McBridge.Listener() {
             @Override public void onNativeInteraction(dev.sifucraft.bridge.NativeInteraction.Result result) {
+                if(cannonGroundCheck!=null)cannonGroundCheck.interaction(result);
                 LOG.info("[interaction] native reply request={} outcome={} target={} world={} epoch={}",
                         result.request(), result.outcome(), result.target(), result.world(), result.epoch());
             }
@@ -381,6 +383,10 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(Boolean.getBoolean("sifucraft.pistonObstructionSelfTest")){
             pistonObstructionCheck=new PistonObstructionCheck();ServerTickEvents.END_SERVER_TICK.register(pistonObstructionCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(pistonObstructionCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.cannonGroundSelfTest")){
+            cannonGroundCheck=new CannonGroundCheck();ServerTickEvents.END_SERVER_TICK.register(cannonGroundCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(cannonGroundCheck::restore);
         }
         if(Boolean.getBoolean("sifucraft.fluidSceneSelfTest")){
             fluidSceneCheck=new FluidSceneCheck();ServerTickEvents.END_SERVER_TICK.register(fluidSceneCheck::tick);
@@ -735,6 +741,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(pistonTransactionCheck!=null)pistonTransactionCheck.clientTick(minecraft,guiAvailable(frame));
         if(nativePistonCheck!=null)nativePistonCheck.clientTick(minecraft,guiAvailable(frame),frame);
         if(pistonObstructionCheck!=null)pistonObstructionCheck.clientTick(minecraft,guiAvailable(frame));
+        if(cannonGroundCheck!=null)cannonGroundCheck.clientTick(minecraft,bridge,input,guiAvailable(frame));
         if(fluidSceneCheck!=null)fluidSceneCheck.clientTick(minecraft,guiAvailable(frame));
         if(fluidPersistenceCheck!=null)fluidPersistenceCheck.clientTick(minecraft,guiAvailable(frame));
         if(playerItemBubbleCheck!=null)playerItemBubbleCheck.clientTick(minecraft,guiAvailable(frame));

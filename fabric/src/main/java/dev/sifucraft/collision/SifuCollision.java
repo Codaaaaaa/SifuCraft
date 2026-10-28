@@ -99,6 +99,7 @@ public final class SifuCollision {
             return a.isEmpty()?b:b.isEmpty()?a:Shapes.or(a,b);
         }
         public boolean knownBlock(BlockPos pos){return !grid.hasCoverage()||grid.knownBlock(pos.getX()-placement.originX(),pos.getZ()-placement.originZ(),pos.getY()-placement.originY());}
+        public boolean queriedBlock(BlockPos pos){return grid.queriedBlock(pos.getX()-placement.originX(),pos.getZ()-placement.originZ(),pos.getY()-placement.originY());}
         private VoxelShape unknownShape(BlockPos pos){
             if(!grid.hasCoverage()||knownBlock(pos))return Shapes.empty();
             return uncertain.computeIfAbsent(pos.asLong(),ignored->{

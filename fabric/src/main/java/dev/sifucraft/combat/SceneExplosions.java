@@ -25,10 +25,10 @@ public final class SceneExplosions {
     private static volatile java.util.function.Consumer<UUID> observer;
     private static volatile java.util.function.Consumer<ServerExplosion> before;
     public static void observeBefore(java.util.function.Consumer<ServerExplosion> value){
-        if(value!=null&&!Boolean.getBoolean("sifucraft.boatExplosionSelfTest"))throw new IllegalStateException("isolated boat explosion fixture only");before=value;
+        if(value!=null&&!Boolean.getBoolean("sifucraft.boatExplosionSelfTest")&&!Boolean.getBoolean("sifucraft.cannonGroundSelfTest"))throw new IllegalStateException("isolated explosion fixture only");before=value;
     }
     public static void observe(java.util.function.Consumer<UUID> value){
-        if(value!=null&&!Boolean.getBoolean("sifucraft.tntStressSelfTest")&&!Boolean.getBoolean("sifucraft.worldRecoverySelfTest")&&!Boolean.getBoolean("sifucraft.boatExplosionSelfTest"))throw new IllegalStateException("isolated TNT fixture only");observer=value;
+        if(value!=null&&!Boolean.getBoolean("sifucraft.tntStressSelfTest")&&!Boolean.getBoolean("sifucraft.worldRecoverySelfTest")&&!Boolean.getBoolean("sifucraft.boatExplosionSelfTest")&&!Boolean.getBoolean("sifucraft.cannonGroundSelfTest"))throw new IllegalStateException("isolated TNT fixture only");observer=value;
     }
     /** Preserve TNT state while nearby native targets cannot accept a complete world event. */
     public static boolean canAdvance(net.minecraft.world.entity.item.PrimedTnt tnt){

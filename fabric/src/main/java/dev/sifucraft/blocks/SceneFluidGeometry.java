@@ -44,8 +44,20 @@ public final class SceneFluidGeometry {
     }
     public static boolean available(BlockGetter level){return view(level).ready;}
     public static boolean knownVolume(BlockGetter level,net.minecraft.world.phys.AABB box){
+        return readyVolume(level,box,false);
+    }
+    /** Explosion rays already stop at unknown component bounds. Require a
+     * complete finite query, retaining those opaque barriers rather than
+     * waiting forever for an unreadable destructible's exact shape. */
+    public static boolean blastVolumeReady(BlockGetter level,net.minecraft.world.phys.AABB box){
+        return readyVolume(level,box,true);
+    }
+    private static boolean readyVolume(BlockGetter level,net.minecraft.world.phys.AABB box,boolean blast){
         var query=view(level);if(!query.ready)return false;var scene=query.scene;if(scene==null||!scene.grid().hasCoverage())return true;
-        for(var pos:BlockPos.betweenClosed(BlockPos.containing(box.minX,box.minY,box.minZ),BlockPos.containing(box.maxX-1e-7,box.maxY-1e-7,box.maxZ-1e-7)))if(!scene.knownBlock(pos)){SceneCoverage.request(box);return false;}
+        // A finite native query is centred on an 8m tile and covers 32m.
+        // Re-requesting a large box's centre can never load an uncovered edge.
+        // Advance through actual missing cells; unknown space remains blocked.
+        for(var pos:BlockPos.betweenClosed(BlockPos.containing(box.minX,box.minY,box.minZ),BlockPos.containing(box.maxX-1e-7,box.maxY-1e-7,box.maxZ-1e-7)))if(!(blast?scene.queriedBlock(pos):scene.knownBlock(pos))){SceneCoverage.request(new net.minecraft.world.phys.AABB(pos));return false;}
         return true;
     }
     /** A machine bucket must not reach through an imported face into a neighbouring cell. */

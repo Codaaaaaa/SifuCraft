@@ -100,6 +100,19 @@ public final class CollisionGrid {
         return true;
     }
 
+    /** A finite native query observed this whole block. Unreadable component
+     * bounds inside it remain unknown/opaque; this never certifies empty air. */
+    public boolean queriedBlock(int bx,int by,int bz){
+        int x=bx*8,y=by*8,z=bz*8;
+        if(known==null)return true;
+        if(known.stream().anyMatch(r->r.encloses(x,y,z,x+8,y+8,z+8)))return true;
+        for(int cz=z;cz<z+8;cz++)for(int cy=y;cy<y+8;cy++)for(int cx=x;cx<x+8;cx++){
+            final int px=cx,py=cy,pz=cz;
+            if(!known.stream().anyMatch(r->r.contains(px,py,pz)))return false;
+        }
+        return true;
+    }
+
     /** Whether Unreal-space cell (x, y, z) is solid (cell = floor(cm / cellCm)). */
     public boolean solid(int x, int y, int z) {
         long[] layers = blocks.get(key(Math.floorDiv(x, CELLS_PER_BLOCK), Math.floorDiv(y, CELLS_PER_BLOCK),
