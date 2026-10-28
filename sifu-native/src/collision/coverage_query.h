@@ -17,4 +17,6 @@ struct Sample {
 void Probe(std::uintptr_t base,std::uintptr_t world,std::uint32_t generation,std::uintptr_t pawn,const Responses& reference,std::uint64_t now);
 std::shared_ptr<const Sample> Latest();
 void Invalidate();
+// Game-thread only. Enqueues a bounded read-only spatial query, never a movement lease.
+bool Request(std::uintptr_t world,std::uint32_t generation,ue::FVector center);
 }

@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include "collision/owned_scene.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
@@ -19,6 +20,10 @@ namespace off=gen::off;
 std::atomic<std::shared_ptr<const Sample>> published;
 std::atomic<std::uint64_t> requested_epoch{1};
 std::uint64_t next_probe=0;
+struct Pending {std::uintptr_t world;std::uint32_t generation;ue::FVector center;};
+std::deque<Pending> pending;
+std::uintptr_t active_world=0;std::uint32_t active_generation=0;
+ue::FVector local_center{};bool local_valid=false;std::uint64_t local_epoch=0;
 struct Layout {const char* name;int offset,width;const char* kind;};
 constexpr Layout parameters[]={
     {"WorldContextObject",0,8,"ObjectProperty"},{"BoxPos",8,12,"StructProperty"},{"Extent",20,12,"StructProperty"},
@@ -52,13 +57,22 @@ template<class T>void Put(std::array<std::uint8_t,96>& params,int offset,const T
 }
 std::shared_ptr<const Sample> Latest(){return published.load();}
 void Invalidate(){requested_epoch.fetch_add(1);published.store(nullptr);}
+bool Request(std::uintptr_t world,std::uint32_t generation,ue::FVector center){
+    if(!world||!generation)return false;
+    for(auto v:{center.x,center.y,center.z})if(!std::isfinite(v)||std::fabs(v)>10000000)return false;
+    if(active_world!=world||active_generation!=generation){pending.clear();active_world=world;active_generation=generation;local_valid=false;}
+    for(const auto& old:pending)if(std::fabs(old.center.x-center.x)<1&&std::fabs(old.center.y-center.y)<1&&std::fabs(old.center.z-center.z)<1)return true;
+    if(pending.size()>=16)return false;
+    pending.push_back({world,generation,center});return true;
+}
 void Probe(std::uintptr_t base,std::uintptr_t world,std::uint32_t generation,std::uintptr_t pawn,const Responses& reference,std::uint64_t now){
     if(!base||!world||!generation||!ue::IsLive(pawn))return;
     const auto root=mem::ReadPtr(pawn+off::AActor::RootComponent);ue::FVector before{};
     if(!ue::ReadWorldLocation(root,&before)||!std::isfinite(before.x)||!std::isfinite(before.y)||!std::isfinite(before.z))return;
-    auto previous=published.load();const auto epoch=requested_epoch.load();
-    if(previous&&previous->world==world&&previous->generation==generation&&previous->epoch==epoch&&
-       std::fabs(before.x-previous->center.x)<800&&std::fabs(before.y-previous->center.y)<800&&std::fabs(before.z-previous->center.z)<800)return;
+    if(active_world!=world||active_generation!=generation){pending.clear();active_world=world;active_generation=generation;local_valid=false;}
+    const auto epoch=requested_epoch.load();
+    const bool local=!local_valid||local_epoch!=epoch||std::fabs(before.x-local_center.x)>=800||std::fabs(before.y-local_center.y)>=800||std::fabs(before.z-local_center.z)>=800;
+    if(!local&&pending.empty())return;
     if(now<next_probe)return;next_probe=now+500;
     const auto cls=ue::FindClass("KismetSystemLibrary"),primitive=ue::FindClass("PrimitiveComponent"),character=ue::FindClass("Character");
     const auto system=ue::DefaultObject(cls),profile=ue::DefaultObject(ue::FindClass("CollisionProfile"));ue::FunctionCall query;
@@ -68,7 +82,7 @@ void Probe(std::uintptr_t base,std::uintptr_t world,std::uint32_t generation,std
     std::array<std::int32_t,32> channels{};std::array<std::uint8_t,32> types{};std::uint32_t used=0;
     if(!mem::Copy(channels.data(),mapping.data,mapping.num*sizeof(channels[0])))return;
     for(int i=0;i<mapping.num;i++){if(channels[i]<0||channels[i]>=32||(used&(1u<<channels[i])))return;used|=1u<<channels[i];types[i]=static_cast<std::uint8_t>(i);}
-    auto result=std::make_shared<Sample>();result->world=world;result->generation=generation;result->at_ms=now;result->epoch=epoch;result->center=before;result->extent={1600,1600,1600};
+    auto result=std::make_shared<Sample>();result->world=world;result->generation=generation;result->at_ms=now;result->epoch=epoch;result->center=local?before:pending.front().center;result->extent={1600,1600,1600};
     alignas(16) std::array<std::uint8_t,96> params{};
     Put(params,0,world);Put(params,8,result->center);Put(params,20,result->extent);Put(params,32,mem::RawArray{reinterpret_cast<std::uintptr_t>(types.data()),mapping.num,mapping.num});Put(params,48,primitive);
     const auto start=std::chrono::steady_clock::now();query.Invoke(system,params.data());
@@ -93,6 +107,7 @@ void Probe(std::uintptr_t base,std::uintptr_t world,std::uint32_t generation,std
         std::fabs(after.x-before.x)>.001f||std::fabs(after.y-before.y)>.001f||std::fabs(after.z-before.z)>.001f)return;
     if(requested_epoch.load()!=epoch)return;
     published.store(result);
-    SC_LOG("[coverage-query] PASS world=%u box_cm=(%.1f,%.1f,%.1f)+/-1600 types=%d returned=%d blocking=%u character=%u derived=%u missing=%u cpu_us=%lld; output freed with UE allocator, coverage not yet published",generation,before.x,before.y,before.z,mapping.num,out.num,result->blocking,result->characters,result->derived,result->missing_setup,static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count()));
+    if(local){local_valid=true;local_epoch=epoch;local_center=before;}else pending.pop_front();
+    SC_LOG("[coverage-query] PASS world=%u box_cm=(%.1f,%.1f,%.1f)+/-1600 types=%d returned=%d blocking=%u character=%u derived=%u missing=%u cpu_us=%lld; output freed with UE allocator; awaiting voxel publication",generation,result->center.x,result->center.y,result->center.z,mapping.num,out.num,result->blocking,result->characters,result->derived,result->missing_setup,static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count()));
 }
 }

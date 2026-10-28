@@ -44,6 +44,7 @@ public:
     virtual Sweep Move(const Body&,const std::array<float,3>&)=0;
     virtual Sweep MovePose(const Body& body,const std::array<float,3>&,float){Sweep result;result.body=body;return result;}
     virtual Effect Hurt(const Command&){return {};}
+    virtual bool QueryCoverage(const Command&){return false;}
     // Clears only this service's filters. It never rewrites an actor's old pose/state.
     virtual void Forget()=0;
 };
@@ -111,6 +112,9 @@ public:
             release_=command;BeginRelease(command.op==Op::Cancel?Status::Cancelled:Status::Released);return true;
         }
         if(!env_.ready||env_.flags) {Reject(command,Status::Busy,now);return true;}
+        if(command.op==Op::Coverage){
+            Finish(command,backend_.QueryCoverage(command)?Status::Applied:Status::Busy,now);return true;
+        }
         if((command.flags&kPlayer)&&!backend_.SupportsPlayer(command.source)) {Reject(command,Status::Unsupported,now);return true;}
         if(command.op==Op::Damage){
             if(command.source!=Source::WorldEffect||!EnvironmentEffect(command.action)){Reject(command,Status::Unsupported,now);return true;}
@@ -243,7 +247,7 @@ private:
     Reply Make(const Command& c,Status status,std::uint64_t now,std::array<float,3> delta={},std::uint32_t flags=0)const{
         Reply r{};r.id=c.id;r.lease=c.op==Op::Reserve?c.id:c.lease;r.native_frame=env_.frame;r.at_ms=std::max<std::uint64_t>(now,1);
         r.world=c.world;r.target=c.target;r.spawn=c.spawn;r.status=status;r.source_hash=c.payload_hash;r.shape_revision=env_.revision;
-        if(phase_!=Phase::Free&&c.target==source_.target&&c.spawn==source_.spawn){
+        if(c.op!=Op::Coverage&&phase_!=Phase::Free&&c.target==source_.target&&c.spawn==source_.spawn){
             r.actor_serial=body_.serial;r.component_token=body_.token;r.health=body_.health;r.restored=restored_;
             for(int i=0;i<3;++i){r.position[i]=body_.position[i];r.delta[i]=status==Status::Prepared?body_.root_offset[i]:delta[i];}r.flags=flags;
             if((c.op==Op::Release||c.op==Op::Cancel)&&Owns(c))r.flags|=restore_flags_;

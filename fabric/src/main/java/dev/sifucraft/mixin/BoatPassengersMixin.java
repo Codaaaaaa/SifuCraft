@@ -13,9 +13,16 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(AbstractBoat.class)
 public abstract class BoatPassengersMixin {
+    @Inject(method="tick",at=@At("HEAD"),cancellable=true)
+    private void sifucraft$waitForCoverage(CallbackInfo ci){
+        var boat=(AbstractBoat)(Object)this;
+        if(!dev.sifucraft.blocks.SceneFluidGeometry.knownVolume(boat.level(),boat.getBoundingBox().expandTowards(boat.getDeltaMovement()).inflate(1)))ci.cancel();
+    }
     @WrapMethod(method="positionRider")
     private void sifucraft$actualHitMirror(Entity passenger,Entity.MoveFunction move,Operation<Void> original){
         if(BoatPassengers.positionRider(passenger))original.call(passenger,move);

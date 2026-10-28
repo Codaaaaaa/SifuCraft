@@ -514,6 +514,11 @@ void TestVoxels() {
         return grid;
     };
     ShapeSet block;
+    {
+        ShapeSet rejected;rejected.convexes.push_back({{{0,0,0},{1,0,0}}});rejected.capsules.push_back({{0,0,0},{200001,0,0},10});
+        VoxelGrid none;VoxelStats rejected_stats;Voxelize(rejected,&none,&rejected_stats);
+        Expect(rejected_stats.rejected.size()==2&&!rejected_stats.rejected_bounds,"unvoxelizable hull/capsule retain finite unknown bounds");
+    }
     block.convexes.push_back({cube});
     const VoxelGrid block_grid = voxelize(block);
     Expect(block_grid.CellCount() == 512 && block_grid.blocks().size() == 1, "a 1 m cube fills exactly one block");

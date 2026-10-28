@@ -20,6 +20,8 @@ public final class WorldMotionProtocolTest {
     }
     private static byte[] fixture(String name) throws Exception {return HexFormat.of().parseHex(Files.readString(Path.of("../protocol/fixtures/"+name)).replaceAll("\\s+",""));}
     public static void main(String[] args) throws Exception {
+        var query=new Command(COVERAGE,WORLD_EFFECT,1,0,1000,1,0,1,0,31,32,0,7,0,0,0,new SifuFrame.Vec3(-16800,0,0),SifuFrame.Vec3.ZERO,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
+        check(encode(query).length==COMMAND_BYTES,"finite coverage has no actor or movement lease");
         var reserve=sample(RESERVE,MACHINE,SifuFrame.Vec3.ZERO,500,0,42,2);
         check(Arrays.equals(encode(reserve),fixture("world_motion_command.hex")),"independent C++/Java command golden");
         var reply=decodeReply(fixture("world_motion_reply.hex"));

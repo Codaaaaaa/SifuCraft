@@ -57,6 +57,7 @@ unsigned PartIndex(motion::Part part){return part==motion::Part::Movement?0:part
 class NativeBackend final:public Backend {
 public:
     void Slot(std::size_t index){slot_=index;}
+    bool QueryCoverage(const Command& c)override{return collision::coverage::Request(g_current.actors.scope.world,c.world,{c.position[0],c.position[1],c.position[2]});}
     bool SupportsPlayer(Source source)const override{return source==Source::Machine||source==Source::Fluid;}
     bool Bind(const Command& c,Body* out)override {
         if(motion::CheckWorld(g_base,g_current.actors,GetTickCount64()))return false;

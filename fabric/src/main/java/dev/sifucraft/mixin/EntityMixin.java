@@ -56,7 +56,9 @@ public abstract class EntityMixin {
     @Inject(method = "move", at = @At("HEAD"))
     private void sifucraft$beforeMove(MoverType type, Vec3 movement, CallbackInfo ci) {
         sifucraft$tangent = null;
-        sifucraft$velocity = ((Entity) (Object) this).getDeltaMovement();
+        var self=(Entity)(Object)this;
+        sifucraft$velocity = self.getDeltaMovement();
+        dev.sifucraft.blocks.SceneFluidGeometry.knownVolume(self.level(),self.getBoundingBox().expandTowards(movement).inflate(2));
     }
 
     @Inject(method = "collide", at = @At("RETURN"), cancellable = true)

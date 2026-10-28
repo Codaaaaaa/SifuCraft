@@ -402,7 +402,7 @@ public:
                 const bridge::PlayerFrame& frame, std::uint64_t now_ms) {
         if (!world || !pawn) return;
         UpdateReferenceResponses(pawn);
-        const int levels = collision::VisibleLevelCount(world);
+        const auto levels = collision::VisibleLevelSignature(world);
         if (generation != generation_ || levels != levels_) {
             if (generation != generation_) last_components_ = 0;
             generation_ = generation;
@@ -588,7 +588,7 @@ private:
     std::uint32_t loaded_generation_ = 0;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> history_;  // (grid, world generation) published
     std::uint32_t generation_ = 0;
-    int levels_ = -1;
+    std::uint64_t levels_ = 0;
     std::uint64_t stable_since_ms_ = 0;
     bool done_ = false;
 };
@@ -604,7 +604,8 @@ public:
             g_bridge.PublishDoors({});
             collision::coverage::Invalidate();
         }
-        const int visible = collision::VisibleLevelCount(world);
+        const auto visible = collision::VisibleLevelSignature(world);
+        if(visible!=levels_){collision::coverage::Invalidate();g_bridge.PublishDoors({});}
         const auto candidate = interaction::Snapshot();
         if (now >= scan_ || visible != levels_ || (candidate.owner && candidate.owner != target_owner_)) {
             components_.clear();
@@ -652,7 +653,7 @@ private:
     std::uint64_t next_ = 0, scan_ = 0, hash_ = 0;
     std::uint32_t generation_ = 0, shared_ = 0;
     std::uint32_t target_owner_ = 0;
-    int levels_ = -1;
+    std::uint64_t levels_ = 0;
 };
 
 class CoverageSchedule {

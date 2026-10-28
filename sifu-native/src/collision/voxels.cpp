@@ -564,18 +564,36 @@ bool TriangleOverlapsBox(const FVector& center, float half, const FVector& a, co
 }
 
 void Voxelize(const ShapeSet& shapes, VoxelGrid* grid, VoxelStats* stats, const VoxelOptions& options) {
+    auto rejected=[&](const FVector* points,std::size_t count,float padding=0.f){
+        if(!count){stats->rejected_bounds=true;return;}
+        UnknownBounds box{points[0],points[0]};
+        for(std::size_t j=0;j<count;j++){
+            const auto& p=points[j];if(!std::isfinite(p.x)||!std::isfinite(p.y)||!std::isfinite(p.z)){stats->rejected_bounds=true;return;}
+            box.min.x=std::min(box.min.x,p.x);box.min.y=std::min(box.min.y,p.y);box.min.z=std::min(box.min.z,p.z);
+            box.max.x=std::max(box.max.x,p.x);box.max.y=std::max(box.max.y,p.y);box.max.z=std::max(box.max.z,p.z);
+        }
+        box.min.x-=padding+6.25f;box.min.y-=padding+6.25f;box.min.z-=padding+6.25f;
+        box.max.x+=padding+6.25f;box.max.y+=padding+6.25f;box.max.z+=padding+6.25f;stats->rejected.push_back(box);
+    };
     LARGE_INTEGER start;
     QueryPerformanceCounter(&start);
-    for (const ConvexShape& shape : shapes.convexes) VoxelizeConvex(shape, grid, stats, options);
+    for (const ConvexShape& shape : shapes.convexes){
+        int before=stats->degenerate+stats->oversized;VoxelizeConvex(shape,grid,stats,options);
+        if(stats->degenerate+stats->oversized!=before)rejected(shape.vertices.data(),shape.vertices.size());
+    }
     stats->ms_convex = Millis(start);
     QueryPerformanceCounter(&start);
-    for (const CapsuleShape& shape : shapes.capsules) VoxelizeCapsule(shape, grid, stats);
+    for (const CapsuleShape& shape : shapes.capsules){
+        int before=stats->oversized;VoxelizeCapsule(shape,grid,stats);
+        if(stats->oversized!=before){const FVector points[]={shape.a,shape.b};rejected(points,2,shape.radius);}
+    }
     stats->ms_capsule = Millis(start);
     QueryPerformanceCounter(&start);
     std::vector<const TriangleShape*> slivers;
     for (const bool second_pass : {false, true}) {
         for (const TriangleShape& shape : shapes.triangles) {
-            VoxelizeTriangle(shape, grid, stats, options, second_pass, &slivers);
+            int before=stats->degenerate+stats->oversized;VoxelizeTriangle(shape, grid, stats, options, second_pass, &slivers);
+            if(stats->degenerate+stats->oversized!=before)rejected(shape.v,3);
         }
     }
     // Last, so that they see every surface the other shapes made.

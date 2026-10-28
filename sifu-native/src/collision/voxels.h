@@ -88,6 +88,8 @@ struct VoxelOptions {
 };
 
 struct VoxelStats {
+    std::vector<UnknownBounds> rejected;
+    bool rejected_bounds=false;
     std::uint64_t cells = 0;
     std::size_t blocks = 0;
     int convexes = 0, capsules = 0, triangles = 0;

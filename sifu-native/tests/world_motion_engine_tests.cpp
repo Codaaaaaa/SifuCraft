@@ -12,7 +12,8 @@ unsigned checks=0;
 void Require(bool value,const char* label){++checks;if(!value){std::fprintf(stderr,"FAIL %s\n",label);std::exit(1);}}
 struct Fake final:Backend {
     Body body{19,818,{0,0,90},60,30,90};
-    int binds=0,claims=0,moves=0,forgets=0,hurts=0;bool valid=true,bind=true,block=false,penetrate=false,returned=true,read=true,effects=false;
+    int binds=0,claims=0,moves=0,forgets=0,hurts=0,queries=0;bool valid=true,bind=true,block=false,penetrate=false,returned=true,read=true,effects=false;
+    bool QueryCoverage(const Command&)override{queries++;return true;}
     float fraction=1,last_facing=0;bool invoked=true,player=false,player_fluid=false;
     std::array<float,3> normal{};
     bool Bind(const Command& c,Body* out)override{++binds;*out=body;return bind&&(!(c.flags&kPlayer)||c.actor_stamp==((73ull<<32)|static_cast<std::uint32_t>(body.serial)));}
@@ -415,6 +416,15 @@ void PlayerFluidAndPoseOwner(){
 
 }
 int main(){
+    {
+        Case test;Command query{};query.op=Op::Coverage;query.source=Source::WorldEffect;query.id=1;query.issued_ms=test.now;query.source_hi=1;query.action=1;query.save=30;query.map=40;query.world=2;query.position[0]=-16800;Seal(query);
+        test.Send(query);test.Pop(Status::Applied);test.Send(query);test.Pop(Status::Applied);
+        Require(test.backend.queries==1&&test.backend.binds==0&&test.backend.moves==0&&test.backend.hurts==0&&test.engine.phase()==Engine::Phase::Free,"read-only spatial query replay never binds or moves an actor");
+        auto bad=query;bad.id=2;bad.map=41;test.Send(bad);test.Pop(Status::Stale);Require(test.backend.queries==1,"wrong map query never reaches backend");
+        bad=query;bad.id=3;bad.target=7;test.Send(bad);test.Pop(Status::Invalid);Require(test.backend.queries==1,"coverage cannot carry an actor target");
+        Case leased;leased.Acquire();query.id=2;leased.Send(query);auto receipt=leased.Pop(Status::Applied);
+        Require(leased.engine.Skip(leased.now)&&leased.backend.binds==1&&leased.backend.moves==0&&receipt.component_token==0&&receipt.health==0,"query during a movement lease preserves ownership and leaks no bound actor metadata");
+    }
     float origin=0;
     Require(TranslateFallOrigin(922,922,90,&origin)&&origin==90,"MC return from slime apex cannot become an 832cm native fall");
     Require(TranslateFallOrigin(1000,900,500,&origin)&&origin-500==100,"taking MC ownership preserves the pre-existing 100cm fall");

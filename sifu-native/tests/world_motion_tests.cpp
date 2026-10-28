@@ -46,6 +46,8 @@ int Echo(std::uint64_t mc,std::uint64_t native,unsigned count){
 int main(int argc,char** argv){try{
     if(argc==5&&std::strcmp(argv[1],"--echo")==0)return Echo(std::strtoull(argv[2],nullptr,10),std::strtoull(argv[3],nullptr,10),static_cast<unsigned>(std::strtoul(argv[4],nullptr,10)));
     auto c=Sample();Check(Valid(c),"golden reserve");Check(argc==3,"two golden fixture paths");
+    Command query{};query.op=Op::Coverage;query.source=Source::WorldEffect;query.id=1;query.issued_ms=1000;query.source_hi=1;query.action=1;query.save=31;query.map=32;query.world=7;query.position[0]=-16800;Seal(query);Check(Valid(query),"finite read-only coverage without actor binding");
+    for(int fault=0;fault<5;fault++){auto bad=query;if(fault==0)bad.target=1;if(fault==1)bad.delta[0]=1;if(fault==2)bad.position[0]=INFINITY;if(fault==3)bad.source=Source::Machine;if(fault==4)bad.actor_stamp=1;Seal(bad);Check(!Valid(bad),"coverage rejects movement, nonfinite and actor payloads");}
     const PlayerInfo player_info{{101,-202,303},35,90,180};Check(Valid(player_info),"actual-sized player root metadata");
     for(int failure=0;failure<6;++failure){auto bad=player_info;
         if(failure<3)bad.position[failure]=std::numeric_limits<float>::quiet_NaN();

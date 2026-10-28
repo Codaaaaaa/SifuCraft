@@ -38,13 +38,28 @@ void LogExtent(const VoxelGrid& grid) {
     }
 }
 
-std::shared_ptr<const VoxelGrid> Build(const BuildRequest& request) {
+std::shared_ptr<const VoxelGrid> Build(BuildRequest& request) {
     const ShapeSet& s = request.shapes;
     auto built = std::make_shared<VoxelGrid>();
     VoxelGrid& grid = *built;
     if(request.clip)grid.Clip(*request.clip);
     VoxelStats stats;
     Voxelize(s, &grid, &stats);
+    if(request.coverage&&request.clip){
+        const auto& region=*request.clip;
+        if(stats.rejected_bounds)request.coverage->unknown.push_back(region);
+        else for(const auto& box:stats.rejected){
+            const float lo[]={box.min.x,box.min.y,box.min.z},hi[]={box.max.x,box.max.y,box.max.z};CellRegion hole;
+            bool finite=true;
+            for(int i=0;i<3;i++){
+                if(!std::isfinite(lo[i])||!std::isfinite(hi[i])){finite=false;break;}
+                hole.min[i]=static_cast<int>(std::clamp(std::floor(double(lo[i])/12.5),double(region.min[i]),double(region.max[i])));
+                hole.max[i]=static_cast<int>(std::clamp(std::ceil(double(hi[i])/12.5),double(region.min[i]),double(region.max[i])));
+            }
+            if(!finite){request.coverage->unknown.push_back(region);break;}
+            if(hole.valid())request.coverage->unknown.push_back(hole);
+        }
+    }
     if (!request.diagnostics) return built;
     SC_LOG("[collision] %s: voxelized %d convex (%d degenerate) %d capsules %d triangles (%d slivers) in %.0f + %.0f + "
            "%.0f ms -> %llu cells in %zu blocks (%d oversized shapes left out) | %d steep faces made walls "

@@ -38,12 +38,14 @@ public final class SceneFluidGeometry {
         try{return action.get();}finally{if(old==null)diagnostic.remove();else diagnostic.set(old);}
     }
     public static boolean canOccupy(BlockGetter level,BlockPos pos){
-        var query=view(level);if(!query.ready)return false;var scene=query.scene;return scene==null||scene.placement().containsX(pos.getX())&&scene.fluidCell(pos);
+        var query=view(level);if(!query.ready)return false;var scene=query.scene;
+        if(scene!=null&&scene.grid().hasCoverage()&&!scene.knownBlock(pos)){SceneCoverage.request(new net.minecraft.world.phys.AABB(pos));return false;}
+        return scene==null||scene.placement().containsX(pos.getX())&&scene.fluidCell(pos);
     }
     public static boolean available(BlockGetter level){return view(level).ready;}
     public static boolean knownVolume(BlockGetter level,net.minecraft.world.phys.AABB box){
         var query=view(level);if(!query.ready)return false;var scene=query.scene;if(scene==null||!scene.grid().hasCoverage())return true;
-        for(var pos:BlockPos.betweenClosed(BlockPos.containing(box.minX,box.minY,box.minZ),BlockPos.containing(box.maxX-1e-7,box.maxY-1e-7,box.maxZ-1e-7)))if(!scene.knownBlock(pos))return false;
+        for(var pos:BlockPos.betweenClosed(BlockPos.containing(box.minX,box.minY,box.minZ),BlockPos.containing(box.maxX-1e-7,box.maxY-1e-7,box.maxZ-1e-7)))if(!scene.knownBlock(pos)){SceneCoverage.request(box);return false;}
         return true;
     }
     /** A machine bucket must not reach through an imported face into a neighbouring cell. */
@@ -70,6 +72,7 @@ public final class SceneFluidGeometry {
     public static boolean canPass(Direction face,BlockGetter level,BlockPos from,BlockState a,BlockPos to,BlockState b){
         var query=view(level);if(!query.ready)return false;var scene=query.scene;if(scene==null)return true;
         if(!scene.placement().containsX(from.getX())||!scene.placement().containsX(to.getX()))return false;
+        if(scene.grid().hasCoverage()&&(!scene.knownBlock(from)||!scene.knownBlock(to))){SceneCoverage.request(new net.minecraft.world.phys.AABB(from).minmax(new net.minecraft.world.phys.AABB(to)));return false;}
         if(!scene.fluidCell(from)||!scene.fluidCell(to))return false;
         var source=scene.shapeAt(from);var destination=scene.shapeAt(to);if(source.isEmpty()&&destination.isEmpty())return true;
         source=Shapes.or(a.getCollisionShape(level,from),source);destination=Shapes.or(b.getCollisionShape(level,to),destination);
