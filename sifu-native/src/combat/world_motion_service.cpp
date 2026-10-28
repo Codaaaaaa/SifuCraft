@@ -63,6 +63,7 @@ public:
         if(motion::CheckWorld(g_base,g_current.actors,GetTickCount64()))return false;
         player_=(c.flags&kPlayer)!=0;
         explosion_=c.source==Source::Explosion;
+        wind_=false;
         if(player_)return BindPlayer(c,out);
         const auto& targets=g_current.actors.targets;
         const auto it=std::find_if(targets.begin(),targets.end(),[&](const auto& t){return t.id==c.target&&t.spawn==c.spawn;});
@@ -73,13 +74,14 @@ public:
         if(explosion_){
             g_explosions.World(g_current.actors.scope.native_session,g_current.actors.scope.generation);
             if(!g_explosions.EligibleMotion(c,target_.serial))return Refuse("explosion-unproven");
+            wind_=g_explosions.Wind(c);
         }
         // Original terrain and MC platforms share the actual root sweep. Do not
         // infer eligibility from UE Walking alone: Sifu's verified idle grunts use
         // mode None(0), including the successful M1/M3 live fixtures.
         if(const auto why=motion::CheckBody(g_current.actors,target_,&sample_,true,false))return Refuse(why);
-        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers_,!explosion_))return Refuse(why);
-        if(explosion_&&!ExplosionPeers(true))return Refuse("explosion-ai-state");
+        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers_,!explosion_||wind_))return Refuse(why);
+        if(explosion_&&!wind_&&!ExplosionPeers(true))return Refuse("explosion-ai-state");
         hit_=mem::ReadPtr(target_.actor+off::AFightingCharacter::m_HitCapsule);hit_id_=ue::IdentityOf(hit_);
         if(!hit_id_.valid()||ue::OuterOf(hit_)!=target_.actor)return false;
         if(!combat::ai_gate::Install(g_base,peers_))return false;
@@ -133,8 +135,8 @@ public:
         if(player_){if(motion::CheckPlayerBody(g_current.actors,target_,&sample_,false)||sample_.mode!=mode_)return false;return Convert(sample_,out);}
         motion::Peers peers;
         if(motion::CheckBody(g_current.actors,target_,&sample_,false,false)||
-           sample_.mode!=mode_||motion::CheckPeers(g_base,g_current.actors,target_,&peers,!explosion_)||peers!=peers_||
-           (explosion_&&!ExplosionPeers(false)))return false;
+           sample_.mode!=mode_||motion::CheckPeers(g_base,g_current.actors,target_,&peers,!explosion_||wind_)||peers!=peers_||
+           (explosion_&&!wind_&&!ExplosionPeers(false)))return false;
         return Convert(sample_,out);
     }
     bool Observe(Body* out)override{
@@ -158,6 +160,30 @@ public:
         if(result.invoked)sample_=result.body;
         Body body;const bool anchor=Convert(sample_,&body);
         return {body,result.invoked,valid&&anchor,result.returned,result.blocking,result.penetrating,{result.normal.x,result.normal.y,result.normal.z}};
+    }
+    Effect Impulse(const Command& c)override{
+        Effect out;
+        if(motion::CheckWorld(g_base,g_current.actors,GetTickCount64())){out.status=Status::Busy;return out;}
+        const auto& targets=g_current.actors.targets;
+        const auto it=std::find_if(targets.begin(),targets.end(),[&](const auto& t){return t.id==c.target&&t.spawn==c.spawn;});
+        if(it==targets.end()){out.status=Status::TargetLost;return out;}
+        g_explosions.World(g_current.actors.scope.native_session,g_current.actors.scope.generation);
+        const auto claim=g_explosions.Begin(c,&out);
+        if(claim==ExplosionLedger::Decision::Cached){if(out.serial!=it->identity.serial)out.status=Status::TargetLost;return out;}
+        if(claim!=ExplosionLedger::Decision::Fresh){out.status=claim==ExplosionLedger::Decision::Conflict?Status::Conflict:Status::Busy;return out;}
+        const auto actor=it->actor;out.serial=it->identity.serial;
+        const auto health=mem::ReadPtr(actor+off::AFightingCharacter::m_HealthComponent);probe::HealthSample sample;
+        if(ue::IdentityOf(actor)!=it->identity||!ue::IsLive(health)||ue::OuterOf(health)!=actor||!probe::ReadHealthSample(health,&sample)||sample.health<=0||sample.down){out.status=Status::TargetLost;}
+        else{
+            const auto hit=mem::ReadPtr(actor+off::AFightingCharacter::m_HitCapsule);ue::FVector position;
+            if(!ue::IsLive(hit)||ue::OuterOf(hit)!=actor||!ue::ReadWorldLocation(hit,&position))out.status=Status::TargetLost;
+            else{out.position={position.x,position.y,position.z};out.health=sample.health;out.status=sample.health==c.health?Status::Applied:Status::Stale;
+                for(int i=0;i<3;i++)if(std::fabs(out.position[i]-c.position[i])>1)out.status=Status::Stale;
+            }
+        }
+        g_explosions.Complete(c,out); // Read-only receipt: never calls Hurt or moves the actor.
+        SC_LOG("[world-wind] read-only proof target=%u/%u serial=%d HP=%.3f status=%u",c.target,c.spawn,out.serial,out.health,static_cast<unsigned>(out.status));
+        return out;
     }
     Effect Hurt(const Command& c)override{
         Effect out;
@@ -217,7 +243,7 @@ private:
         if(capture)explosion_ai_=state;
         return state.retains(explosion_ai_);
     }
-    bool explosion_=false;ExplosionAiState explosion_ai_;
+    bool explosion_=false,wind_=false;ExplosionAiState explosion_ai_;
     bool BindPlayer(const Command& c,Body* out){
         if(c.actor_stamp!=Stamp(g_current.actors.pawn_identity))return Refuse("player-stamp");
         if(const auto why=PlayerBody(&target_,&sample_,true))return Refuse(why);
@@ -301,7 +327,8 @@ void Exchange(Context context,Mailbox& mailbox) {
     const auto capabilities=changed?0ull:((g_ready.load()?kMotionCapability:0)|(g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kDamageCapability:0)|(settings_live?kPauseCapability:0)|(player_ready?(kPlayerMachineCapability|kPlayerFluidCapability):0)|
         (g_explosion_room.load()&&g_ready.load()&&g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kExplosionCapability:0)|
         (g_ready.load()&&g_published.enabled&&g_published.actors.enabled?kPassengerCapability:0)|
-        (g_published.enabled&&g_published.actors.enabled?kCoverageCapability:0));
+        (g_published.enabled&&g_published.actors.enabled?kCoverageCapability:0)|
+        (g_explosion_room.load()&&g_ready.load()&&g_published.enabled&&g_published.actors.enabled?kImpulseCapability:0));
     mailbox.Status(scope.generation,capabilities,now,stamp,blocks::ShapesAppliedRevision(),flags,player_ready?g_player_publication.info:PlayerInfo{});
     ReleaseSRWLockExclusive(&g_lock);
 }

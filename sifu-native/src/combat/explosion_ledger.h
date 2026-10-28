@@ -43,6 +43,7 @@ public:
         return old.complete&&!old.motion&&old.effect.serial==actor_serial&&old.effect.health==c.health&&
             (old.effect.status==Status::Applied||old.effect.status==Status::Blocked);
     }
+    bool Wind(const Command& c)const{auto at=entries_.find(Of(c));return at!=entries_.end()&&at->second.type==EffectTag("minecraft:wind_charge");}
     bool Motion(const Command& c,std::int32_t actor_serial){
         if(!EligibleMotion(c,actor_serial))return false;
         entries_.at(Of(c)).motion=true;return true;

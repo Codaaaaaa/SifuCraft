@@ -39,7 +39,7 @@ public abstract class ExplosionSceneMixin {
         sifucraft$evaluated=true;
         var explosion=(ServerExplosion)(Object)this;
         var source=explosion.getDirectSourceEntity();
-        var id=source instanceof net.minecraft.world.entity.item.PrimedTnt
+        var id=source instanceof net.minecraft.world.entity.item.PrimedTnt||source instanceof net.minecraft.world.entity.projectile.hurtingprojectile.windcharge.WindCharge
                 ?java.util.UUID.nameUUIDFromBytes(("sifucraft:blast:"+source.getUUID()).getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 :java.util.UUID.randomUUID();
         var scene = SifuCollision.queryView();

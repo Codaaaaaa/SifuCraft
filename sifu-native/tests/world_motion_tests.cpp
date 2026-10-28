@@ -49,6 +49,8 @@ int main(int argc,char** argv){try{
     Command query{};query.op=Op::Coverage;query.source=Source::WorldEffect;query.id=1;query.issued_ms=1000;query.source_hi=1;query.action=1;query.save=31;query.map=32;query.world=7;query.position[0]=-16800;Seal(query);Check(Valid(query),"finite read-only coverage without actor binding");
     for(int fault=0;fault<5;fault++){auto bad=query;if(fault==0)bad.target=1;if(fault==1)bad.delta[0]=1;if(fault==2)bad.position[0]=INFINITY;if(fault==3)bad.source=Source::Machine;if(fault==4)bad.actor_stamp=1;Seal(bad);Check(!Valid(bad),"coverage rejects movement, nonfinite and actor payloads");}
     const PlayerInfo player_info{{101,-202,303},35,90,180};Check(Valid(player_info),"actual-sized player root metadata");
+    {auto wind=c;wind.op=Op::Impulse;wind.source=Source::WorldEffect;wind.lease=wind.duration_ms=wind.state_hash=wind.section_revision=wind.actor_stamp=wind.component_token=0;wind.progress=wind.next_progress=wind.amount=0;Seal(wind);Check(Valid(wind),"read-only wind proof retains target identity");
+     for(int fault=0;fault<5;fault++){auto bad=wind;if(fault==0)bad.amount=1;if(fault==1)bad.delta[0]=1;if(fault==2)bad.flags=kPlayer;if(fault==3)bad.source=Source::Machine;if(fault==4)bad.component_token=1;Seal(bad);Check(!Valid(bad),"wind observation cannot carry damage, motion, player or lease mutation");}}
     for(int failure=0;failure<6;++failure){auto bad=player_info;
         if(failure<3)bad.position[failure]=std::numeric_limits<float>::quiet_NaN();
         if(failure==3)bad.radius=9;

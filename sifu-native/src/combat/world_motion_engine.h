@@ -44,6 +44,7 @@ public:
     virtual Sweep Move(const Body&,const std::array<float,3>&)=0;
     virtual Sweep MovePose(const Body& body,const std::array<float,3>&,float){Sweep result;result.body=body;return result;}
     virtual Effect Hurt(const Command&){return {};}
+    virtual Effect Impulse(const Command&){return {};}
     virtual bool QueryCoverage(const Command&){return false;}
     // Clears only this service's filters. It never rewrites an actor's old pose/state.
     virtual void Forget()=0;
@@ -114,6 +115,13 @@ public:
         if(!env_.ready||env_.flags) {Reject(command,Status::Busy,now);return true;}
         if(command.op==Op::Coverage){
             Finish(command,backend_.QueryCoverage(command)?Status::Applied:Status::Busy,now);return true;
+        }
+        if(command.op==Op::Impulse){
+            if(command.action!=EffectTag("minecraft:wind_charge")){Reject(command,Status::Unsupported,now);return true;}
+            const auto effect=backend_.Impulse(command);
+            auto reply=Make(command,effect.status,now);reply.actor_serial=effect.serial;reply.health=effect.health;
+            for(int i=0;i<3;++i){reply.position[i]=effect.position[i];reply.delta[i]=0;}
+            Seal(reply);if(ledger_->Finish(command.id,reply))out_.push_back(reply);return true;
         }
         if((command.flags&kPlayer)&&!backend_.SupportsPlayer(command.source)) {Reject(command,Status::Unsupported,now);return true;}
         if(command.op==Op::Damage){

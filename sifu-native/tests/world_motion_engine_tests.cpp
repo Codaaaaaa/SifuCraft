@@ -12,7 +12,8 @@ unsigned checks=0;
 void Require(bool value,const char* label){++checks;if(!value){std::fprintf(stderr,"FAIL %s\n",label);std::exit(1);}}
 struct Fake final:Backend {
     Body body{19,818,{0,0,90},60,30,90};
-    int binds=0,claims=0,moves=0,forgets=0,hurts=0,queries=0;bool valid=true,bind=true,block=false,penetrate=false,returned=true,read=true,effects=false;
+    int binds=0,claims=0,moves=0,forgets=0,hurts=0,queries=0,impulses=0;bool valid=true,bind=true,block=false,penetrate=false,returned=true,read=true,effects=false;
+    Effect Impulse(const Command&)override{impulses++;return {Status::Applied,false,body.serial,body.health,body.position,0};}
     bool QueryCoverage(const Command&)override{queries++;return true;}
     float fraction=1,last_facing=0;bool invoked=true,player=false,player_fluid=false;
     std::array<float,3> normal{};
@@ -210,6 +211,11 @@ void PhysicalBinding(){
     Case invalid;invalid.backend.body.root_radius=30;invalid.backend.body.root_half=29;invalid.Send(invalid.CommandFor());invalid.Pop(Status::TargetLost);
 }
 void WorldEffects(){
+    for(auto name:{"minecraft:magic","minecraft:wither"}){
+        Case periodic;periodic.backend.effects=true;auto effect=periodic.CommandFor(Op::Damage);effect.source=Source::WorldEffect;effect.action=EffectTag(name);effect.amount=1;
+        periodic.Send(effect);periodic.Pop(Status::Applied);periodic.Send(effect);periodic.Pop(Status::Applied);
+        Require(periodic.backend.hurts==1&&periodic.backend.body.health==57,"periodic effect uses existing H7 path and deduplicates retries");
+    }
     Case c;c.backend.effects=true;auto hurt=c.CommandFor(Op::Damage);hurt.source=Source::WorldEffect;hurt.action=EffectTag("minecraft:lava");hurt.lease=0;hurt.amount=2;
     c.Send(hurt);auto applied=c.Pop(Status::Applied);Require(c.backend.hurts==1&&c.backend.body.health==54&&applied.health==54&&applied.actor_serial==19,"world source applies final MC damage without a movement reservation/input epoch");
     c.Send(hurt);auto replay=c.Pop(Status::Applied);Require(c.backend.hurts==1&&!std::memcmp(&applied,&replay,sizeof(replay)),"world damage exact retry returns cached actual HP without a second effect");
@@ -261,6 +267,13 @@ void ExplosionMotion(){
     Require(damage.backend.hurts==1&&damage.backend.body.health==45,"explosion final damage has an independent replay-protected HP result");
 }
 void ExplosionEventIdentity(){
+    {Case wind;auto proof=wind.CommandFor(Op::Impulse);proof.source=Source::WorldEffect;proof.action=EffectTag("minecraft:wind_charge");proof.amount=0;proof.lease=proof.duration_ms=proof.actor_stamp=proof.component_token=proof.state_hash=proof.section_revision=0;
+     wind.Send(proof);wind.Pop(Status::Applied);wind.Send(proof);wind.Pop(Status::Applied);
+     Require(wind.backend.impulses==1&&wind.backend.hurts==0&&wind.backend.moves==0&&wind.backend.body.health==60,"wind proof observes without damage or motion and retries once");
+     auto unknown=proof;unknown.id++;unknown.action=EffectTag("minecraft:explosion");wind.Send(unknown);wind.Pop(Status::Unsupported);Require(wind.backend.impulses==1,"only wind has a damage-free proof operation");
+     ExplosionLedger ledger;ledger.World(100,2);Effect cached;Require(ledger.Begin(proof,&cached)==ExplosionLedger::Decision::Fresh,"zero-damage wind event begins");
+     ledger.Complete(proof,Effect{Status::Applied,false,19,60,{0,0,90},0});proof.health=60;
+     Require(ledger.Wind(proof)&&!ledger.Motion(proof,20)&&ledger.Motion(proof,19)&&!ledger.Motion(proof,19),"wind proof binds the activation and permits one physical claim");}
     ExplosionLedger ledger;ledger.World(100,2);Case c;
     auto command=c.CommandFor(Op::Damage);command.source=Source::WorldEffect;command.action=EffectTag("minecraft:explosion");
     Effect result;Require(ledger.Begin(command,&result)==ExplosionLedger::Decision::Fresh,"one blast effect is reserved before native damage");

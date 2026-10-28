@@ -22,6 +22,8 @@ public final class WorldMotionProtocolTest {
     public static void main(String[] args) throws Exception {
         var query=new Command(COVERAGE,WORLD_EFFECT,1,0,1000,1,0,1,0,31,32,0,7,0,0,0,new SifuFrame.Vec3(-16800,0,0),SifuFrame.Vec3.ZERO,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
         check(encode(query).length==COMMAND_BYTES,"finite coverage has no actor or movement lease");
+        var wind=new Command(IMPULSE,WORLD_EFFECT,1,0,1000,1,0,ShapeProtocol.mapHash("minecraft:wind_charge"),0,31,32,0,7,42,2,0,new SifuFrame.Vec3(10,20,90),SifuFrame.Vec3.ZERO,60,35,92,0,0,0,0,0,0,0,0,0,0,0);
+        check(encode(wind).length==COMMAND_BYTES,"non-damaging wind proof retains complete target scope");
         var reserve=sample(RESERVE,MACHINE,SifuFrame.Vec3.ZERO,500,0,42,2);
         check(Arrays.equals(encode(reserve),fixture("world_motion_command.hex")),"independent C++/Java command golden");
         var reply=decodeReply(fixture("world_motion_reply.hex"));

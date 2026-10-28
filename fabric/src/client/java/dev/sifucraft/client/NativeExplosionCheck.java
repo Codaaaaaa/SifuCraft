@@ -39,14 +39,19 @@ final class NativeExplosionCheck implements FluidMotion.Observer {
         @Override public EntityDimensions getDefaultDimensions(Pose pose){return size==null?EntityDimensions.scalable(.7f,1.8f):size;}
     }
     private final boolean live=Boolean.getBoolean("sifucraft.nativeExplosionLive");
+    private final boolean wind=Boolean.getBoolean("sifucraft.nativeWindSelfTest");
+    private net.minecraft.world.entity.Entity windEntity;
+    private net.minecraft.core.BlockPos windFloor;
+    private net.minecraft.world.level.block.state.BlockState oldFloor;
     private volatile boolean ready,finished;private volatile SifuFrame frame;
+    private volatile AssertionError failure;
     private ServerLevel level;private EnemyFrame.Entry target;private Reference damaged,physics;private PrimedTnt tnt;
     private int stage,physicsTicks,completed;private long began,deadline,damageBefore;
     private float playerHealth,referenceHealth;private double initialY,peak,moved,maxPlanError,maxPlanVelocity;
     private Vec3 impulse;
     NativeExplosionCheck(){require(DevWorld.LEVEL_ID.startsWith("sifucraft-native-explosion-check-"),"disposable save required");FluidMotion.observe(this);}
     private static void require(boolean ok,String why){if(!ok)throw new AssertionError("native explosion: "+why);}
-    void clientTick(Minecraft mc,SifuFrame snapshot){frame=snapshot;if(finished){mc.stop();return;}
+    void clientTick(Minecraft mc,SifuFrame snapshot){if(failure!=null)throw failure;frame=snapshot;if(finished){mc.stop();return;}
         var v=WorldMotionWorld.current();ready=v!=null&&v.shapesCurrent()&&v.nativeStatus()!=null&&v.nativeStatus().flags()==0&&
             (v.nativeStatus().capabilities()&WorldMotionProtocol.EXPLOSION_CAPABILITY)!=0&&v.enemies()!=null&&
             (live?!v.placement().map().equals("MotionFixture"):v.placement().map().equals("MotionFixture"));
@@ -72,6 +77,7 @@ final class NativeExplosionCheck implements FluidMotion.Observer {
                 if(!ready||frame==null||frame.health()<=0)return;
                 level=server.overworld();target=view.enemies().entries().stream().filter(e->e.alive()&&e.health()>=40&&EnemyMirrors.hitAttacker(e.id(),e.spawn())!=null).findFirst().orElse(null);if(target==null)return;
                 var proxy=EnemyMirrors.hitAttacker(target.id(),target.spawn());var feet=proxy.position();Vec3 center=null;
+                if(wind&&!dev.sifucraft.blocks.SceneFluidGeometry.knownVolume(level,proxy.getBoundingBox().inflate(4)))return;
                 for(var offset:List.of(new Vec3(1.25,.35,0),new Vec3(-1.25,.35,0),new Vec3(0,.35,1.25),new Vec3(0,.35,-1.25))){
                     var at=feet.add(offset);
                     if(!SceneExplosions.blocked(view.scene(),at,proxy.getEyePosition())&&level.clip(new ClipContext(at,proxy.getEyePosition(),ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,proxy)).getType()==HitResult.Type.MISS){center=at;break;}
@@ -80,11 +86,20 @@ final class NativeExplosionCheck implements FluidMotion.Observer {
                 damaged=new Reference(level,proxy.getBbWidth(),proxy.getBbHeight(),91);damaged.setNoAi(true);damaged.setNoGravity(true);damaged.setPos(feet);
                 damaged.getAttribute(Attributes.MAX_HEALTH).setBaseValue(proxy.getMaxHealth());damaged.setHealth(proxy.getHealth());referenceHealth=damaged.getHealth();
                 require(level.addFreshEntity(damaged),"registered original damage/impulse reference");
-                tnt=new PrimedTnt(EntityTypes.TNT,level);tnt.setPos(center);tnt.setNoGravity(true);tnt.setDeltaMovement(Vec3.ZERO);tnt.setFuse(20);
-                var out=TagValueOutput.createWithContext(ProblemReporter.DISCARDING,level.registryAccess());tnt.saveWithoutId(out);var tag=out.buildResult();tag.putFloat("explosion_power",1);
-                tnt.load(TagValueInput.create(ProblemReporter.DISCARDING,level.registryAccess(),tag));require(level.addFreshEntity(tnt),"one original low-power TNT; no native blast");
+                if(wind){
+                    require((view.nativeStatus().capabilities()&WorldMotionProtocol.IMPULSE_CAPABILITY)!=0,"native non-damaging wind proof support");
+                    windFloor=net.minecraft.core.BlockPos.containing(center.x,feet.y-.01,center.z);oldFloor=level.getBlockState(windFloor);require(!oldFloor.hasBlockEntity(),"disposable wind surface");
+                    level.setBlockAndUpdate(windFloor,net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
+                    var charge=new net.minecraft.world.entity.projectile.hurtingprojectile.windcharge.WindCharge(EntityTypes.WIND_CHARGE,level);
+                    charge.setOwner(server.getPlayerList().getPlayers().getFirst());charge.setPos(center.add(0,1,0));charge.setDeltaMovement(0,-.5,0);
+                    require(level.addFreshEntity(charge),"original wind projectile and actual block impact");windEntity=charge;
+                }else{
+                    tnt=new PrimedTnt(EntityTypes.TNT,level);tnt.setPos(center);tnt.setNoGravity(true);tnt.setDeltaMovement(Vec3.ZERO);tnt.setFuse(20);
+                    var out=TagValueOutput.createWithContext(ProblemReporter.DISCARDING,level.registryAccess());tnt.saveWithoutId(out);var tag=out.buildResult();tag.putFloat("explosion_power",1);
+                    tnt.load(TagValueInput.create(ProblemReporter.DISCARDING,level.registryAccess(),tag));require(level.addFreshEntity(tnt),"one original low-power TNT; no native blast");
+                }
                 playerHealth=frame.health();damageBefore=WorldEffects.stats().applied();deadline=System.currentTimeMillis()+15000;stage=1;
-                org.slf4j.LoggerFactory.getLogger("sifucraft").info("[native-explosion-test] armed original TNT power=1 fuse=20 UUID={} target={}/{} hp={} center={} live={}",tnt.getUUID(),target.id(),target.spawn(),target.health(),center,live);return;
+                org.slf4j.LoggerFactory.getLogger("sifucraft").info("[native-explosion-test] armed original {} UUID={} target={}/{} hp={} center={} live={}",wind?"wind block-impact":"TNT power=1 fuse=20",wind?windEntity.getUUID():tnt.getUUID(),target.id(),target.spawn(),target.health(),center,live);return;
             }
             if(!ready)return;
             require(System.currentTimeMillis()<deadline,"bounded stage="+stage+" effects="+WorldEffects.stats()+" motion="+FluidMotion.stats());
@@ -92,21 +107,22 @@ final class NativeExplosionCheck implements FluidMotion.Observer {
             var current=view.enemies().entries().stream().filter(e->e.key().equals(target.key())).findFirst().orElse(null);require(current!=null&&current.alive(),"target remains alive in the same activation");
             moved=Math.max(moved,Math.sqrt(Math.pow(current.location().x()-target.location().x(),2)+Math.pow(current.location().y()-target.location().y(),2))/100.0);
             if(stage==1){
-                if(!tnt.isRemoved())return;
+                if(wind?!windEntity.isRemoved():!tnt.isRemoved())return;
                 impulse=damaged.getDeltaMovement();referenceHealth-=damaged.getHealth();damaged.discard();stage=2;
-                require(referenceHealth>0&&referenceHealth*3<target.health(),"positive nonlethal original damage control");return;
+                if(wind){org.slf4j.LoggerFactory.getLogger("sifucraft").info("[wind-impulse-test] reference velocity={} loss={}",impulse,referenceHealth);require(impulse.lengthSqr()>.0001,"original wind reference has positive push before waiting for Native");}
+                require(wind?referenceHealth==0:referenceHealth>0&&referenceHealth*3<target.health(),"original damaging/non-damaging explosion control");return;
             }
             if(stage==2){
-                if(WorldEffects.stats().applied()<=damageBefore||FluidMotion.stats().active()!=0||view.requests().pending()!=0||completed==0)return;
+                if(!wind&&WorldEffects.stats().applied()<=damageBefore||FluidMotion.stats().active()!=0||view.requests().pending()!=0||completed==0)return;
                 require(Math.abs(target.health()-current.health()-referenceHealth*3)<.02,"one fully resolved original damage application at NPC 3:1");
                 require(physicsTicks>1&&moved>.05&&peak>initialY+.005,"real XYZ force, including vertical rise, completed under actual motion receipts");
-                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("p10-native-explosion.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(Map.of(
+                AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve(wind?"p8-native-wind.json":"p10-native-explosion.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(Map.of(
                     "passed",true,"live",live,"power",1,"mc_damage",referenceHealth,"native_health",current.health(),"native_horizontal_m",moved,
                     "native_rise_m",peak-initialY,"physics_ticks",physicsTicks,"plan_error_m",maxPlanError,"motion",FluidMotion.stats()),out));
                 org.slf4j.LoggerFactory.getLogger("sifucraft").info("[native-explosion-test] PASS mc_damage={} native_hp={} moved={} rise={} ticks={} completed={} motion={}",referenceHealth,current.health(),moved,peak-initialY,physicsTicks,completed,FluidMotion.stats());
                 restore(server);finished=true;
             }
-        }catch(Exception|AssertionError error){restore(server);finished=true;org.slf4j.LoggerFactory.getLogger("sifucraft").error("[native-explosion-test] FAIL",error);Minecraft.getInstance().execute(()->{throw new AssertionError(error);});}
+        }catch(Exception|AssertionError error){restore(server);org.slf4j.LoggerFactory.getLogger("sifucraft").error("[native-explosion-test] FAIL",error);failure=new AssertionError(error);}
     }
-    void restore(MinecraftServer server){FluidMotion.observe(null);if(damaged!=null&&!damaged.isRemoved())damaged.discard();if(physics!=null)physics.discard();if(tnt!=null&&!tnt.isRemoved())tnt.discard();}
+    void restore(MinecraftServer server){FluidMotion.observe(null);if(damaged!=null&&!damaged.isRemoved())damaged.discard();if(physics!=null)physics.discard();if(tnt!=null&&!tnt.isRemoved())tnt.discard();if(windEntity!=null&&!windEntity.isRemoved())windEntity.discard();if(windFloor!=null&&oldFloor!=null)level.setBlockAndUpdate(windFloor,oldFloor);}
 }

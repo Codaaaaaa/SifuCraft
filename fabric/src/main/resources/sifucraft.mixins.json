@@ -36,7 +36,8 @@
 		"ShieldBlockingMixin",
 		"TntSceneMixin",
 		"WindChargeCollisionMixin",
-		"WindChargeSceneHitMixin"
+		"WindChargeSceneHitMixin",
+		"WindChargeWorldMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
