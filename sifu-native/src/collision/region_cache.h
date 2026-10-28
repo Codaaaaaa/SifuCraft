@@ -35,6 +35,9 @@ public:
             RemoveCovered(result.coverage.unknown,entry.region);
             result.coverage.unknown.insert(result.coverage.unknown.end(),entry.holes.begin(),entry.holes.end());
         }
+        auto less=[](const CellRegion& a,const CellRegion& b){return a.min<b.min||(a.min==b.min&&a.max<b.max);};
+        std::sort(result.coverage.known.begin(),result.coverage.known.end(),less);
+        std::sort(result.coverage.unknown.begin(),result.coverage.unknown.end(),less);
         return result;
     }
 };

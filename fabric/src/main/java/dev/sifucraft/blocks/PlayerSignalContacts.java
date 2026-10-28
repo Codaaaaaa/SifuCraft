@@ -30,6 +30,8 @@ public final class PlayerSignalContacts {
             ?new View(host,session,frame,placement,player,ready):null;
     }
     public static boolean ignores(Entity entity){return suppress&&entity==backing&&entity.level().dimension()==Level.OVERWORLD;}
+    /** Applies to both the client copy and the server copy of the routed player. */
+    public static boolean minecraftOwnsPlayer(){var source=requested;return source!=null&&source.ready&&source.frame.minecraftOwnsInput();}
     public static PlayerSignalBody nativeBody(){return suppress&&body!=null&&!body.isRemoved()?body:null;}
     static EnemyFrame.Entry nativeEntry(WorldMotionWorld.View view){
         var source=requested;var entity=nativeBody();

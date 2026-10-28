@@ -321,6 +321,7 @@ void ApplyOnGameThread(std::uintptr_t base) {
         g_current.actors.updated_ms<=now&&now-g_current.actors.updated_ms<=200;
     const bool settled=blocks::ShapesSettled();
     g_flags.store(flags);g_ready.store(ready&&settled);
+    collision::coverage::Peer(scope.peer_session);
     if(ready&&settled&&!flags){
         const auto capsule=mem::ReadPtr(g_current.actors.pawn+off::ACharacter::CapsuleComponent);
         if(ue::IsLive(capsule)&&ue::OuterOf(capsule)==g_current.actors.pawn)

@@ -58,7 +58,8 @@ public abstract class EntityMixin {
         sifucraft$tangent = null;
         var self=(Entity)(Object)this;
         sifucraft$velocity = self.getDeltaMovement();
-        dev.sifucraft.blocks.SceneFluidGeometry.knownVolume(self.level(),self.getBoundingBox().expandTowards(movement).inflate(2));
+        if(!(self instanceof Player)||dev.sifucraft.blocks.PlayerSignalContacts.minecraftOwnsPlayer())
+            dev.sifucraft.blocks.SceneFluidGeometry.knownVolume(self.level(),self.getBoundingBox().expandTowards(movement).inflate(2));
     }
 
     @Inject(method = "collide", at = @At("RETURN"), cancellable = true)

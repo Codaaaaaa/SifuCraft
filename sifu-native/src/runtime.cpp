@@ -34,6 +34,7 @@
 #include "input/anchor_request.h"
 #include "collision/builder.h"
 #include "collision/coverage_query.h"
+#include "collision/change_watch.h"
 #include "collision/components.h"
 #include "collision/shapes.h"
 #include "collision/walk_check.h"
@@ -659,10 +660,17 @@ private:
 class CoverageSchedule {
 public:
     void Update(std::uintptr_t world,std::uint32_t generation,const std::string& path,std::uintptr_t pawn,CollisionSchedule& collision){
-        if(generation_!=generation){generation_=generation;at_=0;shared_=0;g_bridge.PublishDoors({});}
+        if(generation_!=generation){generation_=generation;at_=0;shared_=0;watch_.Reset();g_bridge.PublishDoors({});}
         if(!world||!pawn||!collision.HasReference())return;
         auto sample=collision::coverage::Latest();
-        if(!sample||sample->world!=world||sample->generation!=generation)return;
+        if(!sample||sample->world!=world||sample->generation!=generation){if(shared_){g_bridge.PublishDoors({});shared_=0;}return;}
+        if(watch_epoch_!=sample->epoch){watch_.Reset();watch_epoch_=sample->epoch;}
+        auto fingerprint=[&](const collision::coverage::Component& entry){return Fingerprint(entry,collision.Reference());};
+        const auto now=GetTickCount64();
+        if(now>=watch_at_){watch_at_=now+100;if(watch_.Changed(fingerprint)){
+            watch_.Reset();collision::coverage::Invalidate();g_bridge.PublishDoors({});at_=0;
+            SC_LOG("[coverage] original component identity/filter/static geometry changed; invalidating prior certificates");return;
+        }}
         if(sample->at_ms!=at_){
             at_=sample->at_ms;collision::BuildRequest request;
             const float centers[]={sample->center.x,sample->center.y,sample->center.z},extents[]={sample->extent.x,sample->extent.y,sample->extent.z};
@@ -679,7 +687,8 @@ public:
             }
             request.shapes=collision::ExtractComponents(components,collision.Reference(),collision.WalkableZ(pawn));
             request.coverage=collision::Coverage{{region},{}};
-            if(missing||request.shapes.unknown_bounds)request.coverage->unknown.push_back(region);
+            const bool observed=watch_.Observe(sample->components,[](const auto& entry){return entry.pointer;},fingerprint);
+            if(missing||request.shapes.unknown_bounds||!observed)request.coverage->unknown.push_back(region);
             else for(const auto& box:request.shapes.unknown){
                 const float lo[]={box.min.x,box.min.y,box.min.z},hi[]={box.max.x,box.max.y,box.max.z};collision::CellRegion hole;
                 for(int i=0;i<3;i++){hole.min[i]=std::max(region.min[i],static_cast<int>(std::floor(lo[i]/12.5)));hole.max[i]=std::min(region.max[i],std::max(hole.min[i]+1,static_cast<int>(std::ceil(hi[i]/12.5))));}
@@ -697,7 +706,26 @@ public:
             g_bridge.PublishDoors({grid.generation,grid.world_generation,grid.block_count,grid.cell_count,grid.map,file});
         }
     }
-private:collision::Builder builder_;std::uint32_t generation_=0,shared_=0;std::uint64_t at_=0;
+private:
+    static std::uint64_t Fingerprint(const collision::coverage::Component& c,const collision::Responses& reference){
+        if(!ue::IsLive(c.pointer)||!ue::IsLive(c.owner)||ue::IdentityOf(c.pointer)!=c.identity||ue::IdentityOf(c.owner)!=c.owner_identity||ue::OuterOf(c.pointer)!=c.owner)return 0;
+        const auto name=ue::NameOf(c.pointer),owner=ue::NameOf(c.owner);
+        if(name.comparison_index!=c.name.comparison_index||name.number!=c.name.number||owner.comparison_index!=c.owner_name.comparison_index||owner.number!=c.owner_name.number)return 0;
+        if(!collision::Blocks(c.pointer,reference))return 1;
+        std::uint64_t hash=14695981039346656037ull;
+        auto mix=[&](std::uint64_t value){hash=(hash^value)*1099511628211ull;};
+        mix(collision::BodySetupOf(c.pointer));const bool fixed=collision::IsFixed(c.pointer);mix(fixed);
+        // Movables already use voxel-content change detection in DoorSchedule.
+        // Do not turn harmless animated float jitter into a global invalidation.
+        if(fixed){ue::Affine transform;if(!ue::ReadComponentToWorld(c.pointer,&transform))return 0;
+            for(int i=0;i<9;i++)mix(std::bit_cast<std::uint32_t>((&transform.m[0][0])[i]));
+            mix(std::bit_cast<std::uint32_t>(transform.t.x));mix(std::bit_cast<std::uint32_t>(transform.t.y));mix(std::bit_cast<std::uint32_t>(transform.t.z));
+            std::array<std::uint32_t,7> bounds{};if(!mem::Copy(bounds.data(),c.pointer+off::USceneComponent::Bounds,sizeof(bounds)))return 0;for(auto value:bounds)mix(value);
+        }
+        return hash?hash:2;
+    }
+    collision::ChangeWatch<collision::coverage::Component> watch_;
+    collision::Builder builder_;std::uint32_t generation_=0,shared_=0;std::uint64_t at_=0,watch_at_=0,watch_epoch_=0;
 };
 }  // namespace
 

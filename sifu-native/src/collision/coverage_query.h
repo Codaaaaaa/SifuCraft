@@ -19,4 +19,6 @@ std::shared_ptr<const Sample> Latest();
 void Invalidate();
 // Game-thread only. Enqueues a bounded read-only spatial query, never a movement lease.
 bool Request(std::uintptr_t world,std::uint32_t generation,ue::FVector center);
+// H1 only: a departed MC peer must not leave spatial work in the next save/session.
+void Peer(std::uint64_t peer);
 }

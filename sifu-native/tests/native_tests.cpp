@@ -26,6 +26,8 @@
 #include "collision/voxels.h"
 #include "collision/export.h"
 #include "collision/region_cache.h"
+#include "collision/change_watch.h"
+#include "collision/refresh_queue.h"
 #include "collision/walk_check.h"
 #include "core/build_guard.h"
 #include "core/log.h"
@@ -127,6 +129,24 @@ void TestCoverageFile(const char* fixture){
     VoxelGrid replacement,merged;replacement.Set(0,0,0);merged.Set(-9,0,0);merged.Set(1,0,0);merged.ReplaceRegion(replacement,{{-8,0,0},{8,8,8}});
     Expect(merged.CellCount()==2&&merged.Get(-9,0,0)&&merged.Get(0,0,0)&&!merged.Get(1,0,0),"new known air clears stale solid geometry without erasing another region");
     RegionCache cache;auto first=std::make_shared<VoxelGrid>();first->Set(1,1,1);first->Set(6,1,1);
+    {
+        struct Entry {std::uintptr_t key;};ChangeWatch<Entry,2> watch;
+        std::unordered_map<std::uintptr_t,std::uint64_t> signatures{{1,11},{2,22},{3,33}};
+        auto key=[](const Entry& entry){return entry.key;};auto read=[&](const Entry& entry){return signatures.at(entry.key);};
+        Expect(watch.Observe(std::vector<Entry>{{1},{2}},key,read)&&!watch.Changed(read,1),"bounded coverage identity watch starts with real signatures");
+        signatures[2]=23;Expect(watch.Changed(read,1),"bounded round-robin watch detects a component change without rescanning the entire world");
+        Expect(!watch.Observe(std::vector<Entry>{{3}},key,read),"watch saturation cannot silently certify unobserved geometry");
+        watch.Reset();Expect(watch.Observe(std::vector<Entry>{{3}},key,read),"new world/epoch releases old watch identities");signatures[3]=0;
+        Expect(watch.Changed(read),"removed or recycled component invalidates a prior certificate");
+        RefreshQueue refresh;refresh.Done({0,0,0},1);Expect(!refresh.Due(5000)&&refresh.Due(5001).value()==std::array<float,3>{0,0,0},"periodic spatial refresh observes the full five-second interval");
+        refresh.Done({8,0,0},2);refresh.Done({0,0,0},10);Expect(refresh.Due(5010).value()==std::array<float,3>{8,0,0},"oldest region refresh cannot be starved by requerying the local region");
+        refresh.Reset();for(int i=0;i<65;i++)refresh.Done({float(i),0,0},i+1);
+        Expect(refresh.Due(10000).value()==std::array<float,3>{1,0,0},"refresh history is bounded to the same 64 finite regions");refresh.Reset();Expect(!refresh.Due(10000),"epoch reset retains no stale region query");
+        RegionCache canonical;auto empty=std::make_shared<VoxelGrid>();const CellRegion left{{0,0,0},{8,8,8}},right{{16,0,0},{24,8,8}};
+        canonical.Put(1,"map",1,left,empty,Coverage{{left},{}});auto before=canonical.Put(1,"map",1,right,empty,Coverage{{right},{}});
+        auto after=canonical.Put(1,"map",1,left,empty,Coverage{{left},{}});
+        Expect(before.coverage==after.coverage&&*before.grid==*after.grid,"unchanged periodic refresh does not churn coverage files just by rotating cache order");
+    }
     auto a=cache.Put(2,"map",1,{{0,0,0},{8,8,8}},first,Coverage{{{{0,0,0},{8,8,8}}},{{{0,0,0},{8,8,8}}}});
     auto fresh=std::make_shared<VoxelGrid>();fresh->Set(9,1,1);
     auto b=cache.Put(2,"map",1,{{4,0,0},{12,8,8}},fresh,Coverage{{{{4,0,0},{12,8,8}}},{}});
