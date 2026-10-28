@@ -33,7 +33,7 @@ public final class SceneBlockSupport {
     }
     public static VoxelShape nativeShape(BlockGetter level,BlockPos pos) {
         if(!WorldBlocks.ENABLED)return Shapes.empty();
-        var current=scene(level);return current==null?Shapes.empty():current.shapeAt(pos);
+        var current=scene(level);return current==null?Shapes.empty():current.solidShapeAt(pos);
     }
     public static VoxelShape supportShape(BlockGetter level,BlockPos pos,VoxelShape vanilla) {
         var nativeShape=nativeShape(level,pos);
@@ -74,8 +74,14 @@ public final class SceneBlockSupport {
             long loaded=index.loadedRevision();
             if(loaded!=loadedRevision){enqueue(index.loadedAfter(loadedRevision),null,next);loadedRevision=loaded;}
             if(!SceneFluidGeometry.available(level))return;
-            for(int count=0;count<128&&!pending.isEmpty();count++) {
+            int budget=Math.min(128,pending.size());
+            for(int count=0;count<budget&&!pending.isEmpty();count++) {
                 var item=pending.pollFirstEntry();var pos=item.getKey();var before=item.getValue();var state=level.getBlockState(pos);
+                // Unknown is a waiting state, not a newly closed wall. Keep both
+                // the saved liquid and the earliest support baseline until queried.
+                boolean known=current.knownBlock(pos);
+                for(var face:net.minecraft.core.Direction.values())known&=current.knownBlock(pos.relative(face));
+                if(!known){pending.put(pos,before);SceneCoverage.request(new net.minecraft.world.phys.AABB(pos).inflate(1));continue;}
                 if(!state.getFluidState().isEmpty()){
                     boolean changed=before==null||geometryChanged(before,pos);
                     // Like a solid block replacing a fluid, a newly closed Native

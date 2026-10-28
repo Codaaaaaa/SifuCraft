@@ -141,6 +141,8 @@ public final class SifuCraftClient implements ClientModInitializer {
     private CollisionLoader doors;
     private Object fluidWorldLife;
     private TntStressCheck tntStressCheck;
+    private WorldRecoveryCheck worldRecoveryCheck;
+    private ActiveSwimCheck activeSwimCheck;
     private final UnrealSpace space = new UnrealSpace();
     private final RespawnHandshake respawn = new RespawnHandshake();
     private final dev.sifucraft.combat.ShieldBlockAnimation shieldAnimation = new dev.sifucraft.combat.ShieldBlockAnimation();
@@ -397,6 +399,13 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(Boolean.getBoolean("sifucraft.tntStressSelfTest")){
             tntStressCheck=new TntStressCheck();ServerTickEvents.START_SERVER_TICK.register(tntStressCheck::beginTick);ServerTickEvents.END_SERVER_TICK.register(tntStressCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(tntStressCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.worldRecoverySelfTest")){
+            worldRecoveryCheck=new WorldRecoveryCheck();ServerLifecycleEvents.SERVER_STARTED.register(worldRecoveryCheck::started);ServerTickEvents.END_SERVER_TICK.register(worldRecoveryCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(worldRecoveryCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.activeSwimSelfTest")){
+            activeSwimCheck=new ActiveSwimCheck();ServerTickEvents.END_SERVER_TICK.register(activeSwimCheck::tick);ServerLifecycleEvents.SERVER_STOPPING.register(activeSwimCheck::restore);
         }
         if(Boolean.getBoolean("sifucraft.catalogLogicSelfTest")){
             catalogLogicCheck=new CatalogLogicCheck();ServerTickEvents.END_SERVER_TICK.register(catalogLogicCheck::tick);
@@ -709,6 +718,8 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(fluidPersistenceCheck!=null)fluidPersistenceCheck.clientTick(minecraft,guiAvailable(frame));
         if(playerItemBubbleCheck!=null)playerItemBubbleCheck.clientTick(minecraft,guiAvailable(frame));
         if(tntStressCheck!=null)tntStressCheck.clientTick(minecraft,frame);
+        if(worldRecoveryCheck!=null)worldRecoveryCheck.clientTick(minecraft,frame);
+        if(activeSwimCheck!=null)activeSwimCheck.clientTick(minecraft,input,frame);
         if(playerEnvironmentCheck!=null)playerEnvironmentCheck.clientTick(minecraft,guiAvailable(frame));
         if(machineInventoryCheck!=null)machineInventoryCheck.clientTick(minecraft,guiAvailable(frame));
         if(fluidAtmosphereCheck!=null)fluidAtmosphereCheck.clientTick(minecraft,frame);

@@ -24,7 +24,7 @@ public final class SceneExplosions {
     private static final ThreadLocal<Frame> current = new ThreadLocal<>();
     private static volatile java.util.function.Consumer<UUID> observer;
     public static void observe(java.util.function.Consumer<UUID> value){
-        if(value!=null&&!Boolean.getBoolean("sifucraft.tntStressSelfTest"))throw new IllegalStateException("isolated TNT fixture only");observer=value;
+        if(value!=null&&!Boolean.getBoolean("sifucraft.tntStressSelfTest")&&!Boolean.getBoolean("sifucraft.worldRecoverySelfTest"))throw new IllegalStateException("isolated TNT fixture only");observer=value;
     }
     /** Preserve TNT state while nearby native targets cannot accept a complete world event. */
     public static boolean canAdvance(net.minecraft.world.entity.item.PrimedTnt tnt){

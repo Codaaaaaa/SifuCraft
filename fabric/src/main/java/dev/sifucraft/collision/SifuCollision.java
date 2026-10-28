@@ -87,12 +87,16 @@ public final class SifuCollision {
 
         /** Native geometry local to one Minecraft block; support queries never create blocks. */
         public VoxelShape shapeAt(BlockPos pos) {
+            var solid=solidShapeAt(pos);
+            var unknown=unknownShape(pos);return unknown.isEmpty()?solid:solid.isEmpty()?unknown:Shapes.or(solid,unknown);
+        }
+        /** Proven occupancy only: unknown space is a movement barrier, never evidence of support. */
+        public VoxelShape solidShapeAt(BlockPos pos) {
             int x=pos.getX()-placement.originX(), y=pos.getZ()-placement.originZ(), z=pos.getY()-placement.originY();
             long[] fixed=grid.block(x,y,z), moving=this.moving==null?null:this.moving.block(x,y,z);
             var a=fixed==null?Shapes.empty():shapes.computeIfAbsent(fixed,SifuCollision::shapeOf);
             var b=moving==null?Shapes.empty():shapes.computeIfAbsent(moving,SifuCollision::shapeOf);
-            var solid=a.isEmpty()?b:b.isEmpty()?a:Shapes.or(a,b);
-            var unknown=unknownShape(pos);return unknown.isEmpty()?solid:solid.isEmpty()?unknown:Shapes.or(solid,unknown);
+            return a.isEmpty()?b:b.isEmpty()?a:Shapes.or(a,b);
         }
         public boolean knownBlock(BlockPos pos){return !grid.hasCoverage()||grid.knownBlock(pos.getX()-placement.originX(),pos.getZ()-placement.originZ(),pos.getY()-placement.originY());}
         private VoxelShape unknownShape(BlockPos pos){
