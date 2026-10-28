@@ -19,8 +19,18 @@ public final class WorldMotionWorld {
         }
     }
     private static volatile View current;
+    private static volatile java.util.function.Supplier<EnemyFrame> observations;
     private static final ThreadLocal<View> diagnosticView=new ThreadLocal<>();
-    public static View current(){var diagnostic=diagnosticView.get();return diagnostic==null?current:diagnostic;}
+    public static View current(){
+        var diagnostic=diagnosticView.get();if(diagnostic!=null)return diagnostic;
+        var view=current;var source=observations;if(view==null||source==null)return view;
+        var enemies=source.get();var status=view.requests().status();
+        if(enemies==null||enemies.session()!=view.scope().nativeSession()||enemies.worldGeneration()!=view.scope().world())enemies=view.enemies();
+        if(status!=null&&status.world()!=view.scope().world())status=null;
+        return new View(view.requests(),view.scope(),view.placement(),enemies,view.scene(),status,view.geometry());
+    }
+    /** The bridge reader supplies fresh immutable observations without calling Minecraft from its thread. */
+    public static void observe(java.util.function.Supplier<EnemyFrame> source){observations=source;}
     public static void offer(View view){current=view;PistonMachines.offered(view);}
     /** One server-thread-only seqlock miss, without changing client publication. */
     public static void withUnavailableStatus(Runnable action){

@@ -41,7 +41,7 @@ public final class FluidMotion {
     private static final long ACTION=ShapeProtocol.mapHash("sifucraft:fluid");
     private enum Phase { ACQUIRE,IDLE,MOVE,RENEW,RELEASE,CANCEL }
     private record Handoff(WorldMotionRequests.Scope scope,Reply binding,Reply release,Vec3 velocity,PistonContacts.Source source,boolean supported,boolean settling,long at,long playerStamp){}
-    private record Impulse(WorldMotionRequests.Scope scope,UUID source,Vec3 velocity,float health,long actorStamp,long at){}
+    private record Impulse(WorldMotionRequests.Scope scope,UUID source,Vec3 velocity,float health,long actorStamp,long at,int authority){}
     private static final class Flight {
         final EnemyFrame.Key key;final EnemyFrame.Entry initial;final WorldMotionRequests.Scope scope;final ServerLevel level;final UUID source;
         final AtomicBoolean queued=new AtomicBoolean();
@@ -60,9 +60,9 @@ public final class FluidMotion {
         boolean machinePending,machineYield;long yieldUntilTick=Long.MIN_VALUE;
         boolean partial,nativeGround;Vec3 contactNormal=Vec3.ZERO;SifuCollision.Active groundScene;long groundRevision;
         Flight(WorldMotionWorld.View view,ServerLevel level,EnemyFrame.Entry e,Entity proxy,BlockPos at,Handoff handoff,Impulse impulse){
-            key=e.key();initial=e;scope=view.scope();this.level=level;source=impulse!=null?impulse.source:handoff==null?proxy.getUUID():handoff.source.capture();sourcePos=handoff==null?at:handoff.source.pos();action=impulse!=null?ShapeProtocol.mapHash("sifucraft:explosion_motion"):handoff==null?ACTION:handoff.source.action();
+            key=e.key();initial=e;scope=view.scope();this.level=level;source=impulse!=null?impulse.source:handoff==null?proxy.getUUID():handoff.source.capture();sourcePos=handoff==null?at:handoff.source.pos();action=impulse!=null?ShapeProtocol.mapHash(impulse.authority==EXPLOSION?"sifucraft:explosion_motion":"sifucraft:passenger_fall"):handoff==null?ACTION:handoff.source.action();
             machine=handoff!=null;
-            authoritySource=impulse==null?FLUID:EXPLOSION;actorStamp=impulse==null?0:impulse.actorStamp;
+            authoritySource=impulse==null?FLUID:impulse.authority;actorStamp=impulse==null?0:impulse.actorStamp;
             playerStamp=NativeMotionSubjects.player(key)?view.nativeStatus().playerStamp():0;
             machineSource=handoff==null?null:handoff.source;
             initialVelocity=impulse!=null?impulse.velocity:handoff==null?new Vec3(e.velocity().x()/2000.0,e.velocity().z()/2000.0,e.velocity().y()/2000.0):handoff.velocity;
@@ -85,7 +85,18 @@ public final class FluidMotion {
         var old=impulses.get(proxy.sifuKey());
         if(old!=null&&old.scope.equals(expected)&&old.source.equals(source))return;
         if(old!=null&&old.scope.equals(expected))velocity=velocity.add(old.velocity);
-        impulses.put(proxy.sifuKey(),new Impulse(expected,source,velocity,receipt.health(),receipt.actorSerial(),WorldWriter.clockMillis()));
+        impulses.put(proxy.sifuKey(),new Impulse(expected,source,velocity,receipt.health(),receipt.actorSerial(),WorldWriter.clockMillis(),EXPLOSION));
+        retry.remove(proxy.sifuKey());
+    }
+    /** A genuine passenger release continues gravity/water once, without inventing a piston source. */
+    static void passengerReleased(EnemyProxy proxy,WorldMotionRequests.Scope expected,UUID boat,Reply binding,Reply release,Vec3 velocity){
+        var v=WorldMotionWorld.current();
+        if(v==null||!expected.equals(v.scope())||binding==null||release==null||release.restored()!=7||
+            release.actorSerial()!=binding.actorSerial()||release.componentToken()!=binding.componentToken()||release.health()<=0||
+            !Double.isFinite(velocity.lengthSqr())||(release.status()!=3&&release.status()!=6))return;
+        var pending=impulses.get(proxy.sifuKey());
+        if(pending!=null&&pending.scope.equals(expected)&&pending.authority==EXPLOSION)return;
+        impulses.put(proxy.sifuKey(),new Impulse(expected,boat,velocity,release.health(),release.actorSerial(),WorldWriter.clockMillis(),FLUID));
         retry.remove(proxy.sifuKey());
     }
     private record Momentum(WorldMotionRequests.Scope scope,Vec3 velocity,long until){}
@@ -210,7 +221,7 @@ public final class FluidMotion {
         for(var incoming:candidates){
             var e=NativeMotionSubjects.player(incoming.key())?incoming:PistonMachines.pose(view.enemies(),incoming);
             if(flights.size()>=16||view.requests().pending()>=24)break;
-            if(!e.alive()||flights.containsKey(e.key())||now<retry.getOrDefault(e.key(),0L)||e.radius()<10||e.radius()>100||e.halfHeight()>200)continue;
+            if(!e.alive()||flights.containsKey(e.key())||BoatPassengers.holds(e.key())||now<retry.getOrDefault(e.key(),0L)||e.radius()<10||e.radius()>100||e.halfHeight()>200)continue;
             var proxy=NativeMotionSubjects.find(e.key());if(proxy==null||proxy.isRemoved())continue;
             var at=medium(level,proxy.getBoundingBox());var h=handoffs.get(e.key());
             var impulse=impulses.get(e.key());

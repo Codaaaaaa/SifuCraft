@@ -378,13 +378,18 @@ const char* CheckWorld(std::uintptr_t base,const Context& c,std::uint64_t now) {
 const char* CheckBody(const Context& c,const Target& t,BodySample* s,bool geometry,bool ground) { return Inspect(c,t,s,geometry,ground); }
 const char* CheckPlayerBody(const Context& c,const Target& t,BodySample* s,bool geometry) { return Inspect(c,t,s,geometry,false,true); }
 const char* CheckPeers(std::uintptr_t base,const Context& c,const Target& t,Peers* p,bool idle) { return InspectPeers(base,c,t,p,idle); }
-bool SweepBody(const Context& c,const Target& t,const BodySample& before,const ue::FVector& delta,SweepResult* result,bool player) {
+bool SweepBody(const Context& c,const Target& t,const BodySample& before,const ue::FVector& delta,SweepResult* result,bool player,const float* facing) {
     *result={};
     const float length=Distance(delta,{});
-    if(!Finite(delta)||length<=0||length>10.0001f||!Same(t)||!ResolveMove())return false;
+    if(!Finite(delta)||(length<=0&&!facing)||length>10.0001f||!Same(t)||!ResolveMove())return false;
+    auto wanted_rotation=before.rotation;
+    if(facing){
+        if(!std::isfinite(*facing)||std::fabs(*facing)>180||std::fabs(std::remainder(*facing-before.rotation.yaw,360.f))>15.001f)return false;
+        wanted_rotation.yaw=*facing;
+    }
     std::array<std::uint8_t,512> bytes{};
     const ue::FVector wanted{before.position.x+delta.x,before.position.y+delta.y,before.position.z+delta.z};
-    if(!g_params.Encode(bytes,wanted,before.rotation))return false;
+    if(!g_params.Encode(bytes,wanted,wanted_rotation))return false;
     result->invoked=true;
     g_move.Invoke(t.actor,bytes.data());
     const auto hit=bytes.data()+g_params.offset[SweepParams::Hit];
@@ -406,7 +411,7 @@ bool SweepBody(const Context& c,const Target& t,const BodySample& before,const u
     if(!pose||!hp)return false;
     if(Distance(after.position,before.position)>length+0.1f||after.hp!=before.hp||
        std::fabs(after.rotation.pitch-before.rotation.pitch)>0.01f||
-       std::fabs(after.rotation.yaw-before.rotation.yaw)>0.01f||
+       std::fabs(std::remainder(after.rotation.yaw-wanted_rotation.yaw,360.f))>0.01f||
        std::fabs(after.rotation.roll-before.rotation.roll)>0.01f)return false;
     return player?CurrentPlayer(c,t):CurrentTarget(c,t);
 }

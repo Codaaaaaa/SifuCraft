@@ -22,11 +22,32 @@ public final class WorldMotionRequestsTest {
     private static Command command(long id,int op,long now){return new Command(op,MACHINE,id,op==RESERVE?0:11,now,21,22,23,24,31,32,5,7,42,2,500,
         new SifuFrame.Vec3(10,20,90),new SifuFrame.Vec3(op==STEP?10:0,0,0),60,35,92,0,-1,64,5,0,.5f,op==DAMAGE?2:0,41,6,0,op==STEP?72:0);}
     private static Reply reply(Command c,int status){return new Reply(c.id(),c.op()==RESERVE?c.id():c.lease(),100,1100,c.world(),c.target(),c.spawn(),status,99,0,72,
-        ByteBuffer.wrap(encode(c)).order(ByteOrder.LITTLE_ENDIAN).getLong(200),c.position(),c.delta(),c.health(),0,c.shapeRevision());}
+        ByteBuffer.wrap(encode(c)).order(ByteOrder.LITTLE_ENDIAN).getLong(COMMAND_BYTES-8),c.position(),c.delta(),c.health(),0,c.shapeRevision());}
     private static void lost(CompletableFuture<Reply> result,boolean maybe){
         try{result.join();throw new AssertionError("expected transport loss");}catch(CompletionException e){check(e.getCause() instanceof WorldMotionRequests.Lost l&&l.mayHaveExecuted()==maybe,"transport loss execution certainty");}
     }
-    public static void main(String[] ignored){
+    private static void independentWorker()throws Exception{
+        var queue=new java.util.concurrent.ConcurrentLinkedQueue<Reply>();
+        var publishedOn=new java.util.concurrent.atomic.AtomicReference<Thread>();
+        var closed=new java.util.concurrent.atomic.AtomicBoolean();
+        var transport=new WorldMotionRequests.Transport(){
+            public boolean publish(Command c,long now){publishedOn.set(Thread.currentThread());queue.add(reply(c,2));return true;}
+            public Reply poll(){return queue.poll();}
+            public WorldMotionMailbox.NativeStatus status(long now){return new WorldMotionMailbox.NativeStatus(1,now,7,0,19,5);}
+            public void close(){closed.set(true);}
+        };
+        var broker=new WorldMotionRequests((mc,nativeSession)->transport);var scope=new WorldMotionRequests.Scope(1,2,7,31,32);
+        java.util.function.LongSupplier clock=()->System.nanoTime()/1000000;
+        broker.attach(scope);broker.start(clock);
+        try{
+            var first=broker.request(scope,id->command(id,STEP,clock.getAsLong()));
+            var second=first.thenCompose(r->broker.request(scope,id->command(id,STEP,clock.getAsLong())));
+            check(second.get(2,java.util.concurrent.TimeUnit.SECONDS).status()==2,"world IPC and chained physics requests finish while the caller never pumps a render frame");
+            check(publishedOn.get()!=Thread.currentThread()&&publishedOn.get().getName().equals("SifuCraft world IPC"),"the mailbox is pumped by its dedicated worker");
+        }finally{broker.close();}
+        check(closed.get()&&broker.pending()==0,"worker shutdown closes its own mapping and drains scope obligations");
+    }
+    public static void main(String[] ignored)throws Exception{
         var transport=new Fake();var broker=new WorldMotionRequests((mc,nativeSession)->transport);
         var scope=new WorldMotionRequests.Scope(1,2,7,31,32);broker.attach(scope);
         var first=broker.request(scope,id->command(id,RESERVE,1000));broker.pump(1000);
@@ -85,6 +106,6 @@ public final class WorldMotionRequestsTest {
         for(long now=22000;now<=23500;now+=100)pausedBroker.pump(now);
         lost(unpublished,false);check(pausedBroker.pending()==0,"unpublished stop cannot acquire indefinite paused lifetime");
         pausedTransport.room=true;var scoped=pausedBroker.request(scope,id->command(id,CANCEL,24000));pausedBroker.pump(24000);pausedBroker.pump(24100);pausedBroker.close();lost(scoped,true);
-        broker.close();full.close();timeout.close();System.out.println("World motion requests PASS "+checks+" assertions");
+        broker.close();full.close();timeout.close();independentWorker();System.out.println("World motion requests PASS "+checks+" assertions");
     }
 }

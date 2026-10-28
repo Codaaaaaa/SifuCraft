@@ -7,7 +7,7 @@ import static java.lang.foreign.ValueLayout.JAVA_FLOAT;
 import java.lang.foreign.MemorySegment;
 import java.lang.invoke.VarHandle;
 
-/** Client-thread IPC only. A full ring returns backpressure and retains every unconsumed packet. */
+/** Broker-serialized IPC. A full ring returns backpressure and retains every unconsumed packet. */
 public final class WorldMotionMailbox implements WorldMotionRequests.Transport {
     private static final VarHandle INT=JAVA_INT.varHandle(),LONG=JAVA_LONG.varHandle();
     private final SharedMapping mapping;

@@ -62,6 +62,10 @@ public final class EnemyMirrors {
 
     public static void tick(MinecraftServer server) {
         View view = requested;
+        var live=dev.sifucraft.blocks.WorldMotionWorld.current();
+        if(view!=null&&live!=null&&live.enemies()!=null&&live.scope().nativeSession()==view.enemies.session()&&
+                live.scope().world()==view.enemies.worldGeneration()&&live.placement().equals(view.placement))
+            view=new View(live.enemies(),view.placement,view.player,view.playerReady);
         long now = System.currentTimeMillis();
         if (view == null || now - view.enemies.receivedMs() > STALE_MS) {
             clear();
@@ -85,7 +89,7 @@ public final class EnemyMirrors {
             return true;
         });
         for (var incoming : enemies.entries()) {
-            var enemy=FluidMotion.pose(enemies,dev.sifucraft.blocks.PistonMachines.pose(enemies,incoming));
+            var enemy=BoatPassengers.pose(enemies,FluidMotion.pose(enemies,dev.sifucraft.blocks.PistonMachines.pose(enemies,incoming)));
             if (!enemy.alive()) continue;
             EnemyProxy proxy = proxies.get(enemy.key());
             if (proxy == null) {

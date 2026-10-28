@@ -45,6 +45,12 @@ public final class WorldMotionProtocolTest {
         check(encode(sample(RENEW,FLUID,SifuFrame.Vec3.ZERO,500,0,42,2)).length==COMMAND_BYTES,"bounded fresh fluid heartbeat");
         check(encode(sample(RENEW,EXPLOSION,SifuFrame.Vec3.ZERO,500,0,42,2)).length==COMMAND_BYTES,"bounded independent explosion heartbeat");
         check(encode(sample(STEP,EXPLOSION,new SifuFrame.Vec3(6,0,6),0,0,42,2)).length==COMMAND_BYTES,"explosion keeps bounded original 3D direction");
+        var poseCommand=sample(STEP,PASSENGER,SifuFrame.Vec3.ZERO,0,0,42,2);
+        var facingCommand=new Command(poseCommand.op(),poseCommand.source(),poseCommand.id(),poseCommand.lease(),poseCommand.issuedMs(),poseCommand.sourceHi(),poseCommand.sourceLo(),poseCommand.action(),poseCommand.tick(),poseCommand.save(),poseCommand.map(),poseCommand.shapeRevision(),poseCommand.world(),poseCommand.target(),poseCommand.spawn(),poseCommand.durationMs(),poseCommand.position(),poseCommand.delta(),poseCommand.health(),poseCommand.radius(),poseCommand.halfHeight(),poseCommand.flags(),poseCommand.blockX(),poseCommand.blockY(),poseCommand.blockZ(),poseCommand.progress(),poseCommand.nextProgress(),poseCommand.amount(),poseCommand.stateHash(),poseCommand.sectionRevision(),poseCommand.actorStamp(),poseCommand.componentToken(),-175.5f);
+        check(Arrays.equals(encode(facingCommand),fixture("world_motion_passenger_command.hex")),"independent C++/Java signed passenger heading golden");
+        check(encode(poseCommand).length==COMMAND_BYTES,"passenger permits a bounded rotation without invented displacement");
+        var corruptFacing=encode(poseCommand);var facingBytes=java.nio.ByteBuffer.wrap(corruptFacing).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        check(facingBytes.getFloat(200)==0&&facingBytes.getInt(204)==0&&facingBytes.getLong(208)==hash(corruptFacing,208),"explicit passenger facing, reserved field and full command digest offsets");
         invalid(()->encode(sample(RENEW,MACHINE,SifuFrame.Vec3.ZERO,500,0,42,2)));
         invalid(()->encode(sample(RENEW,FLUID,SifuFrame.Vec3.ZERO,0,0,42,2)));
         invalid(()->encode(sample(RENEW,FLUID,new SifuFrame.Vec3(1,0,0),500,0,42,2)));

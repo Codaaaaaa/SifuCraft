@@ -5,17 +5,18 @@
 #include "bridge/world_motion_mailbox.h"
 #include "bridge/shape_reader.h"
 #include "combat/world_motion_engine.h"
+#include "combat/explosion_ledger.h"
 #include "core/log.h"
 
 // Test-only AABB endpoint. It runs the SAME arbiter/mailbox as Native, never game actor APIs.
 namespace sifucraft::world_motion::fake {
 class Harness {
-    struct Actor {std::uint32_t id=0,spawn=1;Body body;};
+    struct Actor {std::uint32_t id=0,spawn=1;Body body;float facing=180;};
     class Endpoint final:public Backend {
     public:
         Harness* owner=nullptr;Actor* actor=nullptr;
         bool Bind(const Command& command,Body* out)override{
-            for(auto& candidate:owner->actors_)if(candidate.id==command.target&&candidate.spawn==command.spawn){actor=&candidate;*out=actor->body;return true;}
+            for(auto& candidate:owner->actors_)if(candidate.id==command.target&&candidate.spawn==command.spawn){actor=&candidate;*out=actor->body;return command.source!=Source::Explosion||owner->explosions_.Motion(command,actor->body.serial);}
             return false;
         }
         bool Check(Body* out)override{if(!actor)return false;*out=actor->body;return true;}
@@ -44,10 +45,16 @@ class Harness {
         }
         Effect Hurt(const Command& c)override{
             for(auto& target:owner->actors_)if(target.id==c.target&&target.spawn==c.spawn){
+                Effect result;const bool blast=ExplosionLedger::DamageType(c.action);
+                if(blast){const auto claim=owner->explosions_.Begin(c,&result);if(claim==ExplosionLedger::Decision::Cached)return result;if(claim!=ExplosionLedger::Decision::Fresh)return {Status::Conflict};}
                 target.body.health=std::max(0.f,target.body.health-c.amount*3);
-                return {Status::Applied,true,target.body.serial,target.body.health,target.body.position,0};
+                result={Status::Applied,true,target.body.serial,target.body.health,target.body.position,0};if(blast)owner->explosions_.Complete(c,result);return result;
             }
             return {Status::TargetLost};
+        }
+        Sweep MovePose(const Body& before,const std::array<float,3>& delta,float facing)override{
+            if(!actor||!std::isfinite(facing)||std::fabs(std::remainder(facing-actor->facing,360.f))>15.001f)return {before};
+            auto result=Move(before,delta);if(result.invoked)actor->facing=facing;return result;
         }
         void Forget()override{actor=nullptr;}
     };
@@ -55,6 +62,7 @@ class Harness {
     std::array<Endpoint,2> backends_{};
     std::array<Backend*,2> Pointers(){std::array<Backend*,2> out{};for(unsigned i=0;i<2;++i){backends_[i].owner=this;out[i]=&backends_[i];}return out;}
     Fleet<2> fleet_{Pointers()};Mailbox mailbox_;
+    ExplosionLedger explosions_;
     const shape_data::Frame* shapes_=nullptr;
     bool initialized_=false;unsigned calls_=0;
     float ceiling_=0;bool ceiling_all_=false;
@@ -70,12 +78,12 @@ public:
         shapes_=&shapes;const bool ready=mc&&shapes.header.revision&&shapes.source_mc==mc&&shapes.header.world==world;
         const auto map=ready?shape_data::Hash(shapes.header.map,std::strlen(shapes.header.map)):0;
         Environment env{native,mc,ready?shapes.header.save_key:0,map,ready?shapes.header.revision:0,frame,world,flags,ready,true};
-        fleet_.Update(env,now);
+        explosions_.World(native,world);fleet_.Update(env,now);
         if(!flags)for(unsigned i=0;i<2;++i)for(auto part:{1u,2u,4u})fleet_.at(i).Original(part); // simulated original ticks, never UE hooks
         fleet_.Update(env,now);
         if(!mc){mailbox_.Close();replies_.clear();return;}
         if(!mailbox_.Open(mc,native))return;
-        mailbox_.Status(world,ready?(kMotionCapability|kDamageCapability|kPauseCapability):0,now,73,env.revision,flags);
+        mailbox_.Status(world,ready?(kMotionCapability|kDamageCapability|kPauseCapability|kExplosionCapability|kPassengerCapability):0,now,73,env.revision,flags);
         while(!replies_.empty()&&mailbox_.Write(replies_.front()))replies_.pop_front();
         if(replies_.size()<32&&mailbox_.CanReply())for(unsigned n=0;n<8;++n){
             Command command;bool valid;if(!mailbox_.Read(&command,&valid))break;
@@ -87,7 +95,7 @@ public:
     }
     std::vector<protocol::EnemyEntry> Entries()const{
         std::vector<protocol::EnemyEntry> out;
-        for(const auto& a:actors_)out.push_back({a.id,a.spawn,{a.body.position[0],a.body.position[1],a.body.position[2]},180,a.body.radius,a.body.half,a.body.health,60,
+        for(const auto& a:actors_)out.push_back({a.id,a.spawn,{a.body.position[0],a.body.position[1],a.body.position[2]},a.facing,a.body.radius,a.body.half,a.body.health,60,
             protocol::kEnemyAlive|protocol::kEnemyCanDie,1,{},0});
         return out;
     }

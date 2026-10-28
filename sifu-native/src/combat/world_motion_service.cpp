@@ -138,6 +138,13 @@ public:
         Body body;const bool anchor=Convert(sample_,&body);
         return {body,result.invoked,valid&&anchor,result.returned,result.blocking,result.penetrating,{result.normal.x,result.normal.y,result.normal.z}};
     }
+    Sweep MovePose(const Body&,const std::array<float,3>& delta,float facing)override {
+        motion::SweepResult result;
+        const bool valid=motion::SweepBody(g_current.actors,target_,sample_,{delta[0],delta[1],delta[2]},&result,false,&facing);
+        if(result.invoked)sample_=result.body;
+        Body body;const bool anchor=Convert(sample_,&body);
+        return {body,result.invoked,valid&&anchor,result.returned,result.blocking,result.penetrating,{result.normal.x,result.normal.y,result.normal.z}};
+    }
     Effect Hurt(const Command& c)override{
         Effect out;
         if(!combat::damage::WorldReady())return out;
@@ -260,7 +267,8 @@ void Exchange(Context context,Mailbox& mailbox) {
         g_player_publication.save==g_published.save&&g_player_publication.map==g_published.map&&g_player_publication.at<=now&&now-g_player_publication.at<=200&&
         input::Router().owner()==protocol::InputOwner::Sifu&&!hooks::PoseActive();
     const auto capabilities=changed?0ull:((g_ready.load()?kMotionCapability:0)|(g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kDamageCapability:0)|(settings_live?kPauseCapability:0)|(player_ready?(kPlayerMachineCapability|kPlayerFluidCapability):0)|
-        (g_explosion_room.load()&&g_ready.load()&&g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kExplosionCapability:0));
+        (g_explosion_room.load()&&g_ready.load()&&g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kExplosionCapability:0)|
+        (g_ready.load()&&g_published.enabled&&g_published.actors.enabled?kPassengerCapability:0));
     mailbox.Status(scope.generation,capabilities,now,stamp,blocks::ShapesAppliedRevision(),flags,player_ready?g_player_publication.info:PlayerInfo{});
     ReleaseSRWLockExclusive(&g_lock);
 }

@@ -29,6 +29,7 @@ public final class SifuCraftMod implements ModInitializer {
         // and real-capsule fixtures; letting it float this reference target away
         // would change the damage fixture's prescribed input.
         if(!Boolean.getBoolean("sifucraft.environmentDamageSelfTest"))ServerTickEvents.END_SERVER_TICK.register(dev.sifucraft.combat.FluidMotion::tick);
+        ServerTickEvents.END_SERVER_TICK.register(dev.sifucraft.combat.BoatPassengers::tick);
         ServerTickEvents.START_SERVER_TICK.register(dev.sifucraft.blocks.PlayerSignalContacts::tick);
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.blocks.PlayerSignalContacts.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> EnemyMirrors.stop());
@@ -38,5 +39,6 @@ public final class SifuCraftMod implements ModInitializer {
         // membership available to the NBT mixin until the final save has ended.
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> dev.sifucraft.blocks.PistonActions.stop());
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.combat.FluidMotion.stop());
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> dev.sifucraft.combat.BoatPassengers.stop());
     }
 }

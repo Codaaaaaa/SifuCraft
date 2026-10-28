@@ -134,6 +134,11 @@ public final class McBridge implements AutoCloseable {
     private int blockGeneration;
     private EnemyFrame enemies;
     private long enemySeq;
+    private final Object observationLock=new Object();
+    private record ObservationSource(MemorySegment status,MemorySegment table){}
+    private ObservationSource observationSource;
+    private long observationSequence,observationSession;
+    private volatile EnemyFrame worldEnemies;
 
     public McBridge(Listener listener) {
         this.listener = listener;
@@ -175,6 +180,7 @@ public final class McBridge implements AutoCloseable {
         INT.setRelease(status, (long) Status.MAGIC, Protocol.MAGIC);
         self = status;
 
+        synchronized(observationLock){observationSource=new ObservationSource(peer,enemyTable);}
         heartbeatThread = Thread.ofPlatform().daemon().name("sifucraft-heartbeat").start(this::heartbeatLoop);
         listener.log(String.format("shared memory %s: %s (%d bytes) protocol v%d layout=%016X session=%016X",
                 mapping.created() ? "created" : "opened", Protocol.MAPPING_NAME, Protocol.MAPPING_SIZE,
@@ -269,8 +275,11 @@ public final class McBridge implements AutoCloseable {
                 Thread.currentThread().interrupt();
             }
         }
-        if (mapping != null) mapping.close();
-        mapping = null;
+        synchronized(observationLock){
+            observationSource=null;worldEnemies=null;observationSequence=observationSession=0;
+            if (mapping != null) mapping.close();
+            mapping = null;
+        }
         peerConnected = false;
         latest = null;
         enemies = null;
@@ -336,6 +345,28 @@ public final class McBridge implements AutoCloseable {
     }
 
     public EnemyFrame enemies() { return enemies; }
+    public EnemyFrame worldEnemies(){return worldEnemies;}
+    /** Dedicated world IPC worker: read-only seqlock sampling, no input/event/UI callbacks. */
+    public void sampleWorldObservations(){
+        synchronized(observationLock){
+            var source=observationSource;if(source==null)return;
+            var status=source.status;var table=source.table;
+            if((int)INT.getAcquire(status,(long)Status.MAGIC)!=Protocol.MAGIC||status.get(JAVA_INT,Status.VERSION)!=Protocol.VERSION||
+                getLongAcquire(status,Status.LAYOUT_HASH)!=Protocol.LAYOUT_HASH||(int)INT.getAcquire(status,(long)Status.STATE)!=Protocol.STATE_RUNNING){worldEnemies=null;return;}
+            long session=getLongAcquire(status,Status.SESSION);if(session==0){worldEnemies=null;return;}
+            for(int attempt=0;attempt<SEQLOCK_ATTEMPTS;attempt++){
+                long before=getLongAcquire(table,Protocol.Enemies.SEQ);
+                if(before==0)return;
+                if((before&1)!=0)continue;
+                if(before==observationSequence&&session==observationSession)return; // never manufacture a fresh observation timestamp
+                byte[] bytes=table.toArray(JAVA_BYTE);VarHandle.loadLoadFence();
+                if(getLongAcquire(table,Protocol.Enemies.SEQ)!=before||getLongAcquire(status,Status.SESSION)!=session)continue;
+                try{worldEnemies=EnemyFrame.decode(session,MemorySegment.ofArray(bytes),System.currentTimeMillis());}
+                catch(IllegalArgumentException e){worldEnemies=null;}
+                observationSequence=before;observationSession=session;return;
+            }
+        }
+    }
 
     public Stats stats() {
         return stats;

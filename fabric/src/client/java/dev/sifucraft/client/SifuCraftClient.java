@@ -114,6 +114,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private CatalogModelCheck catalogModelCheck;
     private CatalogLogicCheck catalogLogicCheck;
     private CircuitScaleCheck circuitScaleCheck;
+    private NativeBoatCheck nativeBoatCheck;
     private EnvironmentDamageCheck environmentDamageCheck;
     private NativePauseCheck nativePauseCheck;
     private FluidMotionCheck fluidMotionCheck;
@@ -222,6 +223,8 @@ public final class SifuCraftClient implements ClientModInitializer {
         });
         try {
             bridge.start();
+            worldMotion.start(bridge::sampleWorldObservations);
+            dev.sifucraft.blocks.WorldMotionWorld.observe(bridge::worldEnemies);
         } catch (RuntimeException | LinkageError e) {
             LOG.error("bridge unavailable, SifuCraft stays inactive", e);
             bridge = null;
@@ -376,6 +379,10 @@ public final class SifuCraftClient implements ClientModInitializer {
             circuitScaleCheck=new CircuitScaleCheck();ServerTickEvents.START_SERVER_TICK.register(circuitScaleCheck::beginTick);
             ServerTickEvents.END_SERVER_TICK.register(circuitScaleCheck::tick);ServerLifecycleEvents.SERVER_STOPPING.register(circuitScaleCheck::restore);
         }
+        if(Boolean.getBoolean("sifucraft.nativeBoatSelfTest")){
+            nativeBoatCheck=new NativeBoatCheck();ServerTickEvents.END_SERVER_TICK.register(nativeBoatCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(nativeBoatCheck::restore);
+        }
         if(Boolean.getBoolean("sifucraft.catalogLogicSelfTest")){
             catalogLogicCheck=new CatalogLogicCheck();ServerTickEvents.END_SERVER_TICK.register(catalogLogicCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(catalogLogicCheck::restore);
@@ -486,6 +493,7 @@ public final class SifuCraftClient implements ClientModInitializer {
             worldLayers.close();
             blockShapes.close();
             dev.sifucraft.blocks.WorldMotionWorld.offer(null);
+            dev.sifucraft.blocks.WorldMotionWorld.observe(null);
             dev.sifucraft.blocks.SceneFluidGeometry.publish(false,true,null);
             worldMotion.close();
             collision.close();
@@ -691,6 +699,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(catalogModelCheck!=null)catalogModelCheck.tick(minecraft,guiAvailable(frame));
         if(catalogLogicCheck!=null)catalogLogicCheck.clientTick(minecraft,guiAvailable(frame));
         if(circuitScaleCheck!=null)circuitScaleCheck.clientTick(minecraft,frame,blockShapes.metrics());
+        if(nativeBoatCheck!=null)nativeBoatCheck.clientTick(minecraft);
         if(environmentDamageCheck!=null)environmentDamageCheck.clientTick(minecraft,frame);
         if(nativePauseCheck!=null)nativePauseCheck.clientTick(minecraft);
         if(fluidMotionCheck!=null)fluidMotionCheck.clientTick(minecraft);
@@ -982,7 +991,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         long save=dev.sifucraft.bridge.ShapeProtocol.mapHash(server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize().toString());
         var scope=new dev.sifucraft.bridge.WorldMotionRequests.Scope(bridge.session(),bridge.peerSession(),frame.worldGeneration(),save==0?1:save,
             dev.sifucraft.bridge.ShapeProtocol.mapHash(placement.map()));
-        worldMotion.attach(scope);worldMotion.pump(dev.sifucraft.bridge.WorldWriter.clockMillis());
+        worldMotion.attach(scope);
         dev.sifucraft.blocks.WorldMotionWorld.offer(new dev.sifucraft.blocks.WorldMotionWorld.View(worldMotion,scope,placement,
             bridge.enemies(),SifuCollision.active(),worldMotion.status(),blockShapes.geometry()));
     }

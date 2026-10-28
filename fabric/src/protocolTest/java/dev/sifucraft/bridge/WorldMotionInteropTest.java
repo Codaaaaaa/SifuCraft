@@ -34,14 +34,14 @@ public final class WorldMotionInteropTest {
                 var reply=mailbox.poll();
                 if(reply!=null){
                     received++;check(reply.id()==received&&reply.status()==11&&reply.target()==42&&reply.spawn()==2,"ordered reliable C++ receipt");
-                    check(reply.sourceHash()==hash(encode(command(received)),200),"native receipt matches exact submitted payload");
+                    check(reply.sourceHash()==hash(encode(command(received)),COMMAND_BYTES-8),"native receipt matches exact submitted payload");
                 }else Thread.sleep(1);
             }
             check(sent==64&&received==64&&statusSeen,"all cross-process commands and receipts retained");
             check(mailbox.publish(command(1),WorldWriter.clockMillis()),"retransmit completed request with same identity");
             Reply duplicate=null;long retryEnd=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
             while(duplicate==null&&System.nanoTime()<retryEnd){duplicate=mailbox.poll();if(duplicate==null)Thread.sleep(1);}
-            check(duplicate!=null&&duplicate.id()==1&&duplicate.sourceHash()==hash(encode(command(1)),200),"retransmit receives cached completion");
+            check(duplicate!=null&&duplicate.id()==1&&duplicate.sourceHash()==hash(encode(command(1)),COMMAND_BYTES-8),"retransmit receives cached completion");
             check(child.waitFor(5,TimeUnit.SECONDS)&&child.exitValue()==0,"Native helper normal exit");
             check(Files.readString(report.resolve("native-echo.log")).contains("packets=65 unique_handlers=64"),"one retransmit never repeats a handler");
             System.out.println("World motion interop PASS: 64 commands/receipts + exact cached retry, real OS mapping, both-ring backpressure, no game access");

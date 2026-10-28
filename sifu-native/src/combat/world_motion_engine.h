@@ -39,6 +39,7 @@ public:
     virtual bool Observe(Body* body){return Check(body);} // final original-Tick pose, without requiring an idle AI
     virtual bool SupportsPlayer(Source)const{return false;}
     virtual Sweep Move(const Body&,const std::array<float,3>&)=0;
+    virtual Sweep MovePose(const Body& body,const std::array<float,3>&,float){Sweep result;result.body=body;return result;}
     virtual Effect Hurt(const Command&){return {};}
     // Clears only this service's filters. It never rewrites an actor's old pose/state.
     virtual void Forget()=0;
@@ -153,7 +154,8 @@ public:
         if(command.source==Source::Machine&&spent_+requested>101.0001) {Reject(command,Status::Invalid,now);BeginRelease(Status::Invalid);return true;}
         // Book the request before the engine call. A partial sweep never refunds or retries it.
         spent_+=requested;last_tick_=command.tick;last_progress_=command.progress;
-        const auto moved=backend_.Move(current,{command.delta[0],command.delta[1],command.delta[2]});
+        const std::array<float,3> delta_request{command.delta[0],command.delta[1],command.delta[2]};
+        const auto moved=command.source==Source::Passenger?backend_.MovePose(current,delta_request,command.facing):backend_.Move(current,delta_request);
         std::array<float,3> delta{};
         if(moved.invoked)for(int i=0;i<3;++i)delta[i]=moved.body.position[i]-current.position[i];
         auto status=Status::Applied;

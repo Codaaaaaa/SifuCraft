@@ -12,12 +12,13 @@ void Require(bool value,const char* label){++checks;if(!value){std::fprintf(stde
 struct Fake final:Backend {
     Body body{19,818,{0,0,90},60,30,90};
     int binds=0,moves=0,forgets=0,hurts=0;bool valid=true,bind=true,block=false,penetrate=false,returned=true,read=true,effects=false;
-    float fraction=1;bool invoked=true,player=false,player_fluid=false;
+    float fraction=1,last_facing=0;bool invoked=true,player=false,player_fluid=false;
     std::array<float,3> normal{};
     bool Bind(const Command& c,Body* out)override{++binds;*out=body;return bind&&(!(c.flags&kPlayer)||c.actor_stamp==((73ull<<32)|static_cast<std::uint32_t>(body.serial)));}
     bool SupportsPlayer(Source source)const override{return player&&(source==Source::Machine||(player_fluid&&source==Source::Fluid));}
     bool Check(Body* out)override{*out=body;return valid;}
     Sweep Move(const Body&,const std::array<float,3>& d)override{++moves;if(invoked)for(int i=0;i<3;++i)body.position[i]+=d[i]*fraction;return {body,invoked,read,returned,block,penetrate,normal};}
+    Sweep MovePose(const Body& b,const std::array<float,3>& d,float facing)override{last_facing=facing;return Move(b,d);}
     Effect Hurt(const Command& c)override{if(!effects)return {};hurts++;body.health=std::max(0.f,body.health-c.amount*3);return {Status::Applied,true,body.serial,body.health,body.position,0};}
     void Forget()override{++forgets;}
 };
@@ -270,6 +271,19 @@ void ExplosionEventIdentity(){
     ledger.World(100,2);Require(ledger.Begin(command,&result)==ExplosionLedger::Decision::Cached,"peer reconnect preserves the event ledger in the same native world");
     ledger.World(100,3);Require(ledger.Begin(command,&result)==ExplosionLedger::Decision::Fresh,"new world starts a new activation namespace");
 }
+void PassengerPose(){
+    Case c;auto reserve=c.CommandFor();reserve.source=Source::Passenger;c.Send(reserve);
+    for(auto part:{1u,2u,4u})c.engine.Original(part);c.Tick();c.Pop(Status::Prepared);
+    auto turn=c.CommandFor(Op::Step);turn.source=Source::Passenger;turn.delta[0]=0;turn.facing=15;
+    c.Send(turn);auto receipt=c.Pop(Status::Applied);
+    Require(c.backend.last_facing==15&&receipt.delta[0]==0&&c.backend.moves==1,"passenger yaw-only step uses the explicit pose backend without translation");
+    c.Send(turn);c.Pop(Status::Applied);Require(c.backend.moves==1,"replayed passenger rotation is not invoked twice");
+    auto seat=c.CommandFor(Op::Step);seat.source=Source::Passenger;seat.delta[0]=6;seat.delta[2]=6;seat.facing=30;
+    c.Send(seat);c.Pop(Status::Applied);Require(c.backend.last_facing==30&&c.backend.body.position[2]==96,"seat follow preserves requested yaw and vertical movement");
+    auto heartbeat=c.CommandFor(Op::Renew);heartbeat.source=Source::Passenger;c.Send(heartbeat);c.Pop(Status::Applied);
+    auto release=c.CommandFor(Op::Cancel);release.source=Source::Passenger;c.Send(release);c.Empty();c.Restore();c.Pop(Status::Cancelled);
+    Require(c.backend.body.position[0]==6&&c.backend.body.position[2]==96,"passenger release restores all originals without rewinding its seat pose");
+}
 void RenewalDuringPublication(){
     Case c;auto reserve=c.CommandFor();reserve.source=Source::Fluid;c.Send(reserve);
     for(auto part:{1u,2u,4u})c.engine.Original(part);
@@ -402,5 +416,5 @@ int main(){
     }
     Require(!TranslateFallOrigin(1e9f,-1e9f,1e9f,&origin),"reject unreasonable translated origin without writing");
     Require(!TranslateFallOrigin(90,90,90,nullptr),"reject missing cache output");
-    HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();UnexecutedCredits();Lifetime();PausedHandback();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();ExplosionMotion();ExplosionEventIdentity();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();PlayerMovementOnly();PlayerFluidAndPoseOwner();std::printf("world motion arbiter PASS %u assertions\n",checks);
+    HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();UnexecutedCredits();Lifetime();PausedHandback();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();ExplosionMotion();ExplosionEventIdentity();PassengerPose();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();PlayerMovementOnly();PlayerFluidAndPoseOwner();std::printf("world motion arbiter PASS %u assertions\n",checks);
 }

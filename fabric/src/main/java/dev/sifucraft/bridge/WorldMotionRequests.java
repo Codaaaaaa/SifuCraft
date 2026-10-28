@@ -30,7 +30,7 @@ public final class WorldMotionRequests implements AutoCloseable {
     private static final class Pending {
         final Command command;final long hash;final CompletableFuture<Reply> result=new CompletableFuture<>();
         boolean published,attempted,paused;long lastSent,lastClock,suspended;
-        Pending(Command c){command=c;lastClock=c.issuedMs();hash=java.nio.ByteBuffer.wrap(encode(c)).order(java.nio.ByteOrder.LITTLE_ENDIAN).getLong(200);}
+        Pending(Command c){command=c;lastClock=c.issuedMs();hash=java.nio.ByteBuffer.wrap(encode(c)).order(java.nio.ByteOrder.LITTLE_ENDIAN).getLong(COMMAND_BYTES-8);}
     }
     private final Factory factory;
     private final LinkedHashMap<Long,Pending> pending=new LinkedHashMap<>();
@@ -40,6 +40,7 @@ public final class WorldMotionRequests implements AutoCloseable {
     private WorldMotionMailbox.NativeStatus status;
     private long replies,retries,invalid,expired,failures,nextOpen;
     private String lastFailure="";
+    private java.util.concurrent.ScheduledExecutorService worker;
     public WorldMotionRequests(){this((mc,nativeSession)->new WorldMotionMailbox(mc,nativeSession));}
     public WorldMotionRequests(Factory factory){this.factory=java.util.Objects.requireNonNull(factory);}
     public synchronized Scope scope(){return scope;}
@@ -48,6 +49,17 @@ public final class WorldMotionRequests implements AutoCloseable {
     public record Stats(long replies,long retries,long invalid,long expired,long failures){}
     public synchronized Stats stats(){return new Stats(replies,retries,invalid,expired,failures);}
     public synchronized String lastFailure(){return lastFailure;}
+    /** Production IPC is independent of render stalls; tests can still pump a deterministic clock. */
+    public void start(){start(()->{});}
+    public void start(Runnable observations){start(WorldWriter::clockMillis,observations);}
+    synchronized void start(java.util.function.LongSupplier clock){start(clock,()->{});}
+    private synchronized void start(java.util.function.LongSupplier clock,Runnable observations){
+        if(worker!=null)return;
+        worker=java.util.concurrent.Executors.newSingleThreadScheduledExecutor(task->{
+            var thread=new Thread(task,"SifuCraft world IPC");thread.setDaemon(true);return thread;
+        });
+        worker.scheduleWithFixedDelay(()->{observations.run();pump(clock.getAsLong());},0,5,java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
 
     /** Client thread only. Input ownership/anchor epoch is deliberately absent from this scope. */
     public void attach(Scope wanted){
@@ -75,7 +87,7 @@ public final class WorldMotionRequests implements AutoCloseable {
             var queued=new Pending(command);pending.put(command.id(),queued);return queued.result;
         }
     }
-    /** Client thread only. Future continuations run after releasing the broker lock. */
+    /** Serialized IPC pump. Future continuations run after releasing the broker lock. */
     public void pump(long now){
         if(!LiveTestFocus.allowed()){attach(null);return;}
         var done=new ArrayList<Runnable>();
@@ -126,5 +138,10 @@ public final class WorldMotionRequests implements AutoCloseable {
         done.forEach(Runnable::run);
     }
     private static void lose(List<Pending> lost,String reason){for(var p:lost)p.result.completeExceptionally(new Lost(reason,p.published));}
-    @Override public void close(){attach(null);}
+    @Override public void close(){
+        java.util.concurrent.ScheduledExecutorService old;
+        synchronized(this){old=worker;worker=null;}
+        if(old!=null)old.shutdownNow();
+        attach(null);
+    }
 }

@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <fstream>
+#include <filesystem>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -69,6 +70,16 @@ int main(int argc,char** argv){try{
         Seal(bad);Check(!Valid(bad),"malformed reserve with correct digest");
     }
     auto step=c;step.op=Op::Step;step.lease=71;step.component_token=72;step.delta[2]=10;Seal(step);Check(Valid(step),"bounded vertical machine step");
+    auto pose=c;pose.op=Op::Step;pose.source=Source::Passenger;pose.lease=71;pose.duration_ms=0;pose.component_token=72;pose.facing=-175.5;Seal(pose);
+    auto pose_file=(std::filesystem::path(argv[1]).parent_path()/"world_motion_passenger_command.hex").string();
+    auto pose_bytes=Hex(pose_file.c_str());Check(Valid(pose)&&pose_bytes.size()==sizeof(pose)&&std::memcmp(pose_bytes.data(),&pose,sizeof(pose))==0,"independent passenger pose golden includes signed heading and full digest");
+    for(int failure=0;failure<4;++failure){auto bad=pose;
+        if(failure==0)bad.facing=std::numeric_limits<float>::quiet_NaN();
+        if(failure==1)bad.facing=180.001;
+        if(failure==2)bad.reserved=1;
+        if(failure==3)bad.source=Source::Fluid;
+        Seal(bad);Check(!Valid(bad),"malformed or wrong-source pose command cannot reach actor APIs");
+    }
     step.delta[2]=10.1f;Seal(step);Check(!Valid(step),"oversized step");step.delta[2]=6;step.delta[0]=6;Seal(step);Check(!Valid(step),"machine axis mismatch");
     step.source=Source::Fluid;Seal(step);Check(Valid(step),"bounded three dimensional fluid step");step.delta[1]=6;Seal(step);Check(!Valid(step),"diagonal length limit");
     auto damage=c;damage.op=Op::Damage;damage.source=Source::WorldEffect;damage.amount=3;Seal(damage);Check(Valid(damage),"scoped world damage packet");

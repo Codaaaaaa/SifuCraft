@@ -33,7 +33,7 @@ const char* CheckWorld(std::uintptr_t base,const Context& context,std::uint64_t 
 const char* CheckBody(const Context& context,const Target& target,BodySample* sample,bool geometry,bool ground=true);
 const char* CheckPlayerBody(const Context& context,const Target& target,BodySample* sample,bool geometry);
 const char* CheckPeers(std::uintptr_t base,const Context& context,const Target& target,Peers* peers,bool idle);
-bool SweepBody(const Context& context,const Target& target,const BodySample& before,const ue::FVector& delta,SweepResult* result,bool player=false);
+bool SweepBody(const Context& context,const Target& target,const BodySample& before,const ue::FVector& delta,SweepResult* result,bool player=false,const float* facing=nullptr);
 void Configure(bool enabled,bool ai_enabled=false);
 void UpdateContext(Context context); // runtime thread, includes local diagnostic file polling
 void ApplyOnGameThread(std::uintptr_t image_base);
