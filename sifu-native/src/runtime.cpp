@@ -400,7 +400,7 @@ std::string MapName(const std::string& world_path) {
 class CollisionSchedule {
 public:
     void Update(std::uintptr_t world, std::uint32_t generation, const std::string& world_path, std::uintptr_t pawn,
-                const bridge::PlayerFrame& frame, std::uint64_t now_ms) {
+                const bridge::PlayerFrame& frame, std::uint64_t now_ms, bool diagnostic_census) {
         if (!world || !pawn) return;
         UpdateReferenceResponses(pawn);
         const auto levels = collision::VisibleLevelSignature(world);
@@ -414,8 +414,13 @@ public:
         if (!done_ && now_ms - stable_since_ms_ >= kStableMs) {
             if (!have_reference_) return;  // the pawn's normal collision has not been seen yet
             done_ = true;
-            probe::LogCollisionCensus(world, pawn);
-            probe::LogBlockCensus(world, pawn);
+            // Full read-only object/material surveys take hundreds of ms and
+            // starve the 200ms world-context publication and 500ms NPC leases.
+            // Collision extraction is required; diagnostic inventories are opt-in.
+            if (diagnostic_census) {
+                probe::LogCollisionCensus(world, pawn);
+                probe::LogBlockCensus(world, pawn);
+            }
             const ULONGLONG start = GetTickCount64();
             collision::BuildRequest request;
             request.shapes = collision::ExtractShapes(world, reference_, PawnWalkableFloorZ(pawn));
@@ -1019,7 +1024,7 @@ void Run(std::uintptr_t image_base) {
 
         if (world && tick % kCollisionCheckEveryTicks == 0) {
             const std::uintptr_t pawn = player.pawn ? player.pawn : probe::FindPlayerObjects(world).pawn;
-            collision_schedule.Update(world, generation, world_path, pawn, frame, GetTickCount64());
+            collision_schedule.Update(world, generation, world_path, pawn, frame, GetTickCount64(), settings.collision_census);
         }
         if (world && tick % kWalkCheckEveryTicks == 0) {
             collision_schedule.Check(generation, player.pawn ? player : probe::FindPlayerObjects(world), frame);

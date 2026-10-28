@@ -35,6 +35,7 @@ Settings Load() {
     settings.npc_motion_probe = settings.stage >= 10 && Exists(root + L"\\npc-motion-probe");
     settings.npc_ai_probe = settings.stage >= 10 && Exists(root + L"\\npc-ai-probe");
     settings.player_world_observe = settings.stage >= 10 && Exists(root + L"\\player-world-observe");
+    settings.collision_census = settings.stage == 0 || Exists(root + L"\\collision-census");
     SC_LOG("config: rollout stage %d%s", settings.stage, settings.no_hooks ? " (no-hooks file present)" : "");
     return settings;
 }
