@@ -83,6 +83,7 @@ public final class EnemyMirrors {
         for (var enemy : enemies.entries()) if (enemy.alive()) wanted.add(enemy.key());
         proxies.entrySet().removeIf(entry -> {
             if (wanted.contains(entry.getKey()) && !entry.getValue().isRemoved()) return false;
+            if(BoatPassengers.holds(entry.getKey()))LOG.info("[boat-passenger] mirror removed target={} wanted={} removed={} table_frame={} table_keys={}",entry.getKey(),wanted.contains(entry.getKey()),entry.getValue().isRemoved(),enemies.frame(),wanted);
             entry.getValue().discard();
             removed++;
             if (loggedDetails++ < 200) LOG.info("[combat] proxy removed {}", entry.getKey());

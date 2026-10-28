@@ -191,5 +191,6 @@ public final class WorldEffects {
                 if(logged++<80)LoggerFactory.getLogger("sifucraft").info("[world-effects] type={} target={}/{} mc_final={} receipt={} native_HP={} error={}",proof.type,entry.id(),entry.spawn(),amount,reply==null?-1:reply.status(),reply==null?-1:reply.health(),error==null?"":error.toString());
             }));
         SceneExplosions.damageSubmitted(proxy,source,future);
+        if(SceneExplosions.proof(proxy,source)!=null)BoatPassengers.damageSubmitted(proxy,view,future);
     }
 }

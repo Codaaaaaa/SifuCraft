@@ -48,19 +48,39 @@ public final class PistonPreview {
         final ServerLevel level;final Map<EnemyFrame.Key,PistonMotionLimit.State> budgets;
         final Map<EnemyFrame.Key,Reply> bindings;
         final IdentityHashMap<Entity,Shadow> bodies=new IdentityHashMap<>();final List<Move> moves=new ArrayList<>();
+        final java.util.Set<Entity> vehicleCarried=java.util.Collections.newSetFromMap(new IdentityHashMap<>());
         Session(ServerLevel level,Map<EnemyFrame.Key,PistonMotionLimit.State> budgets,Map<EnemyFrame.Key,Reply> bindings){this.level=level;this.budgets=budgets;this.bindings=bindings;}
         Shadow body(Entity e){if(bodies.size()>=4096&&!bodies.containsKey(e))throw new IllegalStateException("piston preview capacity");return bodies.computeIfAbsent(e,x->new Shadow(x,budgets,bindings));}
         void move(PistonContacts.Move capability){
             if(!capability.live()||capability.entity.level()!=level)throw new IllegalStateException("piston preview requires live vanilla source");
+            var e=capability.entity;if(vehicleCarried.contains(e))return;
+            moveBody(e,capability.source(),capability.requested);
+            if(e instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat boat){
+                var vehicle=body(boat);
+                for(var rider:boat.getPassengers())if(rider instanceof EnemyProxy proxy&&NativeMotionSubjects.current(proxy)&&dev.sifucraft.combat.BoatPassengers.holds(proxy.sifuKey())){
+                    if(vehicleCarried.add(proxy)){
+                        moves.removeIf(m->m.entity().equals(proxy.getUUID()));
+                        bodies.put(proxy,new Shadow(proxy,budgets,bindings));
+                    }
+                    var passenger=body(proxy);
+                    // Vanilla will restore the seat after its direct rider push.
+                    // Plan that final vehicle displacement once, under this same
+                    // frozen scene and live piston no-clip/source context.
+                    var wanted=passenger.initial.add(vehicle.position.subtract(vehicle.initial));
+                    moveBody(proxy,capability.source(),wanted.subtract(passenger.position));
+                }
+            }
+        }
+        private void moveBody(Entity e,PistonContacts.Source source,Vec3 requested){
             if(moves.size()>=4096)throw new IllegalStateException("piston preview contact capacity");
-            var e=capability.entity;var b=body(e);var requested=capability.requested;var before=b.box;
+            var b=body(e);var before=b.box;
             Vec3 limited=requested,collided=requested;
             if(!e.noPhysics||NativeMotionSubjects.key(e)!=null){
                 var limit=PistonMotionLimit.plan(b.budget,level.getGameTime(),requested);b.budget=limit.state();limited=limit.limited();
                 collided=Entity.collideBoundingBox(e,limited,b.box,level,level.getEntityCollisions(e,b.box.expandTowards(limited)));
             }
             b.position=b.position.add(collided);b.box=b.box.move(collided);
-            moves.add(new Move(capability.source(),e.getUUID(),NativeMotionSubjects.key(e),before,requested,limited,collided,b.velocity,b.budget));
+            moves.add(new Move(source,e.getUUID(),NativeMotionSubjects.key(e),before,requested,limited,collided,b.velocity,b.budget));
         }
         Result result(){return new Result(moves,bodies.entrySet().stream().map(e->{var b=e.getValue();return new Body(e.getKey().getUUID(),
             NativeMotionSubjects.key(e.getKey()),b.initial,b.position,b.velocity,b.box,b.budget);}).toList());}
@@ -91,13 +111,22 @@ public final class PistonPreview {
      * before any queued export/save task can run. It sends no block updates. */
     static Result group(ServerLevel level,List<net.minecraft.world.level.block.piston.PistonMovingBlockEntity> pistons,SifuCollision.Active scene,
                         Map<EnemyFrame.Key,PistonMotionLimit.State> budgets,UUID source,Map<EnemyFrame.Key,Reply> bindings){
+        return group(level,pistons,scene,budgets,source,bindings,.5f);
+    }
+    /** Ownership lookahead only. Movement still uses the ordinary half-step preview and limiter. */
+    static Result remaining(ServerLevel level,List<PistonMovingBlockEntity> pistons,SifuCollision.Active scene,
+                            Map<EnemyFrame.Key,PistonMotionLimit.State> budgets,UUID source){
+        return group(level,pistons,scene,budgets,source,Map.of(),1);
+    }
+    private static Result group(ServerLevel level,List<PistonMovingBlockEntity> pistons,SifuCollision.Active scene,
+                                Map<EnemyFrame.Key,PistonMotionLimit.State> budgets,UUID source,Map<EnemyFrame.Key,Reply> bindings,float advance){
         if(!level.getServer().isSameThread())throw new IllegalStateException("piston group preview requires server thread");
         var session=new Session(level,Map.copyOf(budgets),Map.copyOf(bindings));var capture=PistonContacts.Capture.preview(level,source,session::move);var previous=CURRENT.get();
         var progress=new IdentityHashMap<PistonMovingBlockEntity,float[]>();
         for(var piston:pistons){if(level.getBlockEntity(piston.getBlockPos())!=piston||piston.isRemoved())throw new IllegalArgumentException("registered group member required");progress.put(piston,new float[]{piston.getProgress(1),piston.getProgress(0)});}
         CURRENT.set(session);
         try{
-            Runnable action=()->capture.run(()->{for(var piston:pistons){float before=piston.getProgress(1);if(before>=1)continue;float next=Math.min(1,before+.5f);
+            Runnable action=()->capture.run(()->{for(var piston:pistons){float before=piston.getProgress(1);if(before>=1)continue;float next=Math.min(1,before+advance);
                 var pos=piston.getBlockPos();PistonAccess.sifucraft$collide(level,pos,next,piston);PistonAccess.sifucraft$carry(level,pos,next,piston);
                 var access=(PistonAccess)piston;access.sifucraft$previousProgress(before);access.sifucraft$progress(next);
             }});

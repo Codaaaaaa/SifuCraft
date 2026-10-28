@@ -57,8 +57,9 @@ public:
     explicit Engine(Backend& backend,Ledger* shared=nullptr):backend_(backend),owned_(shared?nullptr:std::make_unique<Ledger>()),ledger_(shared?shared:owned_.get()){}
     void Update(Environment environment,std::uint64_t now) {
         const bool peer=env_.native!=environment.native||env_.peer!=environment.peer;
-        if(peer) {backend_.Forget();phase_=Phase::Free;if(owned_)ledger_->Reset();out_.clear();reserve_.reset();release_.reset();}
+        if(peer) {backend_.Forget();phase_=Phase::Free;terminal_valid_=false;if(owned_)ledger_->Reset();out_.clear();reserve_.reset();release_.reset();}
         env_=environment;
+        if(terminal_valid_&&(!Scope(source_)||now>terminal_until_))terminal_valid_=false;
         if(phase_==Phase::Free)return;
         if(!Scope(source_)||!env_.ready||env_.flags)BeginRelease(Status::TargetLost);
         else if(now>=deadline_)BeginRelease(Status::TimedOut);
@@ -80,7 +81,8 @@ public:
         }
         const bool restore_timeout=phase_==Phase::Releasing&&!(env_.flags&kPaused)&&now>=restore_deadline_;
         const bool await_pose_ack=phase_==Phase::Releasing&&player_handoff_&&!release_&&now<restore_deadline_;
-        if(phase_==Phase::Releasing&&!await_pose_ack&&(restored_==Parts()||restore_timeout)&&(!release_||Room())) {
+        if(phase_==Phase::Releasing&&!await_pose_ack&&(identity_lost_||!(env_.flags&kPaused))&&
+           (restored_==Parts()||restore_timeout)&&(!release_||Room())) {
             if(restore_timeout&&restored_!=Parts())reason_=Status::TimedOut;
             bool observed=false;
             if(restored_==Parts()){
@@ -88,7 +90,15 @@ public:
                 if(!identity_lost_&&backend_.Observe(&sample)&&ValidBody(sample)&&sample.serial==body_.serial&&sample.token==body_.token){body_=sample;observed=true;}
                 else reason_=Status::TargetLost;
             }
-            if(release_) {Finish(*release_,release_->op==Op::Release&&observed?Status::Released:reason_,now);release_.reset();}
+            if(release_) {
+                const auto stopped=observed&&reason_!=Status::TimedOut?Status::Cancelled:reason_;
+                Finish(*release_,observed?(release_->op==Op::Release?Status::Released:stopped):reason_,now);release_.reset();
+            }
+            // Keep only an authenticated proof of a completed handback. A late
+            // owner CANCEL can read it; it cannot renew or revive authority.
+            terminal_valid_=observed&&restored_==Parts()&&!identity_lost_&&
+                (reason_==Status::Released||reason_==Status::Cancelled||reason_==Status::TimedOut||reason_==Status::TargetLost);
+            terminal_until_=now+2000;
             backend_.Forget();phase_=Phase::Free;
         }
     }
@@ -109,6 +119,10 @@ public:
         // retain an OWNED lease, never revive one that has already expired.
         const bool heartbeat=command.op==Op::Renew&&phase_==Phase::Owned&&Owns(command);
         if(!Scope(command)||command.issued_ms>now||(now-command.issued_ms>200&&!heartbeat)) {Reject(command,Status::Stale,now);return true;}
+        if(command.op==Op::Cancel&&phase_==Phase::Free&&terminal_valid_&&now<=terminal_until_&&Owns(command)){
+            const auto receipt=Make(command,reason_==Status::TargetLost?Status::Cancelled:reason_,now,{},restore_flags_,true);
+            if(ledger_->Finish(command.id,receipt))out_.push_back(receipt);return true;
+        }
         // Releasing authority needs no ready movement world. A real pause must
         // not reject the owner's stop request as Busy.
         if((command.op==Op::Cancel||command.op==Op::Release)&&phase_!=Phase::Free&&Owns(command)){
@@ -148,7 +162,7 @@ public:
             if(!backend_.Bind(command,&body)||!Expected(command,body)||!backend_.Bound(command)) {
                 backend_.Forget();Reject(command,Status::TargetLost,now);return true;
             }
-            source_=command;body_=body;deadline_=command.issued_ms+command.duration_ms;
+            source_=command;body_=body;terminal_valid_=false;deadline_=command.issued_ms+command.duration_ms;
             observed_=restored_=restore_flags_=0;identity_lost_=player_handoff_=false;spent_=0;last_tick_=command.tick;last_progress_=command.progress;release_revision_=command.shape_revision;reason_=Status::Released;
             phase_=Phase::Acquiring;reserve_=command;return true;
         }
@@ -226,7 +240,8 @@ public:
     unsigned restored()const{return restored_;}
     const Body& body()const{return body_;}
     Status release_reason()const{return reason_;}
-    bool Target(const Command& command)const{return phase_!=Phase::Free&&source_.target==command.target&&source_.spawn==command.spawn&&source_.flags==command.flags;}
+    bool Target(const Command& command)const{return phase_!=Phase::Free?source_.target==command.target&&source_.spawn==command.spawn&&source_.flags==command.flags:
+        terminal_valid_&&command.op==Op::Cancel&&Owns(command);}
 private:
     unsigned Parts()const{return source_.flags&kPlayer?1u:7u;}
     static double Length(const float* value){double n=0;for(int i=0;i<3;++i)n+=double(value[i])*value[i];return std::sqrt(n);}
@@ -257,10 +272,10 @@ private:
         if(phase_==Phase::Free||phase_==Phase::Releasing)return;
         phase_=Phase::Releasing;restored_=0;restore_flags_=0;reason_=reason;restore_deadline_=deadline_+500;restore_paused_=(env_.flags&kPaused)!=0;
     }
-    Reply Make(const Command& c,Status status,std::uint64_t now,std::array<float,3> delta={},std::uint32_t flags=0)const{
+    Reply Make(const Command& c,Status status,std::uint64_t now,std::array<float,3> delta={},std::uint32_t flags=0,bool terminal=false)const{
         Reply r{};r.id=c.id;r.lease=c.op==Op::Reserve?c.id:c.lease;r.native_frame=env_.frame;r.at_ms=std::max<std::uint64_t>(now,1);
         r.world=c.world;r.target=c.target;r.spawn=c.spawn;r.status=status;r.source_hash=c.payload_hash;r.shape_revision=env_.revision;
-        if(c.op!=Op::Coverage&&phase_!=Phase::Free&&c.target==source_.target&&c.spawn==source_.spawn){
+        if(c.op!=Op::Coverage&&(phase_!=Phase::Free||(terminal&&terminal_valid_))&&c.target==source_.target&&c.spawn==source_.spawn){
             r.actor_serial=body_.serial;r.component_token=body_.token;r.health=body_.health;r.restored=restored_;
             for(int i=0;i<3;++i){r.position[i]=body_.position[i];r.delta[i]=status==Status::Prepared?body_.root_offset[i]:delta[i];}r.flags=flags;
             if((c.op==Op::Release||c.op==Op::Cancel)&&Owns(c))r.flags|=restore_flags_;
@@ -276,7 +291,8 @@ private:
     Backend& backend_;Environment env_;std::unique_ptr<Ledger> owned_;Ledger* ledger_;Phase phase_=Phase::Free;
     Command source_{};Body body_{};std::optional<Command> reserve_,release_;
     std::uint64_t deadline_=0,last_tick_=0,release_revision_=0,restore_deadline_=0;double spent_=0;float last_progress_=0;unsigned observed_=0,restored_=0,restore_flags_=0;
-    bool restore_paused_=false,identity_lost_=false,player_handoff_=false;
+    bool restore_paused_=false,identity_lost_=false,player_handoff_=false,terminal_valid_=false;
+    std::uint64_t terminal_until_=0;
     Status reason_=Status::Released;std::deque<Reply> out_;
 };
 

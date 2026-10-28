@@ -23,8 +23,12 @@ public final class SceneExplosions {
     private record Frame(ServerExplosion explosion,Proof proof,Map<EnemyProxy,CompletableFuture<WorldMotionProtocol.Reply>> damage) {}
     private static final ThreadLocal<Frame> current = new ThreadLocal<>();
     private static volatile java.util.function.Consumer<UUID> observer;
+    private static volatile java.util.function.Consumer<ServerExplosion> before;
+    public static void observeBefore(java.util.function.Consumer<ServerExplosion> value){
+        if(value!=null&&!Boolean.getBoolean("sifucraft.boatExplosionSelfTest"))throw new IllegalStateException("isolated boat explosion fixture only");before=value;
+    }
     public static void observe(java.util.function.Consumer<UUID> value){
-        if(value!=null&&!Boolean.getBoolean("sifucraft.tntStressSelfTest")&&!Boolean.getBoolean("sifucraft.worldRecoverySelfTest"))throw new IllegalStateException("isolated TNT fixture only");observer=value;
+        if(value!=null&&!Boolean.getBoolean("sifucraft.tntStressSelfTest")&&!Boolean.getBoolean("sifucraft.worldRecoverySelfTest")&&!Boolean.getBoolean("sifucraft.boatExplosionSelfTest"))throw new IllegalStateException("isolated TNT fixture only");observer=value;
     }
     /** Preserve TNT state while nearby native targets cannot accept a complete world event. */
     public static boolean canAdvance(net.minecraft.world.entity.item.PrimedTnt tnt){
@@ -53,7 +57,7 @@ public final class SceneExplosions {
         var previous=current.get();current.set(new Frame(explosion,proof,new HashMap<>()));
         if(Boolean.getBoolean("sifucraft.nativeWindSelfTest")&&explosion.getDirectSourceEntity() instanceof net.minecraft.world.entity.projectile.hurtingprojectile.windcharge.WindCharge)
             org.slf4j.LoggerFactory.getLogger("sifucraft").info("[wind-impulse-test] original blast center={} proof={} caps={}",explosion.center(),proof!=null,view==null||view.nativeStatus()==null?0:view.nativeStatus().capabilities());
-        try{T result=action.get();var listener=observer;if(listener!=null&&explosion.getDirectSourceEntity() instanceof net.minecraft.world.entity.item.PrimedTnt tnt)listener.accept(tnt.getUUID());return result;}
+        try{var prepare=before;if(prepare!=null)prepare.accept(explosion);T result=action.get();var listener=observer;if(listener!=null&&explosion.getDirectSourceEntity() instanceof net.minecraft.world.entity.item.PrimedTnt tnt)listener.accept(tnt.getUUID());return result;}
         finally{if(previous==null)current.remove();else current.set(previous);}
     }
     static Proof proof(EnemyProxy target,DamageSource source) {
@@ -78,8 +82,10 @@ public final class SceneExplosions {
             WindImpulses.capture(target,proof,velocity);return;
         }
         var future=frame.damage.get(target);if(future==null)return;
+        boolean passenger=BoatPassengers.holds(target.sifuKey());
         future.whenComplete((receipt,error)->target.level().getServer().execute(()->{
-            if(error==null&&!target.isRemoved())FluidMotion.explosionImpulse(target,proof.scope,proof.event,velocity,receipt);
+            if(error==null&&!target.isRemoved()&&!(target.getVehicle() instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat))
+                FluidMotion.explosionImpulse(target,proof.scope,proof.event,velocity,receipt,passenger);
         }));
     }
 

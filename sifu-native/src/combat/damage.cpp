@@ -14,6 +14,7 @@
 #include "combat/impulse_ledger.h"
 #include "combat/launch_params.h"
 #include "combat/player_hits.h"
+#include "combat/passenger_blast_landing.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "hooks/game_hooks.h"
@@ -57,6 +58,10 @@ struct Job {
 };
 SRWLOCK g_lock = SRWLOCK_INIT;
 Context g_context;
+PassengerBlastLanding g_passenger_landings; // game thread only, like the motion leases
+std::uintptr_t g_landing_world=0;
+std::uint64_t g_landing_peer=0;
+std::uint32_t g_landing_generation=0;
 std::deque<Job> g_jobs;
 std::size_t g_inflight = 0;
 std::vector<Reply> g_replies;
@@ -98,8 +103,39 @@ struct Application { std::uintptr_t health; unsigned calls = 0; };
 thread_local Application* g_application = nullptr;
 using InternalDamageFn = void (*)(void*, void*);
 
+PassengerBlastLanding::Binding LandingBinding(const Context& context,std::uintptr_t health){
+    if(g_landing_world!=context.world||g_landing_peer!=context.session||g_landing_generation!=context.generation){
+        g_passenger_landings.Clear();g_landing_world=context.world;g_landing_peer=context.session;g_landing_generation=context.generation;
+    }
+    const auto actor=mem::ReadPtr(health+off::UActorComponent::OwnerPrivate);
+    const auto actor_id=ue::IdentityOf(actor),health_id=ue::IdentityOf(health);
+    if(!actor_id.valid()||!health_id.valid()||ue::OuterOf(health)!=actor||mem::ReadPtr(actor+off::AFightingCharacter::m_HealthComponent)!=health)return {};
+    for(const auto& target:context.targets)if(target.actor==actor&&target.identity==actor_id)
+        return {context.world,context.session,actor,health,context.generation,target.spawn,actor_id.serial,health_id.serial};
+    return {};
+}
+bool DuplicatePassengerLanding(std::uintptr_t health,std::uintptr_t infos){
+    if(g_application||GetCurrentThreadId()!=g_game_thread.load())return false;
+    AcquireSRWLockShared(&g_lock);const Context context=g_context;ReleaseSRWLockShared(&g_lock);
+    const auto binding=LandingBinding(context,health);const auto now=GetTickCount64();
+    const float hp=mem::ReadOr<float>(health+off::UHealthComponent::m_fHealth,NAN);
+    if(!g_passenger_landings.Pending(binding,hp,now)||ue::ResolveWeak(infos+off::FDamageInfos::m_Instigator))return false;
+    void* stack[12]{};const auto count=CaptureStackBackTrace(0,12,stack,nullptr);
+    const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));bool hit=false,landed=false;
+    for(unsigned i=0;i<count;++i){
+        const auto rva=reinterpret_cast<std::uintptr_t>(stack[i])-base;
+        hit|=rva>=gen::rva::PassengerBlastLandingHit&&rva<gen::rva::PassengerBlastLandingHit+732;
+        landed|=rva>=gen::rva::PassengerBlastLandingLanded&&rva<gen::rva::PassengerBlastLandingLanded+2191;
+    }
+    if(!g_passenger_landings.Consume(binding,hp,now,hit&&landed,true))return false;
+    SC_LOG("[world-passenger-landing] suppressed duplicate Native pushed-fall health event actor=%llu/%d spawn=%u HP=%.3f native_damage=%.3f; MC owns this landing",
+        static_cast<unsigned long long>(binding.actor),binding.actor_serial,binding.spawn,hp,mem::ReadOr<float>(infos+off::FDamageInfos::m_fDamage,NAN));
+    return true;
+}
+
 void ObserveDamage(void* health, void* infos) {
     if (player_hits::BlockHealthDamage(reinterpret_cast<std::uintptr_t>(health), reinterpret_cast<std::uintptr_t>(infos))) return;
+    if(DuplicatePassengerLanding(reinterpret_cast<std::uintptr_t>(health),reinterpret_cast<std::uintptr_t>(infos)))return;
     // Enemy observation is filtered against the one health component whose MC event is being
     // applied. Local player protection above uses the separate ownership/lifecycle gate.
     if (g_application && reinterpret_cast<std::uintptr_t>(health) == g_application->health) {
@@ -109,6 +145,20 @@ void ObserveDamage(void* health, void* infos) {
     const auto component = reinterpret_cast<std::uintptr_t>(health);
     const float before = mem::ReadOr<float>(component + off::UHealthComponent::m_fHealth, NAN);
     g_observer.original<InternalDamageFn>()(health, infos);
+    const float after=mem::ReadOr<float>(component+off::UHealthComponent::m_fHealth,NAN);
+    static unsigned external_logs=0;
+    if(!g_application&&std::isfinite(before)&&std::isfinite(after)&&after<before&&external_logs++<16){
+        const auto actor=mem::ReadPtr(component+off::UActorComponent::OwnerPrivate);
+        const auto movement=mem::ReadPtr(actor+off::ACharacter::CharacterMovement);
+        const auto instigator=ue::ResolveWeak(reinterpret_cast<std::uintptr_t>(infos)+off::FDamageInfos::m_Instigator);
+        void* stack[6]{};const auto count=CaptureStackBackTrace(0,6,stack,nullptr);
+        const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+        SC_LOG("[world-native-damage] actor=%s instigator=%s requested=%.3f HP=%.3f->%.3f mode=%u fall_origin=%.3f stack_count=%u stack_rva=%llX,%llX,%llX,%llX,%llX,%llX",
+            ue::ObjectName(actor).c_str(),ue::ObjectName(instigator).c_str(),mem::ReadOr<float>(reinterpret_cast<std::uintptr_t>(infos)+off::FDamageInfos::m_fDamage,NAN),before,after,
+            mem::ReadOr<std::uint8_t>(movement+off::UCharacterMovementComponent::MovementMode,255),mem::ReadOr<float>(movement+off::UFightingMovementComponent::m_fInitialHeight,NAN),count,
+            reinterpret_cast<std::uintptr_t>(stack[0])-base,reinterpret_cast<std::uintptr_t>(stack[1])-base,reinterpret_cast<std::uintptr_t>(stack[2])-base,
+            reinterpret_cast<std::uintptr_t>(stack[3])-base,reinterpret_cast<std::uintptr_t>(stack[4])-base,reinterpret_cast<std::uintptr_t>(stack[5])-base);
+    }
     player_hits::ObserveHealthDamage(component, reinterpret_cast<std::uintptr_t>(infos), before,
                                     mem::ReadOr<float>(component + off::UHealthComponent::m_fHealth, NAN));
 }
@@ -321,13 +371,18 @@ bool ObserverReady() { return g_ready.load(std::memory_order_acquire); }
 bool WorldReady(){return ObserverReady()&&!g_failed.load();}
 
 WorldApplication ApplyWorld(std::uintptr_t base,std::uintptr_t world,std::uint32_t generation,
-                             std::uint64_t peer,std::uint64_t event,const Enemies::Target& target,float mc_damage){
+                             std::uint64_t peer,std::uint64_t event,const Enemies::Target& target,float mc_damage,bool passenger_blast){
     Job job;job.session=peer;job.id=event;job.queued_ms=GetTickCount64();job.target=target;
     job.payload={target.id,target.spawn,mc_damage,kLightStunSeconds,0,generation,0,0};
     if(GetCurrentThreadId()!=g_game_thread.load()||!std::isfinite(mc_damage)||mc_damage<=0||mc_damage>1e7f)return {Result(job,DamageOutcome::Invalid)};
     AcquireSRWLockShared(&g_lock);const Context context=g_context;ReleaseSRWLockShared(&g_lock);
     if(context.world!=world||context.generation!=generation||context.session!=peer)return {Result(job,DamageOutcome::Stale)};
-    WorldApplication result;result.result=Apply(base,context,job,true,&result.invoked);return result;
+    WorldApplication result;result.result=Apply(base,context,job,true,&result.invoked);
+    if(passenger_blast&&result.invoked&&result.result.health_after>0){
+        const auto health=mem::ReadPtr(target.actor+off::AFightingCharacter::m_HealthComponent);
+        g_passenger_landings.Arm(LandingBinding(context,health),result.result.health_after,GetTickCount64());
+    }
+    return result;
 }
 
 void UpdateContext(std::uintptr_t world, std::uint32_t generation, std::uintptr_t pawn, bool active,

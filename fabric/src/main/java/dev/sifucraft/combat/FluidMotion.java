@@ -41,7 +41,7 @@ public final class FluidMotion {
     private static final long ACTION=ShapeProtocol.mapHash("sifucraft:fluid");
     private enum Phase { ACQUIRE,IDLE,MOVE,RENEW,RELEASE,CANCEL }
     private record Handoff(WorldMotionRequests.Scope scope,Reply binding,Reply release,Vec3 velocity,PistonContacts.Source source,boolean supported,boolean settling,long at,long playerStamp){}
-    private record Impulse(WorldMotionRequests.Scope scope,UUID source,Vec3 velocity,float health,long actorStamp,long at,int authority){}
+    private record Impulse(WorldMotionRequests.Scope scope,UUID source,Vec3 velocity,float health,long actorStamp,long at,long until,int authority){}
     private static final class Flight {
         final EnemyFrame.Key key;final EnemyFrame.Entry initial;final WorldMotionRequests.Scope scope;final ServerLevel level;final UUID source;
         final AtomicBoolean queued=new AtomicBoolean();
@@ -78,8 +78,11 @@ public final class FluidMotion {
     private static final Map<EnemyFrame.Key,Pose> poses=new HashMap<>();
     private static final Map<EnemyFrame.Key,Handoff> handoffs=new HashMap<>();
     private static final Map<EnemyFrame.Key,Impulse> impulses=new HashMap<>();
-    /** The final vanilla explosion vector, after native HP acknowledgement; it is not a light-hit impulse. */
     static void explosionImpulse(EnemyProxy proxy,WorldMotionRequests.Scope expected,UUID source,Vec3 velocity,Reply receipt){
+        explosionImpulse(proxy,expected,source,velocity,receipt,false);
+    }
+    /** The final vanilla explosion vector, after native HP acknowledgement; it is not a light-hit impulse. */
+    static void explosionImpulse(EnemyProxy proxy,WorldMotionRequests.Scope expected,UUID source,Vec3 velocity,Reply receipt,boolean passenger){
         var v=WorldMotionWorld.current();
         if(receipt==null||(receipt.status()!=2&&receipt.status()!=4)||receipt.health()<=0||receipt.actorSerial()<=0||
             v==null||!expected.equals(v.scope())||!sameWorld(v,(ServerLevel)proxy.level())||v.nativeStatus()==null||
@@ -87,7 +90,8 @@ public final class FluidMotion {
         var old=impulses.get(proxy.sifuKey());
         if(old!=null&&old.scope.equals(expected)&&old.source.equals(source))return;
         if(old!=null&&old.scope.equals(expected))velocity=velocity.add(old.velocity);
-        impulses.put(proxy.sifuKey(),new Impulse(expected,source,velocity,receipt.health(),receipt.actorSerial(),WorldWriter.clockMillis(),EXPLOSION));
+        long now=WorldWriter.clockMillis();
+        impulses.put(proxy.sifuKey(),new Impulse(expected,source,velocity,receipt.health(),receipt.actorSerial(),now,now+(passenger?8000:1000),EXPLOSION));
         retry.remove(proxy.sifuKey());
     }
     /** A genuine passenger release continues gravity/water once, without inventing a piston source. */
@@ -98,7 +102,7 @@ public final class FluidMotion {
             !Double.isFinite(velocity.lengthSqr())||(release.status()!=3&&release.status()!=6))return;
         var pending=impulses.get(proxy.sifuKey());
         if(pending!=null&&pending.scope.equals(expected)&&pending.authority==EXPLOSION)return;
-        impulses.put(proxy.sifuKey(),new Impulse(expected,boat,velocity,release.health(),release.actorSerial(),WorldWriter.clockMillis(),FLUID));
+        long now=WorldWriter.clockMillis();impulses.put(proxy.sifuKey(),new Impulse(expected,boat,velocity,release.health(),release.actorSerial(),now,now+1000,FLUID));
         retry.remove(proxy.sifuKey());
     }
     private record Momentum(WorldMotionRequests.Scope scope,Vec3 velocity,long until){}
@@ -131,7 +135,7 @@ public final class FluidMotion {
     public record Sample(EnemyFrame.Key key,Vec3 position,Vec3 velocity,float width,float height,long seed,int entityId,long tick,boolean grounded,int entityTick){}
     public interface Observer {void prepared(Sample initial);default void beforeSimulation(Sample initial,VanillaFluidBody body){}void simulated(Sample planned);void completed(Sample actual);}
     private static volatile Observer observer;
-    public static void observe(Observer value){if(value!=null&&!Boolean.getBoolean("sifucraft.fluidMotionSelfTest")&&!Boolean.getBoolean("sifucraft.bubbleMatrixSelfTest")&&!Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest")&&!Boolean.getBoolean("sifucraft.nativeLiftSelfTest")&&!Boolean.getBoolean("sifucraft.pistonAftermathSelfTest")&&!Boolean.getBoolean("sifucraft.fluidPartialSelfTest")&&!Boolean.getBoolean("sifucraft.nativeExplosionSelfTest")&&!Boolean.getBoolean("sifucraft.boatBubbleSelfTest"))throw new IllegalStateException("isolated fixture only");observer=value;}
+    public static void observe(Observer value){if(value!=null&&!Boolean.getBoolean("sifucraft.fluidMotionSelfTest")&&!Boolean.getBoolean("sifucraft.bubbleMatrixSelfTest")&&!Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest")&&!Boolean.getBoolean("sifucraft.nativeLiftSelfTest")&&!Boolean.getBoolean("sifucraft.pistonAftermathSelfTest")&&!Boolean.getBoolean("sifucraft.fluidPartialSelfTest")&&!Boolean.getBoolean("sifucraft.nativeExplosionSelfTest")&&!Boolean.getBoolean("sifucraft.boatBubbleSelfTest")&&!Boolean.getBoolean("sifucraft.boatExplosionSelfTest"))throw new IllegalStateException("isolated fixture only");observer=value;}
     private static Sample sample(Flight f){return new Sample(f.key,f.body.position(),f.body.getDeltaMovement(),f.body.getBbWidth(),f.body.getBbHeight(),((long)f.key.id()<<32)^f.key.spawn(),f.body.getId(),f.lastTick,f.body.onGround(),f.body.tickCount);}
     private static boolean sameWorld(WorldMotionWorld.View v,ServerLevel level){
         if(v==null||!WorldBlocks.ENABLED||!v.scope().equals(v.requests().scope())||v.scope().save()!=PistonMovePlans.saveKey(level)||v.scene()==null||
@@ -227,7 +231,7 @@ public final class FluidMotion {
             var proxy=NativeMotionSubjects.find(e.key());if(proxy==null||proxy.isRemoved())continue;
             var at=medium(level,proxy.getBoundingBox());var h=handoffs.get(e.key());
             var impulse=impulses.get(e.key());
-            if(impulse!=null&&(!impulse.scope.equals(view.scope())||now-impulse.at>1000||impulse.at>now)){
+            if(impulse!=null&&(!impulse.scope.equals(view.scope())||now>impulse.until||impulse.at>now)){
                 impulses.remove(e.key());impulse=null;
             }
             if(impulse!=null&&e.health()!=impulse.health)continue; // wait for the actual post-damage native snapshot
@@ -330,10 +334,11 @@ public final class FluidMotion {
         }
         if(f.phase==Phase.ACQUIRE){
             var r=result(f.pending);
-            if(f.authoritySource==EXPLOSION&&f.originImpulse!=null&&r!=null&&(r.status()==8||r.status()==9||r.status()==12)&&
-                r.actorSerial()==0&&r.componentToken()==0&&now>=f.originImpulse.at&&now-f.originImpulse.at<1000){
+            if(f.originImpulse!=null&&r!=null&&(r.status()==8||r.status()==9||r.status()==12)&&
+                r.actorSerial()==0&&r.componentToken()==0&&now>=f.originImpulse.at&&now<f.originImpulse.until){
                 // The native binding did not acquire a body or issue a sweep.
-                // A short H7 hit order may finish naturally; retry only this
+                // H7 and a passenger's pushed-fall/ordinary fall finish naturally.
+                // The original event deadline never refreshes; retry only this
                 // unacquired movement authority, never its already-applied HP.
                 flights.remove(f.key);impulses.putIfAbsent(f.key,f.originImpulse);retry.put(f.key,now+50);return;
             }

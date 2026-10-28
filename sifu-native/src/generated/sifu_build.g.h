@@ -26,6 +26,8 @@ inline constexpr std::uintptr_t FidgetResetTimer = 0x18995F0;
 inline constexpr std::uintptr_t FidgetStartTimer = 0x189E7E0;
 inline constexpr std::uintptr_t FidgetProcessVtable = 0x486E7A8;
 inline constexpr std::uintptr_t CoverageArrayFree = 0x1D94B90;
+inline constexpr std::uintptr_t PassengerBlastLandingHit = 0x19FDCA0;
+inline constexpr std::uintptr_t PassengerBlastLandingLanded = 0x1A03770;
 }  // namespace rva
 
 namespace off {

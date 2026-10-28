@@ -20,12 +20,15 @@ from pathlib import Path
 EXE_NAME = "Sifu-Win64-Shipping.exe"
 
 # Global variables whose RVA the native module reads.
-SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData", "GD3D11RHI", "GDynamicRHI", "InternationalizationStore", "LevelStreamingManager", "InteractionKey", "SceneRenderTargets", "DepthTextureVtable", "FidgetResetTimer", "FidgetStartTimer", "FidgetProcessVtable", "CoverageArrayFree"]
+SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData", "GD3D11RHI", "GDynamicRHI", "InternationalizationStore", "LevelStreamingManager", "InteractionKey", "SceneRenderTargets", "DepthTextureVtable", "FidgetResetTimer", "FidgetStartTimer", "FidgetProcessVtable", "CoverageArrayFree", "PassengerBlastLandingHit", "PassengerBlastLandingLanded"]
 SIZED_SYMBOLS = {"DepthTextureVtable": ("TD3D11Texture2D<FD3D11BaseTexture2D>::`vftable'", 88),
                  "FidgetResetTimer": ("FFidgetPlayerHandler::ResetFidgetTimer", 90),
                  "FidgetStartTimer": ("FFidgetPlayerHandler::TryToStartLaunchFidgetTimer", 429),
                  "FidgetProcessVtable": ("APFidget::`vftable'", 72),
-                 "CoverageArrayFree": ("FMemory::Free", 52)}
+                 "CoverageArrayFree": ("FMemory::Free", 52),
+                 # Read-only stack provenance; neither function is called or hooked.
+                 "PassengerBlastLandingHit": ("OrderFallFromPushed::LaunchHit", 732),
+                 "PassengerBlastLandingLanded": ("OrderFallFromPushed::OnLanded", 2191)}
 SYMBOL_MATCHES = {"InternationalizationStore": ("*FInternationalization*Singleton", "::Singleton"),
                   "LevelStreamingManager": ("FSCLevelStreamingManager::s_Instance", "::s_Instance"),
                   "InteractionKey": ("EKeys::Q", "::Q"),

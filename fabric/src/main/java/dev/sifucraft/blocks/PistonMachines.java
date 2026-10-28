@@ -50,6 +50,7 @@ public final class PistonMachines {
         final Set<Long> reported=new HashSet<>();
         final Set<Work> refunded=java.util.Collections.newSetFromMap(new IdentityHashMap<>());
         Phase phase=Phase.PREPARE;int dispatched;long commitMotion,commitIndex,lastRevision;
+        boolean cancelPaused;long cancelResumeUntil;
         final AtomicBoolean wakeScheduled=new AtomicBoolean();
         Flight(ServerLevel level,PistonMovingBlockEntity piston,List<PistonMovingBlockEntity> members,SourceToken token,WorldMotionRequests.Scope scope,long now){
             this.level=level;this.piston=piston;this.token=token;this.scope=scope;progress=piston.getProgress(1);deadline=now+500;
@@ -62,6 +63,11 @@ public final class PistonMachines {
     private static final IdentityHashMap<PistonMovingBlockEntity,Flight> flights=new IdentityHashMap<>();
     private static final Map<EnemyFrame.Key,PistonMotionLimit.State> budgets=new HashMap<>();
     private static final Map<EnemyFrame.Key,Pose> poses=new HashMap<>();
+    private static final Map<EnemyFrame.Key,Long> waitingPassengers=new HashMap<>();
+    private static final Map<EnemyFrame.Key,List<PistonMovingBlockEntity>> passengerSources=new HashMap<>();
+    private static final Map<EnemyFrame.Key,String> lastOutcome=new HashMap<>();
+    private static boolean moving(PistonMovingBlockEntity piston){return !piston.isRemoved()&&piston.getLevel()!=null&&piston.getLevel().getBlockEntity(piston.getBlockPos())==piston&&piston.getProgress(1)<1;}
+    public static boolean machineActive(EnemyFrame.Key key){return passengerSources.getOrDefault(key,List.of()).stream().anyMatch(PistonMachines::moving)||WorldWriter.clockMillis()<waitingPassengers.getOrDefault(key,0L)||flights.values().stream().anyMatch(f->f.targets.containsKey(key));}
     private static final ThreadLocal<Set<EnemyFrame.Key>> committing=new ThreadLocal<>();
     private static final ThreadLocal<Boolean> groupCommit=ThreadLocal.withInitial(()->false);
     private static WorldMotionRequests.Scope scope;
@@ -70,13 +76,24 @@ public final class PistonMachines {
     private static final AtomicBoolean geometryWake=new AtomicBoolean();
     private static volatile long offeredRevision;
     private static volatile java.util.function.BiConsumer<EnemyFrame.Key,Reply> preparedObserver;
+    private static volatile java.util.function.BooleanSupplier preparedGate;
+    public static void preparedGate(java.util.function.BooleanSupplier gate){
+        if(gate!=null&&!Boolean.getBoolean("sifucraft.boatPistonSelfTest"))throw new IllegalStateException("isolated boat fixture only");preparedGate=gate;
+    }
     /** Isolated real-game test observes the physical binding before creating its independent reference. */
     public static void observePrepared(java.util.function.BiConsumer<EnemyFrame.Key,Reply> observer){
-        if(observer!=null&&!Boolean.getBoolean("sifucraft.nativePistonSelfTest")&&!Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest")&&!Boolean.getBoolean("sifucraft.pistonPauseSelfTest"))throw new IllegalStateException("isolated fixture only");preparedObserver=observer;
+        if(observer!=null&&!Boolean.getBoolean("sifucraft.nativePistonSelfTest")&&!Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest")&&!Boolean.getBoolean("sifucraft.pistonPauseSelfTest")&&!Boolean.getBoolean("sifucraft.boatPistonSelfTest"))throw new IllegalStateException("isolated fixture only");preparedObserver=observer;
     }
-    private static long prepared,applied,committed,cancelled,released,releaseFailed,refundedSteps;private static double refundedCm;
-    public record Stats(long prepared,long applied,long committed,long cancelled,long released,long releaseFailed,int pending,long refundedSteps,double refundedCm){}
-    public static Stats stats(){return new Stats(prepared,applied,committed,cancelled,released,releaseFailed,(int)flights.values().stream().distinct().count(),refundedSteps,refundedCm);}
+    private static long prepared,applied,committed,cancelled,released,releaseFailed,refundedSteps,cancelRestored,cancelRestoreFailed;private static double refundedCm;
+    public record Stats(long prepared,long applied,long committed,long cancelled,long released,long releaseFailed,int pending,long refundedSteps,double refundedCm,long cancelRestored,long cancelRestoreFailed){}
+    public static Stats stats(){return new Stats(prepared,applied,committed,cancelled,released,releaseFailed,(int)flights.values().stream().distinct().count(),refundedSteps,refundedCm,cancelRestored,cancelRestoreFailed);}
+    public static String diagnostic(EnemyFrame.Key key){
+        return "waitingUntil="+waitingPassengers.get(key)+",last="+lastOutcome.get(key)+",flights="+flights.values().stream().distinct().filter(f->f.targets.containsKey(key)).map(f->{
+            var t=f.targets.get(key);var receipt=result(t.reserve);
+            return "{pos="+f.piston.getBlockPos()+",phase="+f.phase+",progress="+f.piston.getProgress(1)+",work="+f.dispatched+"/"+f.work.size()+
+                ",reserve="+(receipt==null?null:receipt.status())+",last="+(t.last==null?null:t.last.status())+",deadline="+f.deadline+"}";
+        }).toList();
+    }
     /** Receipt callbacks only queue work. A vanilla ticker is always entered on its owning server thread. */
     private static void wake(Flight f){
         var server=f.level.getServer();if(server.isSameThread()||!f.wakeScheduled.compareAndSet(false,true))return;
@@ -95,9 +112,21 @@ public final class PistonMachines {
     }
     /** New applied geometry can unblock release between ordinary 20Hz block-entity ticks. */
     public static void offered(WorldMotionWorld.View view){
-        var server=activeServer;if(server==null||view==null||!view.shapesCurrent()||view.geometry().revision()==offeredRevision)return;
-        offeredRevision=view.geometry().revision();if(!geometryWake.compareAndSet(false,true))return;
-        server.execute(()->{geometryWake.set(false);for(var f:new HashSet<>(flights.values()))if(f.phase==Phase.SHAPES)wakeFromServer(f);});
+        var server=activeServer;if(server==null||!geometryWake.compareAndSet(false,true))return;
+        // The integrated server still drains tasks while world ticks are paused.
+        // Expiry/cancellation must not depend on the BE getting another tick.
+        server.execute(()->{
+            geometryWake.set(false);var current=WorldMotionWorld.current();long now=WorldWriter.clockMillis();
+            dev.sifucraft.combat.BoatPassengers.machinePaused(current);
+            for(var f:new HashSet<>(flights.values())){
+                if(!valid(current,f.level)||!f.scope.equals(current.scope()))cancel(current,f,"world scope ended during maintenance");
+                if(f.phase!=Phase.CANCEL&&f.phase!=Phase.RELEASE&&
+                    (now>=f.deadline||current!=null&&current.nativeStatus()!=null&&current.nativeStatus().flags()!=0))
+                    cancel(current,f,now>=f.deadline?"500ms deadline during maintenance":"native paused or scripted");
+                if(f.phase==Phase.CANCEL)advance(current,f,()->{});
+                else if(f.phase==Phase.SHAPES&&current!=null&&current.shapesCurrent())wakeFromServer(f);
+            }
+        });
     }
     private static void wakeFromServer(Flight f){if(flights.get(f.piston)==f&&f.level.getBlockEntity(f.piston.getBlockPos())==f.piston)
         PistonMovingBlockEntity.tick(f.level,f.piston.getBlockPos(),f.level.getBlockState(f.piston.getBlockPos()),f.piston);}
@@ -136,13 +165,37 @@ public final class PistonMachines {
         }
         var preview=PistonPreview.group(level,members,view.scene(),budgets,token.id,Map.of());
         var bodies=contacts(view,preview);
-        if(bodies.isEmpty()){originals(level,members);token.lastCommitTick=level.getGameTime();return;}
+        if(bodies.isEmpty()){
+            // The first half may miss the hull while the second will carry its
+            // passengers. Hand back their continuous lease before publishing
+            // that first moving collision, and keep the MC seats across halves.
+            var upcoming=contacts(view,PistonPreview.remaining(level,members,view.scene(),budgets,token.id));
+            boolean yielding=false;
+            for(var key:upcoming.keySet())if(dev.sifucraft.combat.BoatPassengers.holds(key)){
+                if(view.nativeStatus()==null)return;
+                waitingPassengers.put(key,now+1000);
+                passengerSources.put(key,List.copyOf(members));
+                yielding|=dev.sifucraft.combat.BoatPassengers.yieldToMachine(key,view);
+            }
+            if(yielding){for(var member:members)PistonTimeline.track(member,view.scope());return;}
+            originals(level,members);token.lastCommitTick=level.getGameTime();return;
+        }
+        if(view.nativeStatus()==null)return;
+        boolean yielding=false;for(var key:bodies.keySet()){
+            boolean boat=dev.sifucraft.combat.BoatPassengers.yieldToMachine(key,view);
+            if(boat)waitingPassengers.put(key,now+1000);
+            if(boat)passengerSources.put(key,List.copyOf(members));
+            yielding|=boat|dev.sifucraft.combat.FluidMotion.yieldToMachine(key,view);
+        }
+        if(yielding){for(var member:members)PistonTimeline.track(member,view.scope());return;}
+        // Cancelling the old owner does not sweep or require a new shape ACK.
+        // Waiting for that ACK before cancellation can strand its 500ms lease
+        // behind the very moving geometry which this ticker just created.
         if(!fresh(view)||!view.shapesCurrent()||(view.nativeStatus().capabilities()&MOTION_CAPABILITY)==0||flights.size()>=128)return;
         if(bodies.containsKey(NativeMotionSubjects.PLAYER)&&!NativeMotionSubjects.playerReady(view))return;
-        boolean yielding=false;for(var key:bodies.keySet())yielding|=dev.sifucraft.combat.FluidMotion.yieldToMachine(key,view);
-        if(yielding){for(var member:members)PistonTimeline.track(member,view.scope());return;}
         flight=new Flight(level,piston,members,token,view.scope(),now);for(var member:members){flights.put(member,flight);PistonTimeline.track(member,view.scope());}activeServer=level.getServer();
         for(var key:bodies.keySet()){
+            waitingPassengers.remove(key);
             var source=preview.moves().stream().filter(m->key.equals(m.enemy())).findFirst().orElseThrow().source();
             if(source.sectionRevision()==0){cancel(view,flight);return;}
             var target=new Target(entry(view,key),source,NativeMotionSubjects.player(key)?view.nativeStatus().playerStamp():0);flight.targets.put(key,target);var active=flight;
@@ -151,19 +204,29 @@ public final class PistonMachines {
     }
     private static void advance(WorldMotionWorld.View view,Flight f,Runnable original){
         long now=WorldWriter.clockMillis();
-        if(!valid(view,f.level)||!f.scope.equals(view.scope())||f.members.stream().anyMatch(p->p.isRemoved()||f.level.getBlockEntity(p.getBlockPos())!=p))cancel(view,f);
+        if(!valid(view,f.level)||!f.scope.equals(view.scope())||f.members.stream().anyMatch(p->p.isRemoved()||f.level.getBlockEntity(p.getBlockPos())!=p))cancel(view,f,"scope or moving BE changed");
         if(view!=null&&view.nativeStatus()!=null&&f.targets.values().stream().anyMatch(t->NativeMotionSubjects.player(t.key)&&
-           (view.nativeStatus().playerStamp()!=t.playerStamp||PlayerSignalContacts.nativeBody()==null)))cancel(view,f);
-        if(f.phase!=Phase.SHAPES&&f.phase!=Phase.RELEASE&&f.members.stream().anyMatch(p->p.getProgress(1)!=f.progressByMember.get(p)))cancel(view,f);
+           (view.nativeStatus().playerStamp()!=t.playerStamp||PlayerSignalContacts.nativeBody()==null)))cancel(view,f,"player identity changed");
+        if(f.phase!=Phase.SHAPES&&f.phase!=Phase.RELEASE&&f.members.stream().anyMatch(p->p.getProgress(1)!=f.progressByMember.get(p)))cancel(view,f,"unexpected progress");
         // A sent release has already handed back authority natively. A delayed
         // receipt may be awaited without extending the native 500ms hard limit.
-        if(now>=f.deadline&&f.phase!=Phase.CANCEL&&f.phase!=Phase.RELEASE)cancel(view,f);
+        if(now>=f.deadline&&f.phase!=Phase.CANCEL&&f.phase!=Phase.RELEASE)cancel(view,f,"500ms deadline phase="+f.phase);
         if(f.phase==Phase.CANCEL){
+            boolean paused=view!=null&&view.nativeStatus()!=null&&view.nativeStatus().atMs()<=now&&now-view.nativeStatus().atMs()<=200&&(view.nativeStatus().flags()&PAUSED)!=0;
+            if(paused)f.cancelPaused=true;
+            else if(f.cancelPaused){f.cancelPaused=false;f.cancelResumeUntil=now+1500;}
             for(var t:f.targets.values()){
                 bind(t);if(t.binding!=null&&t.cancel==null&&view!=null&&f.scope.equals(view.requests().scope()))
                     t.cancel=watch(f,view.requests().request(f.scope,id->command(f,t,t.source,CANCEL,id,t.binding,t.binding.position(),SifuFrame.Vec3.ZERO,view.nativeStatus()==null?0:view.nativeStatus().shapeRevision(),now)));
             }
-            if(now>=f.deadline+1500||f.targets.values().stream().allMatch(t->done(t.reserve)&&(t.binding==null||done(t.cancel))))retire(f,now);
+            if(!paused&&now>=Math.max(f.deadline+1500,f.cancelResumeUntil)||f.targets.values().stream().allMatch(t->done(t.reserve)&&(t.binding==null||done(t.cancel)))){
+                for(var t:f.targets.values())if(t.binding!=null){
+                    var r=result(t.cancel);
+                    if(r!=null&&(r.status()==3||r.status()==6||r.status()==13)&&r.restored()==(NativeMotionSubjects.player(t.key)?1:7)&&
+                        r.actorSerial()==t.binding.actorSerial()&&r.componentToken()==t.binding.componentToken())cancelRestored++;else cancelRestoreFailed++;
+                }
+                retire(f,now);
+            }
             return;
         }
         if(!fresh(view))return;
@@ -171,24 +234,26 @@ public final class PistonMachines {
             boolean waiting=false;
             for(var t:f.targets.values()){
                 if(!done(t.reserve)){waiting=true;continue;}
-                if(!bind(t)){cancel(view,f);return;}
+                if(!bind(t)){cancel(view,f,"reserve refused: "+result(t.reserve));return;}
             }
             if(waiting||!view.shapesCurrent())return;
             var bindings=new HashMap<EnemyFrame.Key,Reply>();for(var t:f.targets.values()){bindings.put(t.key,t.binding);var observer=preparedObserver;if(observer!=null)observer.accept(t.key,t.binding);}
+            if(f.members.stream().anyMatch(p->p.isRemoved()||f.level.getBlockEntity(p.getBlockPos())!=p)){cancel(view,f,"source removed after preparation");return;}
+            var gate=preparedGate;if(gate!=null&&!gate.getAsBoolean())return;
             var preview=PistonPreview.group(f.level,f.members,view.scene(),budgets,f.token.id,bindings);
             var bodies=contacts(view,preview);
-            if(!bodies.keySet().equals(f.targets.keySet())){cancel(view,f);return;}
+            if(!bodies.keySet().equals(f.targets.keySet())){cancel(view,f,"prepared contacts changed from "+f.targets.keySet()+" to "+bodies.keySet());return;}
             for(var t:f.targets.values()){
                 var body=bodies.get(t.key);var current=entry(view,t.key);
                 t.velocity=body.velocity();
-                if(current==null||!samePosition(current.location(),t.binding.position(),1)){cancel(view,f);return;}
+                if(current==null||!samePosition(current.location(),t.binding.position(),1)){cancel(view,f,"prepared pose differs from enemy table: "+(current==null?null:current.location())+" binding="+t.binding.position());return;}
                 double requested=preview.moves().stream().filter(m->t.key.equals(m.enemy())).mapToDouble(m->m.collided().length()).sum();
-                if(f.token.spent.getOrDefault(t.key,0.0)+requested>1.010001){cancel(view,f);return;}
+                if(f.token.spent.getOrDefault(t.key,0.0)+requested>1.010001){cancel(view,f,"action budget spent="+f.token.spent.getOrDefault(t.key,0.0)+" requested="+requested);return;}
                 var predicted=t.binding.position();
                 for(var move:preview.moves())if(t.key.equals(move.enemy())){
                     // A clipped/no-budget proposal jams this step. It must not install
                     // a new pusher through an unmoved physical body.
-                    if(move.limited().distanceToSqr(move.collided())>1e-10||move.collided().lengthSqr()<1e-12){cancel(view,f);return;}
+                    if(move.limited().distanceToSqr(move.collided())>1e-10||move.collided().lengthSqr()<1e-12){cancel(view,f,"clipped preview requested="+move.requested()+" limited="+move.limited()+" collided="+move.collided());return;}
                     var delta=new SifuFrame.Vec3((float)(move.collided().x*100),(float)(move.collided().z*100),(float)(move.collided().y*100));
                     int steps=(int)Math.ceil(Math.sqrt((double)delta.x()*delta.x()+(double)delta.y()*delta.y()+(double)delta.z()*delta.z())/10);
                     for(int i=0;i<steps;++i){
@@ -212,7 +277,7 @@ public final class PistonMachines {
                 f.moves.add(watchMove(f,work,view.requests().request(f.scope,id->command(f,work.target,work.source,STEP,id,work.target.binding,work.position,work.delta,work.revision,now)),distance));f.dispatched++;
             }
             for(int i=0;i<f.moves.size();i++)if(done(f.moves.get(i))){
-                var reply=result(f.moves.get(i));if(reply==null||reply.status()!=2){cancel(view,f);return;}
+                var reply=result(f.moves.get(i));if(reply==null||reply.status()!=2){cancel(view,f,"STEP refused: "+reply);return;}
                 if(!f.reported.add(reply.id()))continue;var target=f.work.get(i).target;
                 if(target.last==null||reply.id()>target.last.id()){
                     target.last=reply;poses.put(target.key,new Pose(f.scope,reply.position(),reply.nativeFrame(),now+1500,false));updateProxy(view,target,reply);
@@ -247,15 +312,22 @@ public final class PistonMachines {
                 if(receipt!=null&&receipt.status()==3&&receipt.restored()==(NativeMotionSubjects.player(t.key)?1:7)&&receipt.actorSerial()==t.binding.actorSerial()&&receipt.componentToken()==t.binding.componentToken()){
                     poses.put(t.key,new Pose(f.scope,receipt.position(),receipt.nativeFrame(),now+500,true));
                     updateProxy(view,t,receipt);
-                    dev.sifucraft.combat.FluidMotion.machineReleased(f.level,f.scope,t.key,t.binding,receipt,t.velocity,t.source,t.playerStamp);
+                    if(!dev.sifucraft.combat.BoatPassengers.holds(t.key))dev.sifucraft.combat.FluidMotion.machineReleased(f.level,f.scope,t.key,t.binding,receipt,t.velocity,t.source,t.playerStamp);
                     released++;
                 }else releaseFailed++;
             }
             retire(f,now);
         }
     }
-    private static void cancel(WorldMotionWorld.View view,Flight f){if(f.phase!=Phase.CANCEL){f.phase=Phase.CANCEL;cancelled++;}if(view==null)f.token.retryAt=Long.MAX_VALUE;}
-    private static void retire(Flight f,long now){for(var member:f.members)flights.remove(member,f);f.token.retryAt=now+50;}
+    private static void cancel(WorldMotionWorld.View view,Flight f){cancel(view,f,"source revision or vanilla commit changed");}
+    private static void cancel(WorldMotionWorld.View view,Flight f,String reason){
+        if(f.phase!=Phase.CANCEL){f.phase=Phase.CANCEL;cancelled++;for(var key:f.targets.keySet())lastOutcome.put(key,reason);}
+        if(view==null)f.token.retryAt=Long.MAX_VALUE;
+    }
+    private static void retire(Flight f,long now){for(var member:f.members)flights.remove(member,f);f.token.retryAt=now+50;for(var key:f.targets.keySet()){
+        if(f.members.stream().anyMatch(p->!p.isRemoved()&&f.level.getBlockEntity(p.getBlockPos())==p&&p.getProgress(1)<1))waitingPassengers.put(key,now+1000);
+        else{waitingPassengers.remove(key);passengerSources.remove(key);dev.sifucraft.combat.BoatPassengers.machineFinished(key,f.scope);}
+    }}
     private static void originals(ServerLevel level,List<PistonMovingBlockEntity> members){
         boolean previous=groupCommit.get();groupCommit.set(true);
         try{for(var member:members)if(!member.isRemoved()&&level.getBlockEntity(member.getBlockPos())==member)PistonMovingBlockEntity.tick(level,member.getBlockPos(),level.getBlockState(member.getBlockPos()),member);}
@@ -294,7 +366,13 @@ public final class PistonMachines {
         for(var f:flights.values().stream().distinct().toList())if(f.phase==Phase.CANCEL||f.members.stream().anyMatch(p->p.isRemoved()||f.level.getBlockEntity(p.getBlockPos())!=p))advance(view,f,()->{});
         var alive=new HashSet<EnemyFrame.Key>();if(view.enemies()!=null)for(var e:view.enemies().entries())if(e.alive())alive.add(e.key());
         if(PlayerSignalContacts.nativeBody()!=null)alive.add(NativeMotionSubjects.PLAYER);
-        budgets.keySet().retainAll(alive);poses.keySet().retainAll(alive);
+        budgets.keySet().retainAll(alive);poses.keySet().retainAll(alive);lastOutcome.keySet().retainAll(alive);
+        passengerSources.entrySet().removeIf(e->{
+            if(!alive.contains(e.getKey()))return true;
+            if(e.getValue().stream().anyMatch(PistonMachines::moving))return false;
+            dev.sifucraft.combat.BoatPassengers.machineFinished(e.getKey(),scope);return true;
+        });
+        long now=WorldWriter.clockMillis();waitingPassengers.entrySet().removeIf(e->!alive.contains(e.getKey())||now>=e.getValue());
         var tokens=PistonActions.liveTokens();for(var flight:flights.values())tokens.add(flight.token.id);groupTokens.keySet().retainAll(tokens);
     }
     /** Avoid applying an older enemy table over a newer actual-motion receipt. */
@@ -311,5 +389,5 @@ public final class PistonMachines {
         return p.position;
     }
     static void playerGone(){poses.remove(NativeMotionSubjects.PLAYER);}
-    public static void stop(){flights.clear();sources.clear();groupTokens.clear();budgets.clear();poses.clear();scope=null;playerStamp=0;activeServer=null;offeredRevision=0;geometryWake.set(false);PistonTimeline.stop();}
+    public static void stop(){flights.clear();sources.clear();groupTokens.clear();budgets.clear();poses.clear();waitingPassengers.clear();passengerSources.clear();lastOutcome.clear();scope=null;playerStamp=0;activeServer=null;offeredRevision=0;geometryWake.set(false);PistonTimeline.stop();}
 }

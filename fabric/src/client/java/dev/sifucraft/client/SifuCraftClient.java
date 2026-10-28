@@ -393,7 +393,7 @@ public final class SifuCraftClient implements ClientModInitializer {
             nativeBoatCheck=new NativeBoatCheck();ServerTickEvents.END_SERVER_TICK.register(nativeBoatCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(nativeBoatCheck::restore);
         }
-        if(Boolean.getBoolean("sifucraft.boatDrivingSelfTest")||Boolean.getBoolean("sifucraft.boatBubbleSelfTest")){
+        if(Boolean.getBoolean("sifucraft.boatDrivingSelfTest")||Boolean.getBoolean("sifucraft.boatBubbleSelfTest")||Boolean.getBoolean("sifucraft.boatPistonSelfTest")||Boolean.getBoolean("sifucraft.boatExplosionSelfTest")){
             boatDrivingCheck=new BoatDrivingCheck();ServerTickEvents.END_SERVER_TICK.register(boatDrivingCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(boatDrivingCheck::restore);
         }

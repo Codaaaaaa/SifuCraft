@@ -12,6 +12,7 @@
 #include "combat/world_motion_engine.h"
 #include "combat/explosion_ledger.h"
 #include "combat/explosion_ai_state.h"
+#include "combat/passenger_effect_return.h"
 #include "combat/target_retention.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
@@ -40,6 +41,7 @@ std::atomic<std::uint32_t> g_flags{kScripted};
 std::atomic<bool> g_ready{false};
 std::uintptr_t g_base=0;
 ExplosionLedger g_explosions; // game thread; intentionally independent of peer-session transport ledger
+PassengerEffectReturn g_passenger_returns; // confirmed passenger damage, same boat and actual binding
 std::atomic<bool> g_explosion_room{true};
 struct PlayerPublication {motion::Scope scope;std::uint64_t stamp=0,at=0,save=0,map=0;PlayerInfo info;};
 PlayerPublication g_player_publication; // g_lock protects runtime publication
@@ -63,6 +65,10 @@ public:
         if(motion::CheckWorld(g_base,g_current.actors,GetTickCount64()))return false;
         player_=(c.flags&kPlayer)!=0;
         explosion_=c.source==Source::Explosion;
+        passenger_=c.source==Source::Passenger;
+        passenger_return_=false;
+        observed_handback_=false;
+        if(passenger_)passenger_source_=c;
         wind_=false;
         if(player_)return BindPlayer(c,out);
         const auto& targets=g_current.actors.targets;
@@ -80,19 +86,23 @@ public:
         // infer eligibility from UE Walking alone: Sifu's verified idle grunts use
         // mode None(0), including the successful M1/M3 live fixtures.
         if(const auto why=motion::CheckBody(g_current.actors,target_,&sample_,true,false))return Refuse(why);
-        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers_,!explosion_||wind_))return Refuse(why);
-        if(explosion_&&!wind_&&!ExplosionPeers(true))return Refuse("explosion-ai-state");
+        passenger_return_=g_passenger_returns.Candidate(c,target_.serial,sample_.hp,GetTickCount64());
+        if(passenger_return_)SC_LOG("[passenger-effect] return candidate target=%u/%u source=%u",c.target,c.spawn,static_cast<unsigned>(c.source));
+        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers_,(!explosion_&&!passenger_return_)||wind_))return Refuse(why);
+        if(((explosion_&&!wind_)||passenger_return_)&&!ExplosionPeers(true))return Refuse("world-effect-ai-state");
         hit_=mem::ReadPtr(target_.actor+off::AFightingCharacter::m_HitCapsule);hit_id_=ue::IdentityOf(hit_);
         if(!hit_id_.valid()||ue::OuterOf(hit_)!=target_.actor)return false;
-        if(!combat::ai_gate::Install(g_base,peers_))return false;
-        mode_=sample_.mode;
-        gate_=true;++g_gate_users;
+        const auto health_id=ue::IdentityOf(sample_.health);if(!health_id.valid())return false;
         // Opaque identity token, never an address supplied back to dereference.
         const std::uint64_t identity[]={g_current.actors.scope.native_session,g_current.actors.scope.peer_session,
             target_.id,target_.spawn,static_cast<std::uint64_t>(target_.serial),static_cast<std::uint64_t>(target_.movement_index),
             static_cast<std::uint64_t>(target_.movement_serial),static_cast<std::uint64_t>(peers_.ai.index),
-            static_cast<std::uint64_t>(peers_.ai.serial),static_cast<std::uint64_t>(peers_.behavior.index),static_cast<std::uint64_t>(peers_.behavior.serial)};
+            static_cast<std::uint64_t>(peers_.ai.serial),static_cast<std::uint64_t>(peers_.behavior.index),static_cast<std::uint64_t>(peers_.behavior.serial),
+            static_cast<std::uint64_t>(hit_id_.index),static_cast<std::uint64_t>(hit_id_.serial),static_cast<std::uint64_t>(health_id.index),static_cast<std::uint64_t>(health_id.serial)};
         token_=Hash(identity,sizeof(identity));if(!token_)token_=1;
+        if(passenger_return_&&!g_passenger_returns.Eligible(c,target_.serial,token_,sample_.hp,GetTickCount64()))return Refuse("passenger-effect-binding-changed");
+        if(!combat::ai_gate::Install(g_base,peers_))return false;
+        mode_=sample_.mode;gate_=true;++g_gate_users;
         g_wrong_thread[slot_].store(0);g_watches[slot_][0].store(movement);g_watches[slot_][1].store(peers_.ai.pointer);g_watches[slot_][2].store(peers_.behavior.pointer);
         if(!Convert(sample_,out))return false;
         retained_world_=g_current.actors.scope.generation;
@@ -107,6 +117,8 @@ public:
         return true;
     }
     bool Bound(const Command& c)override {
+        if(passenger_return_&&!g_passenger_returns.Consume(c,target_.serial,token_,sample_.hp,GetTickCount64()))return false;
+        if(!passenger_)g_passenger_returns.Superseded(target_.id,target_.spawn,target_.serial);
         return !explosion_||g_explosions.Motion(c,target_.serial);
     }
     bool Identity()const {
@@ -138,9 +150,9 @@ public:
         motion::Peers peers;
         if(const auto why=motion::CheckBody(g_current.actors,target_,&sample_,false,false))return CheckRefused(why);
         if(sample_.mode!=mode_)return CheckRefused("movement-mode");
-        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers,!explosion_||wind_))return CheckRefused(why);
+        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers,(!explosion_&&!passenger_return_)||wind_))return CheckRefused(why);
         if(peers!=peers_)return CheckRefused("brain-identity");
-        if(explosion_&&!wind_&&!ExplosionPeers(false))return CheckRefused("explosion-ai-state");
+        if(((explosion_&&!wind_)||passenger_return_)&&!ExplosionPeers(false))return CheckRefused("world-effect-ai-state");
         return Convert(sample_,out);
     }
     bool Observe(Body* out)override{
@@ -149,7 +161,7 @@ public:
            mem::ReadPtr(target_.actor+off::AFightingCharacter::m_HealthComponent)!=sample_.health)return false;
         probe::HealthSample health;
         if(!ue::ReadWorldTransform(sample_.root,&sample_.position,&sample_.rotation)||!probe::ReadHealthSample(sample_.health,&health))return false;
-        sample_.hp=health.health;return Convert(sample_,out);
+        sample_.hp=health.health;observed_handback_=Convert(sample_,out);return observed_handback_;
     }
     Sweep Move(const Body&,const std::array<float,3>& delta)override {
         motion::SweepResult result;
@@ -211,8 +223,12 @@ public:
             if(claim!=ExplosionLedger::Decision::Fresh){out.status=claim==ExplosionLedger::Decision::Conflict?Status::Conflict:Status::Busy;return out;}
         }
         const auto application=combat::damage::ApplyWorld(g_base,g_current.actors.scope.world,g_current.actors.scope.generation,
-            g_current.actors.scope.peer_session,c.id,target,c.amount);
+            g_current.actors.scope.peer_session,c.id,target,c.amount,blast&&passenger_&&Identity());
         const auto& result=application.result;
+        if(blast&&passenger_&&application.invoked&&result.health_after>0){
+            const bool remembered=g_passenger_returns.Remember(passenger_source_,target_.serial,token_,result.health_after,GetTickCount64());
+            SC_LOG("[passenger-effect] blast proof target=%u/%u remembered=%u",target_.id,target_.spawn,remembered);
+        }
         const auto outcome=static_cast<protocol::DamageOutcome>(result.result);
         out.health=result.health_after;out.invoked=application.invoked;
         out.flags=result.result<<8;
@@ -224,10 +240,15 @@ public:
         return out;
     }
     void Forget()override {
+        if(passenger_&&passenger_return_){
+            const bool identity=Identity();
+            const bool remembered=observed_handback_&&identity&&g_passenger_returns.Remember(passenger_source_,target_.serial,token_,sample_.hp,GetTickCount64(),true);
+            SC_LOG("[passenger-effect] fall proof target=%u/%u observed=%u identity=%u remembered=%u",target_.id,target_.spawn,observed_handback_,identity,remembered);
+        }
         if(!player_){AcquireSRWLockExclusive(&g_lock);g_retained.Release(retained_world_,target_.id,target_.spawn,GetTickCount64());ReleaseSRWLockExclusive(&g_lock);}retained_world_=0;
         for(auto& watch:g_watches[slot_])watch.store(0);
         if(gate_){gate_=false;if(g_gate_users&&!--g_gate_users&&!combat::ai_gate::Uninstall())SC_LOG("[world-motion] cleanup slot changed; all filters cleared");}
-        target_={};peers_={};sample_={};token_=0;hit_=0;hit_id_={};player_=false;explosion_=false;
+        target_={};peers_={};sample_={};token_=0;hit_=0;hit_id_={};player_=false;explosion_=passenger_=passenger_return_=observed_handback_=false;
     }
 private:
     bool CheckRefused(const char* why)const{SC_LOG("[world-motion] control invalidated target=%u/%u reason=%s",target_.id,target_.spawn,why);return false;}
@@ -248,7 +269,7 @@ private:
         if(capture)explosion_ai_=state;
         return state.retains(explosion_ai_);
     }
-    bool explosion_=false,wind_=false;ExplosionAiState explosion_ai_;
+    bool explosion_=false,wind_=false,passenger_=false,passenger_return_=false,observed_handback_=false;Command passenger_source_{};ExplosionAiState explosion_ai_;
     bool BindPlayer(const Command& c,Body* out){
         if(c.actor_stamp!=Stamp(g_current.actors.pawn_identity))return Refuse("player-stamp");
         if(const auto why=PlayerBody(&target_,&sample_,true))return Refuse(why);
@@ -262,7 +283,10 @@ private:
         SC_LOG("[world-player] observe pawn=%u/%d root=%d/%d token=%016llX thread=%lu",target_.id,target_.serial,hit_id_.index,hit_id_.serial,token_,GetCurrentThreadId());return true;
     }
     bool Refuse(const char* reason){
-        static unsigned logged=0;if(logged<32){++logged;SC_LOG("[world-motion] qualification REFUSE target=%u/%u class=%s reason=%s mode=%d",target_.id,target_.spawn,ue::ClassName(target_.actor).c_str(),reason,sample_.mode);}return false;
+        static unsigned logged=0;static std::uint64_t peer=0;
+        if(peer!=g_current.actors.scope.peer_session){peer=g_current.actors.scope.peer_session;logged=0;}
+        if(logged<32){++logged;SC_LOG("[world-motion] qualification REFUSE target=%u/%u source=%u class=%s reason=%s mode=%d fall_origin=%.3f root_z=%.3f",target_.id,target_.spawn,explosion_?4u:0u,ue::ClassName(target_.actor).c_str(),reason,sample_.mode,
+            mem::ReadOr<float>(target_.movement+off::UFightingMovementComponent::m_fInitialHeight,NAN),sample_.position.z);}return false;
     }
     bool Convert(const motion::BodySample& s,Body* out)const{
         if(player_){
@@ -361,6 +385,7 @@ void ApplyOnGameThread(std::uintptr_t base) {
     }
     base_sync::Context(base,&g_current.actors,g_current.enabled);
     const Environment env{scope.native_session,scope.peer_session,g_current.save,g_current.map,blocks::ShapesAppliedRevision(),g_current.actors.native_frame,scope.generation,flags,ready,settled};
+    g_passenger_returns.Update(env,now);
     if(input::Router().owner()==protocol::InputOwner::Minecraft)for(std::size_t i=0;i<kTargets;++i)g_fleet.at(i).PlayerControlWillTransfer();
     std::array<Engine::Phase,kTargets> previous;
     for(std::size_t i=0;i<kTargets;i++)previous[i]=g_fleet.at(i).phase();

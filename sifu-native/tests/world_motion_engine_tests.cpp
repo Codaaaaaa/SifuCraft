@@ -4,6 +4,8 @@
 #include "combat/world_motion_engine.h"
 #include "combat/target_retention.h"
 #include "combat/pose_fall_origin.h"
+#include "combat/passenger_blast_landing.h"
+#include "combat/passenger_effect_return.h"
 #include "combat/explosion_ledger.h"
 #include "combat/explosion_ai_state.h"
 using namespace sifucraft::world_motion;
@@ -40,7 +42,7 @@ struct Case {
         Seal(c);return c;
     }
     void Send(Command c){Seal(c);Require(engine.Submit(c,now),"submit accepted into bounded arbiter");}
-    Reply Pop(Status expected){Reply r{};Require(engine.Pop(&r),"one receipt present");Require(Valid(r),"receipt ABI/hash");Require(r.status==expected,"receipt status");return r;}
+    Reply Pop(Status expected){Reply r{};Require(engine.Pop(&r),"one receipt present");Require(Valid(r),"receipt ABI/hash");if(r.status!=expected)std::fprintf(stderr,"receipt id=%llu expected=%u actual=%u checks=%u\n",static_cast<unsigned long long>(r.id),static_cast<unsigned>(expected),static_cast<unsigned>(r.status),checks);Require(r.status==expected,"receipt status");return r;}
     void Empty(){Reply r;Require(!engine.Pop(&r),"no premature/duplicate receipt");}
     void Tick(){engine.Update(env,now);}
     void Acquire(){Send(CommandFor());Empty();Require(!engine.Skip(now),"preflight forwards movement");for(auto part:{1u,2u,4u})engine.Original(part);Tick();auto r=Pop(Status::Prepared);Require(r.actor_serial==19&&r.component_token==818&&r.lease==1,"native binding");Require(engine.Skip(now),"lease skips only after preflight");}
@@ -120,7 +122,8 @@ void Lifetime(){
         switch(failure){case 0:c.now+=500;break;case 1:c.env.flags=kPaused;break;case 2:c.env.ready=false;break;
         case 3:c.backend.body.health-=1;break;case 4:c.backend.body.position[0]+=2;break;
         case 5:c.backend.valid=false;break;case 6:c.env.world++;break;}
-        c.Tick();Require(!c.engine.Skip(c.now),"deadline/world/pause/HP/external movement releases");c.Restore();
+        c.Tick();Require(!c.engine.Skip(c.now),"deadline/world/pause/HP/external movement releases");
+        if(failure==1){c.env.flags=0;c.Tick();}c.Restore();
     }
     Case c;c.Acquire();c.now+=500;Require(!c.engine.Skip(c.now),"callback independently enforces absolute deadline");c.Restore();
     Case pre;auto reserve=pre.CommandFor();pre.Send(reserve);pre.engine.Original(1);pre.now+=500;pre.Tick();pre.Pop(Status::TimedOut);
@@ -134,6 +137,21 @@ void Lifetime(){
     auto r=delayed.Pop(Status::TimedOut);Require(r.restored==1&&delayed.engine.phase()==Engine::Phase::Free,"missing original never reports restored and cannot deadlock admission");
 }
 void PausedHandback(){
+    // The pause may become visible to Check before the next environment
+    // publication. Original callbacks on that boundary do not make a paused
+    // final-pose read valid, and must not discard the completed handback.
+    Case boundary;boundary.Acquire();boundary.backend.valid=false;
+    Require(!boundary.engine.Skip(boundary.now),"callback immediately yields when pause first rejects the world");
+    for(auto part:{1u,2u,4u})boundary.engine.Original(part);
+    boundary.env.flags=kPaused;boundary.Tick();boundary.now+=15000;boundary.Tick();
+    Require(boundary.engine.phase()==Engine::Phase::Releasing,"complete boundary callbacks wait for an unpaused final identity and pose read");
+    auto cancel=boundary.CommandFor(Op::Cancel);boundary.Send(cancel);boundary.Empty();
+    boundary.backend.valid=true;boundary.env.flags=0;boundary.Tick();auto stopped=boundary.Pop(Status::Cancelled);
+    Require(stopped.restored==7&&boundary.backend.moves==0&&boundary.engine.phase()==Engine::Phase::Free,"pause cancellation proves actual restoration without reviving movement");
+    Case late;late.Acquire();late.backend.valid=false;Require(!late.engine.Skip(late.now),"late pause stop begins forwarding");
+    for(auto part:{1u,2u,4u})late.engine.Original(part);
+    late.env.flags=kPaused;late.Tick();late.backend.valid=true;late.env.flags=0;late.Tick();
+    late.Send(late.CommandFor(Op::Cancel));Require(late.Pop(Status::Cancelled).restored==7,"late cancel reads a complete pause handback after resume");
     Case c;c.Acquire();c.Send(c.CommandFor(Op::Step));c.Pop(Status::Applied);c.env.revision++;
     c.env.flags=kPaused;c.Tick();auto release=c.CommandFor(Op::Release);c.Send(release);c.Empty();
     c.now+=15000;c.Tick();Require(c.engine.phase()==Engine::Phase::Releasing&&!c.engine.Skip(c.now)&&c.backend.moves==1,"true pause retains only forwarding observation, never movement authority");
@@ -441,6 +459,75 @@ void PlayerMovementOnly(){
     paused.env.flags=0;paused.Tick();paused.engine.Original(1);paused.Tick();Require(paused.Pop(Status::Released).restored==1,"player resumes and proves its one original tick after pause");
 }
 
+void LateStopProof(){
+    Case c;c.Acquire();c.now+=501;c.Tick();Require(!c.engine.Skip(c.now),"timeout stops motion without a Java callback");
+    c.Restore();Require(c.engine.phase()==Engine::Phase::Free,"expired lease is already free before late cancel");
+    auto stop=c.CommandFor(Op::Cancel);c.Send(stop);auto receipt=c.Pop(Status::TimedOut);
+    Require(receipt.restored==7&&receipt.actor_serial==19&&receipt.component_token==818&&c.backend.moves==0,"late authenticated cancel proves all original components restored without moving");
+    const auto forgets=c.backend.forgets;c.Send(stop);auto replay=c.Pop(Status::TimedOut);
+    Require(std::memcmp(&receipt,&replay,sizeof receipt)==0&&c.backend.forgets==forgets,"late stop receipt replay has no side effect");
+    for(int variant=0;variant<4;++variant){auto bad=c.CommandFor(Op::Cancel);if(variant==0)bad.actor_stamp++;if(variant==1)bad.component_token++;if(variant==2)bad.source_hi++;if(variant==3)bad.world++;c.Send(bad);c.Pop(Status::Stale);}
+    auto renew=c.CommandFor(Op::Renew);renew.source=Source::Fluid;renew.duration_ms=500;c.Send(renew);c.Pop(Status::Stale);c.Send(c.CommandFor(Op::Step));c.Pop(Status::Stale);Require(c.backend.moves==0,"terminal proof cannot renew or move the expired lease");
+    auto next=c.CommandFor();c.Send(next);for(auto part:{1u,2u,4u})c.engine.Original(part);c.Tick();c.Pop(Status::Prepared);
+    c.Send(c.CommandFor(Op::Cancel));c.Pop(Status::Stale);Require(c.engine.Skip(c.now),"old stop cannot cancel a newer lease on the same actor");
+    Case expired;expired.Acquire();expired.now+=501;expired.Tick();expired.Restore();expired.now+=2001;expired.Tick();expired.Send(expired.CommandFor(Op::Cancel));expired.Pop(Status::Stale);
+    Case scoped;scoped.Acquire();scoped.now+=501;scoped.Tick();scoped.Restore();scoped.env.peer++;scoped.Tick();scoped.Send(scoped.CommandFor(Op::Cancel));scoped.Pop(Status::Stale);
+    Case partial;partial.Acquire();partial.now+=501;partial.Tick();partial.engine.Original(1);partial.now+=1000;partial.Tick();partial.Send(partial.CommandFor(Op::Cancel));partial.Pop(Status::Stale);
+    Require(partial.backend.moves==0,"missing restoration proof is never fabricated");
+}
+void PassengerBlastLandingProof(){
+    using Guard=sifucraft::combat::PassengerBlastLanding;
+    Guard guard;Guard::Binding binding{10,20,30,40,2,3,4,5};
+    Require(guard.Arm(binding,47,1000),"passenger blast records its exact actual activation and post-damage HP");
+    Require(!guard.Consume(binding,47,999,true,true),"proof cannot apply before its originating blast");
+    Require(!guard.Consume(binding,47,1100,false,true)&&!guard.Consume(binding,47,1100,true,false),"ordinary combat and owned MC damage are always forwarded");
+    for(int field=0;field<8;++field){auto other=binding;
+        switch(field){case 0:other.world++;break;case 1:other.peer++;break;case 2:other.actor++;break;case 3:other.health++;break;
+        case 4:other.generation++;break;case 5:other.spawn++;break;case 6:other.actor_serial++;break;case 7:other.health_serial++;break;}
+        Require(!guard.Consume(other,47,1100,true,true),"landing proof cannot cross world/peer/actor/component/activation identity");
+    }
+    Require(!guard.Consume(binding,46,1100,true,true),"intervening native HP change cannot inherit a stale landing exemption");
+    Require(guard.Consume(binding,47,1100,true,true)&&!guard.Consume(binding,47,1100,true,true),"one matching Native landing is deduplicated exactly once");
+    Require(guard.Arm(binding,47,2000)&&!guard.Consume(binding,47,4001,true,true),"no late or unbounded native damage immunity");
+    Require(guard.Arm(binding,47,5000),"fresh passenger source can have its own bounded proof");guard.Clear();
+    Require(!guard.Consume(binding,47,5001,true,true),"world teardown clears landing proof");
+    binding.health_serial=0;Require(!guard.Arm(binding,47,5000),"missing native identity cannot arm damage filtering");
+    Guard many;binding.health_serial=5;
+    for(unsigned i=0;i<16;++i){auto other=binding;other.actor+=i;Require(many.Arm(other,47,1000),"bounded independent passenger proofs");}
+    auto excess=binding;excess.actor+=16;Require(!many.Arm(excess,47,1000),"full proof table never evicts an active unrelated passenger");
+    Require(many.Consume(binding,47,1100,true,true),"first passenger consumes its own proof");
+    auto second=binding;second.actor++;Require(many.Arm(second,46,1200),"new blast replaces this passenger's existing proof before considering a freed slot");
+    Require(!many.Consume(second,47,1201,true,true)&&many.Consume(second,46,1201,true,true)&&!many.Consume(second,46,1201,true,true),"a freed earlier slot cannot duplicate a later passenger's exemption");
+}
+void PassengerEffectReturnProof(){
+    PassengerEffectReturn proof;Case c;proof.Update(c.env,c.now);auto source=c.CommandFor();source.source=Source::Passenger;
+    Require(!proof.Candidate(source,19,47,c.now),"an arbitrary non-idle passenger cannot claim a recovery exemption");
+    Require(proof.Remember(source,19,818,47,c.now),"only a confirmed former passenger creates a return proof");
+    auto reserve=source;reserve.id++;reserve.health=47;
+    Require(proof.Candidate(reserve,19,47,c.now)&&proof.Eligible(reserve,19,818,47,c.now),"same boat can reserve only the exact post-damage binding");
+    for(int field=0;field<10;++field){auto changed=reserve;
+        switch(field){case 0:changed.world++;break;case 1:changed.save++;break;case 2:changed.map++;break;case 3:changed.source_hi++;break;
+        case 4:changed.source_lo++;break;case 5:changed.target++;break;case 6:changed.spawn++;break;case 7:changed.action++;break;
+        case 8:changed.source=Source::Machine;break;case 9:changed.health++;break;}
+        Require(!proof.Eligible(changed,19,818,47,c.now),"return proof cannot be transferred to another scope/source/boat/target/activation/damage state");
+    }
+    Require(!proof.Eligible(reserve,20,818,47,c.now)&&!proof.Eligible(reserve,19,819,47,c.now),"actor or movement/brain/capsule/health identity replacement denies recovery");
+    Require(!proof.Eligible(reserve,19,818,47,c.now-1),"future proof cannot authorize earlier work");
+    c.env.flags=kPaused;proof.Update(c.env,c.now+1000);c.now+=30000;proof.Update(c.env,c.now);
+    Require(!proof.Eligible(reserve,19,818,47,c.now),"a true pause never authorizes a return reservation");
+    c.env.flags=0;proof.Update(c.env,c.now);
+    Require(proof.Consume(reserve,19,818,47,c.now)&&!proof.Eligible(reserve,19,818,47,c.now),"resume preserves only the unacquired proof window and consumes it once");
+    Require(proof.Remember(source,19,818,47,c.now),"fresh confirmed source can create a new return proof");proof.Superseded(source.target,source.spawn,19);
+    Require(!proof.Eligible(reserve,19,818,47,c.now),"a subsequent non-passenger authority removes the old boat's recovery right");
+    proof.Remember(source,19,818,47,c.now);c.now+=10001;proof.Update(c.env,c.now);Require(!proof.Eligible(reserve,19,818,47,c.now),"unpaused recovery has a hard admission deadline");
+    proof.Remember(source,19,818,47,c.now);c.env.peer++;proof.Update(c.env,c.now);Require(!proof.Eligible(reserve,19,818,47,c.now),"new peer cannot inherit old passenger recovery");
+    proof.Remember(source,19,818,47,c.now,true);auto fall=reserve;fall.source=Source::Fluid;fall.action=EffectTag("sifucraft:passenger_fall");
+    Require(!proof.Eligible(reserve,19,818,47,c.now)&&proof.Eligible(fall,19,818,47,c.now),"observed passenger handback allows only its causal fall, not another boat acquisition");
+    auto unrelated=fall;unrelated.action=EffectTag("sifucraft:fluid");Require(!proof.Eligible(unrelated,19,818,47,c.now),"ordinary nearby fluid cannot borrow the passenger's recovery state");
+    Require(proof.Consume(fall,19,818,47,c.now)&&!proof.Eligible(fall,19,818,47,c.now),"causal fall has one independent short admission");
+    proof.Remember(source,19,818,47,c.now,true);Require(!proof.Eligible(fall,19,818,47,c.now+1001),"passenger fall admission expires after one second without movement ownership");
+}
+
 void PlayerFluidAndPoseOwner(){
     Case fluid;fluid.backend.player=fluid.backend.player_fluid=true;
     auto pc=[&](Op op){auto c=fluid.CommandFor(op);c.source=Source::Fluid;c.flags=kPlayer;c.target=c.spawn=0;
@@ -491,5 +578,5 @@ int main(){
     }
     Require(!TranslateFallOrigin(1e9f,-1e9f,1e9f,&origin),"reject unreasonable translated origin without writing");
     Require(!TranslateFallOrigin(90,90,90,nullptr),"reject missing cache output");
-    HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();UnexecutedCredits();Lifetime();PausedHandback();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();ExplosionMotion();ExplosionEventIdentity();PassengerPose();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();PlayerMovementOnly();PlayerFluidAndPoseOwner();std::printf("world motion arbiter PASS %u assertions\n",checks);
+    HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();UnexecutedCredits();Lifetime();PausedHandback();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();ExplosionMotion();ExplosionEventIdentity();PassengerPose();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();PlayerMovementOnly();LateStopProof();PassengerBlastLandingProof();PassengerEffectReturnProof();PlayerFluidAndPoseOwner();std::printf("world motion arbiter PASS %u assertions\n",checks);
 }
