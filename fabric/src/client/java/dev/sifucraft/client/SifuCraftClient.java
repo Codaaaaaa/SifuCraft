@@ -116,6 +116,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private CircuitScaleCheck circuitScaleCheck;
     private NativeBoatCheck nativeBoatCheck;
     private NativeExplosionCheck nativeExplosionCheck;
+    private CannonCheck cannonCheck;
     private EnvironmentDamageCheck environmentDamageCheck;
     private NativePauseCheck nativePauseCheck;
     private FluidMotionCheck fluidMotionCheck;
@@ -165,6 +166,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         EntityRenderers.register(EnemyEntities.ENEMY_PROXY, NoopRenderer::new);
         EntityRenderers.register(dev.sifucraft.blocks.SignalEntities.PLAYER_BODY, NoopRenderer::new);
         minecraft = Minecraft.getInstance();
+        if(Boolean.getBoolean("sifucraft.cannonSelfTest")&&!Boolean.getBoolean("sifucraft.cannonLive")){CannonCheck.install();return;}
         if (Boolean.getBoolean("sifucraft.isolatedSystemsSelfTest")) {
             IsolatedSystemsCheck.install();
             return;
@@ -388,6 +390,7 @@ public final class SifuCraftClient implements ClientModInitializer {
             nativeExplosionCheck=new NativeExplosionCheck();ServerTickEvents.END_SERVER_TICK.register(nativeExplosionCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(nativeExplosionCheck::restore);
         }
+        if(Boolean.getBoolean("sifucraft.cannonSelfTest"))cannonCheck=CannonCheck.attach();
         if(Boolean.getBoolean("sifucraft.catalogLogicSelfTest")){
             catalogLogicCheck=new CatalogLogicCheck();ServerTickEvents.END_SERVER_TICK.register(catalogLogicCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(catalogLogicCheck::restore);
@@ -706,6 +709,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(circuitScaleCheck!=null)circuitScaleCheck.clientTick(minecraft,frame,blockShapes.metrics());
         if(nativeBoatCheck!=null)nativeBoatCheck.clientTick(minecraft,frame);
         if(nativeExplosionCheck!=null)nativeExplosionCheck.clientTick(minecraft,frame);
+        if(cannonCheck!=null)cannonCheck.clientTick(minecraft,frame);
         if(environmentDamageCheck!=null)environmentDamageCheck.clientTick(minecraft,frame);
         if(nativePauseCheck!=null)nativePauseCheck.clientTick(minecraft);
         if(fluidMotionCheck!=null)fluidMotionCheck.clientTick(minecraft);
