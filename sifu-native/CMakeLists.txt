@@ -70,6 +70,7 @@ add_library(sifucraft_native SHARED
     src/probe/collision_census.cpp
     src/blocks/block_mirror.cpp
     src/collision/builder.cpp
+    src/collision/coverage_query.cpp
     src/collision/components.cpp
     src/collision/export.cpp
     src/collision/physx_mesh.cpp

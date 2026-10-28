@@ -25,9 +25,13 @@ inline constexpr std::uintptr_t DepthTextureVtable = 0x4B7E440;
 inline constexpr std::uintptr_t FidgetResetTimer = 0x18995F0;
 inline constexpr std::uintptr_t FidgetStartTimer = 0x189E7E0;
 inline constexpr std::uintptr_t FidgetProcessVtable = 0x486E7A8;
+inline constexpr std::uintptr_t CoverageArrayFree = 0x1D94B90;
 }  // namespace rva
 
 namespace off {
+namespace UCollisionProfile {
+inline constexpr std::uint32_t ObjectTypeMapping = 0x150;
+}
 namespace UBoxComponent {
 inline constexpr std::uint32_t BoxExtent = 0x4A8;
 }

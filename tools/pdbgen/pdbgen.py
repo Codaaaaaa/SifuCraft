@@ -20,11 +20,12 @@ from pathlib import Path
 EXE_NAME = "Sifu-Win64-Shipping.exe"
 
 # Global variables whose RVA the native module reads.
-SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData", "GD3D11RHI", "GDynamicRHI", "InternationalizationStore", "LevelStreamingManager", "InteractionKey", "SceneRenderTargets", "DepthTextureVtable", "FidgetResetTimer", "FidgetStartTimer", "FidgetProcessVtable"]
+SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData", "GD3D11RHI", "GDynamicRHI", "InternationalizationStore", "LevelStreamingManager", "InteractionKey", "SceneRenderTargets", "DepthTextureVtable", "FidgetResetTimer", "FidgetStartTimer", "FidgetProcessVtable", "CoverageArrayFree"]
 SIZED_SYMBOLS = {"DepthTextureVtable": ("TD3D11Texture2D<FD3D11BaseTexture2D>::`vftable'", 88),
                  "FidgetResetTimer": ("FFidgetPlayerHandler::ResetFidgetTimer", 90),
                  "FidgetStartTimer": ("FFidgetPlayerHandler::TryToStartLaunchFidgetTimer", 429),
-                 "FidgetProcessVtable": ("APFidget::`vftable'", 72)}
+                 "FidgetProcessVtable": ("APFidget::`vftable'", 72),
+                 "CoverageArrayFree": ("FMemory::Free", 52)}
 SYMBOL_MATCHES = {"InternationalizationStore": ("*FInternationalization*Singleton", "::Singleton"),
                   "LevelStreamingManager": ("FSCLevelStreamingManager::s_Instance", "::s_Instance"),
                   "InteractionKey": ("EKeys::Q", "::Q"),
@@ -90,6 +91,7 @@ TYPE_ALIASES = {
 
 # type -> members. A member may live in a base class; its offset is then made absolute.
 MEMBERS = {
+    "UCollisionProfile": ["ObjectTypeMapping"],
     "UBoxComponent": ["BoxExtent"],
     "FViewUniformShaderParameters": ["WorldToClip", "ViewToClip", "ViewToClipNoAA", "InvDeviceZToWorldZTransform", "WorldCameraOrigin", "TemporalAAJitter", "ViewRectMin", "ViewSizeAndInvSize", "BufferSizeAndInvSize", "NearPlane", "FrameNumber"],
     "FSceneRenderTargets": ["SceneDepthZ"],
