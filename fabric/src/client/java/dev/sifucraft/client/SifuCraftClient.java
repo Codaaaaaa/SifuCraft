@@ -143,6 +143,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private TntStressCheck tntStressCheck;
     private WorldRecoveryCheck worldRecoveryCheck;
     private ActiveSwimCheck activeSwimCheck;
+    private BubbleStructureCheck bubbleStructureCheck;
     private final UnrealSpace space = new UnrealSpace();
     private final RespawnHandshake respawn = new RespawnHandshake();
     private final dev.sifucraft.combat.ShieldBlockAnimation shieldAnimation = new dev.sifucraft.combat.ShieldBlockAnimation();
@@ -406,6 +407,9 @@ public final class SifuCraftClient implements ClientModInitializer {
         }
         if(Boolean.getBoolean("sifucraft.activeSwimSelfTest")){
             activeSwimCheck=new ActiveSwimCheck();ServerTickEvents.END_SERVER_TICK.register(activeSwimCheck::tick);ServerLifecycleEvents.SERVER_STOPPING.register(activeSwimCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.bubbleStructureSelfTest")){
+            bubbleStructureCheck=new BubbleStructureCheck();ServerTickEvents.END_SERVER_TICK.register(bubbleStructureCheck::tick);ServerLifecycleEvents.SERVER_STOPPING.register(bubbleStructureCheck::restore);
         }
         if(Boolean.getBoolean("sifucraft.catalogLogicSelfTest")){
             catalogLogicCheck=new CatalogLogicCheck();ServerTickEvents.END_SERVER_TICK.register(catalogLogicCheck::tick);
@@ -720,6 +724,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(tntStressCheck!=null)tntStressCheck.clientTick(minecraft,frame);
         if(worldRecoveryCheck!=null)worldRecoveryCheck.clientTick(minecraft,frame);
         if(activeSwimCheck!=null)activeSwimCheck.clientTick(minecraft,input,frame);
+        if(bubbleStructureCheck!=null)bubbleStructureCheck.clientTick(minecraft,frame);
         if(playerEnvironmentCheck!=null)playerEnvironmentCheck.clientTick(minecraft,guiAvailable(frame));
         if(machineInventoryCheck!=null)machineInventoryCheck.clientTick(minecraft,guiAvailable(frame));
         if(fluidAtmosphereCheck!=null)fluidAtmosphereCheck.clientTick(minecraft,frame);

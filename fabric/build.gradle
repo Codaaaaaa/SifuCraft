@@ -76,6 +76,7 @@ loom {
 			property "sifucraft.tntStressSelfTest", providers.gradleProperty("sifucraft.tntStressSelfTest").getOrElse("false")
 			property "sifucraft.worldRecoverySelfTest", providers.gradleProperty("sifucraft.worldRecoverySelfTest").getOrElse("false")
 			property "sifucraft.activeSwimSelfTest", providers.gradleProperty("sifucraft.activeSwimSelfTest").getOrElse("false")
+			property "sifucraft.bubbleStructureSelfTest", providers.gradleProperty("sifucraft.bubbleStructureSelfTest").getOrElse("false")
 			property "sifucraft.worldRecoveryPhase", providers.gradleProperty("sifucraft.worldRecoveryPhase").getOrElse("prepare")
 			property "sifucraft.nativeBoatSelfTest", providers.gradleProperty("sifucraft.nativeBoatSelfTest").getOrElse("false")
 			property "sifucraft.nativeBoatLive", providers.gradleProperty("sifucraft.nativeBoatLive").getOrElse("false")
