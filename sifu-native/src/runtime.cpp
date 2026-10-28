@@ -33,6 +33,7 @@
 #include "input/displacement_guard.h"
 #include "input/anchor_request.h"
 #include "collision/builder.h"
+#include "collision/coverage_query.h"
 #include "collision/components.h"
 #include "collision/shapes.h"
 #include "collision/walk_check.h"
@@ -601,6 +602,7 @@ public:
         if (generation != generation_) {
             generation_ = generation; hash_ = 0; scan_ = 0; shared_ = 0; components_.clear();
             g_bridge.PublishDoors({});
+            collision::coverage::Invalidate();
         }
         const int visible = collision::VisibleLevelCount(world);
         const auto candidate = interaction::Snapshot();
@@ -621,8 +623,8 @@ public:
             if (!ue::ReadComponentToWorld(p, &transform)) continue;
             // Import all loaded movable scene blockers. Water/TNT/boats can
             // remain active after the player leaves a 25m neighbourhood.
+            if(!collision::Blocks(p,reference))continue;
             nearby.push_back(p); mix(static_cast<std::uint32_t>(id.index)); mix(id.serial);
-            mix(collision::Blocks(p, reference));
             mix(collision::BodySetupOf(p));
             const float* values = &transform.m[0][0];
             for (int i = 0; i < 9; ++i) mix(std::bit_cast<std::uint32_t>(values[i]));
@@ -641,10 +643,7 @@ public:
         const auto grid = builder_.Published();
         if (grid.generation && grid.world_generation == generation && grid.generation != shared_) {
             shared_ = grid.generation;
-            const int size = WideCharToMultiByte(CP_UTF8, 0, grid.path.data(), static_cast<int>(grid.path.size()), nullptr, 0, nullptr, nullptr);
-            std::string file(size, '\0');
-            WideCharToMultiByte(CP_UTF8, 0, grid.path.data(), static_cast<int>(grid.path.size()), file.data(), size, nullptr, nullptr);
-            g_bridge.PublishDoors({grid.generation, grid.world_generation, grid.block_count, grid.cell_count, grid.map, file});
+            collision::coverage::Invalidate();g_bridge.PublishDoors({});
         }
     }
 private:
@@ -654,6 +653,50 @@ private:
     std::uint32_t generation_ = 0, shared_ = 0;
     std::uint32_t target_owner_ = 0;
     int levels_ = -1;
+};
+
+class CoverageSchedule {
+public:
+    void Update(std::uintptr_t world,std::uint32_t generation,const std::string& path,std::uintptr_t pawn,CollisionSchedule& collision){
+        if(generation_!=generation){generation_=generation;at_=0;shared_=0;g_bridge.PublishDoors({});}
+        if(!world||!pawn||!collision.HasReference())return;
+        auto sample=collision::coverage::Latest();
+        if(!sample||sample->world!=world||sample->generation!=generation)return;
+        if(sample->at_ms!=at_){
+            at_=sample->at_ms;collision::BuildRequest request;
+            const float centers[]={sample->center.x,sample->center.y,sample->center.z},extents[]={sample->extent.x,sample->extent.y,sample->extent.z};
+            collision::CellRegion region;
+            for(int i=0;i<3;i++){region.min[i]=static_cast<int>(std::ceil((centers[i]-extents[i])/100))*8;region.max[i]=static_cast<int>(std::floor((centers[i]+extents[i])/100))*8;}
+            if(!region.valid())return;
+            std::vector<std::uintptr_t> components;bool missing=false;
+            for(const auto& component:sample->components){
+                auto name=ue::NameOf(component.pointer),owner_name=ue::NameOf(component.owner);
+                if(ue::IdentityOf(component.pointer)!=component.identity||ue::IdentityOf(component.owner)!=component.owner_identity||
+                   ue::OuterOf(component.pointer)!=component.owner||name.comparison_index!=component.name.comparison_index||name.number!=component.name.number||
+                   owner_name.comparison_index!=component.owner_name.comparison_index||owner_name.number!=component.owner_name.number){missing=true;continue;}
+                components.push_back(component.pointer);
+            }
+            request.shapes=collision::ExtractComponents(components,collision.Reference(),collision.WalkableZ(pawn));
+            request.coverage=collision::Coverage{{region},{}};
+            if(missing||request.shapes.unknown_bounds)request.coverage->unknown.push_back(region);
+            else for(const auto& box:request.shapes.unknown){
+                const float lo[]={box.min.x,box.min.y,box.min.z},hi[]={box.max.x,box.max.y,box.max.z};collision::CellRegion hole;
+                for(int i=0;i<3;i++){hole.min[i]=std::max(region.min[i],static_cast<int>(std::floor(lo[i]/12.5)));hole.max[i]=std::min(region.max[i],std::max(hole.min[i]+1,static_cast<int>(std::ceil(hi[i]/12.5))));}
+                if(hole.valid())request.coverage->unknown.push_back(hole);
+            }
+            request.map=path.substr(path.find_last_of('.')+1);request.generation=generation;request.file_tag="-coverage";request.diagnostics=false;
+            request.pawn_feet=sample->center;request.clip=region;request.cache_regions=true;request.coverage_epoch=sample->epoch;
+            SC_LOG("[coverage] build world=%u epoch=%llu known=1 unknown=%llu components=%llu",generation,sample->epoch,static_cast<unsigned long long>(request.coverage->unknown.size()),static_cast<unsigned long long>(components.size()));
+            builder_.Submit(std::move(request));
+        }
+        const auto grid=builder_.Published();
+        if(grid.generation&&grid.world_generation==generation&&grid.coverage_epoch==sample->epoch&&grid.generation!=shared_){
+            shared_=grid.generation;const int size=WideCharToMultiByte(CP_UTF8,0,grid.path.data(),static_cast<int>(grid.path.size()),nullptr,0,nullptr,nullptr);std::string file(size,'\0');
+            WideCharToMultiByte(CP_UTF8,0,grid.path.data(),static_cast<int>(grid.path.size()),file.data(),size,nullptr,nullptr);
+            g_bridge.PublishDoors({grid.generation,grid.world_generation,grid.block_count,grid.cell_count,grid.map,file});
+        }
+    }
+private:collision::Builder builder_;std::uint32_t generation_=0,shared_=0;std::uint64_t at_=0;
 };
 }  // namespace
 
@@ -667,6 +710,7 @@ void Run(std::uintptr_t image_base) {
     Ownership ownership;
     CollisionSchedule collision_schedule;
     DoorSchedule door_schedule;
+    CoverageSchedule coverage_schedule;
     probe::CombatCensus combat_census;
     combat::Enemies enemies;
     shape_data::Reader shape_reader;
@@ -953,6 +997,7 @@ void Run(std::uintptr_t image_base) {
         }
         if (tick % kWalkCheckEveryTicks == 5) collision_schedule.Share();
         if (settings.stage >= 8) door_schedule.Update(world, generation, world_path, player.pawn, collision_schedule, GetTickCount64());
+        if(settings.stage>=8)coverage_schedule.Update(world,generation,world_path,player.pawn,collision_schedule);
         if (world && log_tick) {
             const LARGE_INTEGER log_start = Now();
             probe::LogWorld(world, frame);

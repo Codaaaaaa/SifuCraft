@@ -18,6 +18,7 @@ inline constexpr std::uint32_t kPlayerPoseHandoff=16; // movement authority obse
 inline constexpr std::uint32_t kPaused=1,kScripted=2;
 inline constexpr std::uint64_t kMotionCapability=1,kDamageCapability=2,kPauseCapability=4,kPlayerMachineCapability=8,kPlayerFluidCapability=16;
 inline constexpr std::uint64_t kExplosionCapability=32,kPassengerCapability=64;
+inline constexpr std::uint64_t kCoverageCapability=128;
 struct PlayerInfo {float position[3]{},radius=0,half_height=0,health=0;};
 static_assert(sizeof(PlayerInfo)==24);
 inline bool Valid(const PlayerInfo& p){

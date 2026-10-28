@@ -221,12 +221,24 @@ std::vector<std::uintptr_t> DynamicSceneComponents(std::uintptr_t world) {
 ShapeSet ExtractComponents(const std::vector<std::uintptr_t>& components, const Responses& pawn, float walkable_z) {
     ShapeSet out; out.pawn_walkable_z = walkable_z; Extractor extractor(&out);
     const auto instanced = ue::FindClass("InstancedStaticMeshComponent");
+    auto unknown=[&](std::uintptr_t component){
+        FVector center{},extent{};
+        if(!mem::Read(component+off::USceneComponent::Bounds+off::FBoxSphereBounds::Origin,&center)||
+           !mem::Read(component+off::USceneComponent::Bounds+off::FBoxSphereBounds::BoxExtent,&extent)||
+           !std::isfinite(center.x)||!std::isfinite(center.y)||!std::isfinite(center.z)||
+           !std::isfinite(extent.x)||!std::isfinite(extent.y)||!std::isfinite(extent.z)||extent.x<0||extent.y<0||extent.z<0||
+           std::fabs(center.x)+extent.x>10000000||std::fabs(center.y)+extent.y>10000000||std::fabs(center.z)+extent.z>10000000){out.unknown_bounds=true;return;}
+        out.unknown.push_back({{center.x-extent.x,center.y-extent.y,center.z-extent.z},{center.x+extent.x,center.y+extent.y,center.z+extent.z}});
+    };
     for (const auto component : components) {
-        if (!ue::IsLive(component) || !Blocks(component, pawn)) continue;
+        if (!ue::IsLive(component)){out.unknown_bounds=true;continue;}
+        if(!Blocks(component,pawn))continue;
         const auto setup = BodySetupOf(component);
-        if (!setup) {++out.no_body_setup;continue;}
+        if (!setup) {++out.no_body_setup;unknown(component);continue;}
+        const auto before=out.convexes.size()+out.capsules.size()+out.triangles.size();const auto unreadable=out.unreadable_meshes,capped=out.capped;
         auto transforms = WorldTransforms(component, instanced, &out);
         if (!transforms.empty()) extractor.AddComponent(setup, transforms, WalkableFloorZOn(component, walkable_z));
+        if(out.convexes.size()+out.capsules.size()+out.triangles.size()==before||out.unreadable_meshes!=unreadable||out.capped!=capped)unknown(component);
     }
     return out;
 }

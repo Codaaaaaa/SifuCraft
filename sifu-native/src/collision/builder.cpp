@@ -42,6 +42,7 @@ std::shared_ptr<const VoxelGrid> Build(const BuildRequest& request) {
     const ShapeSet& s = request.shapes;
     auto built = std::make_shared<VoxelGrid>();
     VoxelGrid& grid = *built;
+    if(request.clip)grid.Clip(*request.clip);
     VoxelStats stats;
     Voxelize(s, &grid, &stats);
     if (!request.diagnostics) return built;
@@ -93,6 +94,7 @@ void Builder::Submit(BuildRequest request) {
 
 std::optional<PublishedGrid> Builder::Publish(const BuildRequest& request, const VoxelGrid& grid) {
     PublishedGrid out;
+    out.coverage_epoch=request.coverage_epoch;
     out.generation = next_generation_++;
     if (out.generation == 0) out.generation = next_generation_++;
     out.world_generation = request.generation;
@@ -135,6 +137,11 @@ void Builder::Run() {
             pending_.reset();
         }
         std::shared_ptr<const VoxelGrid> grid = Build(request);
+        if(request.cache_regions&&request.clip&&request.coverage){
+            auto combined=regions_.Put(request.generation,request.map,request.coverage_epoch,*request.clip,grid,*request.coverage);
+            if(!combined.coverage.valid()){SC_LOG("[collision] coverage capacity exceeded; prior file retained");continue;}
+            grid=std::move(combined.grid);request.coverage=std::move(combined.coverage);
+        }
         std::optional<PublishedGrid> published;
         if (!content_.Matches(request,*grid)) {
             published = Publish(request,*grid);

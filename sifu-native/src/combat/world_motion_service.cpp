@@ -299,7 +299,8 @@ void Exchange(Context context,Mailbox& mailbox) {
         input::Router().owner()==protocol::InputOwner::Sifu&&!hooks::PoseActive();
     const auto capabilities=changed?0ull:((g_ready.load()?kMotionCapability:0)|(g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kDamageCapability:0)|(settings_live?kPauseCapability:0)|(player_ready?(kPlayerMachineCapability|kPlayerFluidCapability):0)|
         (g_explosion_room.load()&&g_ready.load()&&g_published.enabled&&g_published.actors.enabled&&combat::damage::WorldReady()?kExplosionCapability:0)|
-        (g_ready.load()&&g_published.enabled&&g_published.actors.enabled?kPassengerCapability:0));
+        (g_ready.load()&&g_published.enabled&&g_published.actors.enabled?kPassengerCapability:0)|
+        (g_published.enabled&&g_published.actors.enabled?kCoverageCapability:0));
     mailbox.Status(scope.generation,capabilities,now,stamp,blocks::ShapesAppliedRevision(),flags,player_ready?g_player_publication.info:PlayerInfo{});
     ReleaseSRWLockExclusive(&g_lock);
 }

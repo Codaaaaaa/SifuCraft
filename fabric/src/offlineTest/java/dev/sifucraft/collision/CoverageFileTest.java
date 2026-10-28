@@ -21,6 +21,9 @@ public final class CoverageFileTest {
         check(grid.known(-8,0,0)&&grid.known(4,4,4)&&!grid.solid(4,4,4),"known empty space is explicitly certified");
         check(!grid.known(0,0,0)&&!grid.known(-9,0,0)&&!grid.known(16,4,4),"unknown hole and both finite boundaries remain unknown");
         check(grid.knownBlock(-1,0,0)&&grid.knownBlock(1,0,0)&&!grid.knownBlock(0,0,0)&&!grid.knownBlock(2,0,0),"whole fluid cells require known volume, including the single-cell hole");
+        var scene=new SifuCollision.Active(grid,new MapPlacement("CoverageFixture",0,0,0));
+        check(scene.fluidCell(new net.minecraft.core.BlockPos(1,0,0))&&!scene.fluidCell(net.minecraft.core.BlockPos.ZERO)&&!scene.fluidCell(new net.minecraft.core.BlockPos(2,0,0)),"production fluid queries distinguish known air, an unknown hole and outside coverage");
+        check(scene.solidAt(.01,.01,.01)&&!scene.solidAt(1.5,.5,.5)&&scene.solidAt(2.1,.5,.5),"movement/ray boundaries conservatively block unknown cells without filling certified air");
         int trailer=36+"CoverageFixture".length()+76;
         var legacy=java.util.Arrays.copyOf(bytes,trailer);ByteBuffer.wrap(legacy).order(ByteOrder.LITTLE_ENDIAN).putInt(4,1);Files.write(path,legacy);var old=CollisionGrid.read(path);
         check(!old.hasCoverage()&&!old.known(4,4,4)&&old.known(-1,7,0),"v1 absence is not a coverage certificate");

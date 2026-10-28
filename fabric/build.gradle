@@ -72,6 +72,7 @@ loom {
 			property "sifucraft.cannonShots", providers.gradleProperty("sifucraft.cannonShots").getOrElse("12")
 			property "sifucraft.cannonFirstShot", providers.gradleProperty("sifucraft.cannonFirstShot").getOrElse("0")
 			property "sifucraft.machineSpecialSelfTest", providers.gradleProperty("sifucraft.machineSpecialSelfTest").getOrElse("false")
+			property "sifucraft.coverageSceneSelfTest", providers.gradleProperty("sifucraft.coverageSceneSelfTest").getOrElse("false")
 			property "sifucraft.nativeBoatSelfTest", providers.gradleProperty("sifucraft.nativeBoatSelfTest").getOrElse("false")
 			property "sifucraft.nativeBoatLive", providers.gradleProperty("sifucraft.nativeBoatLive").getOrElse("false")
 			property "sifucraft.nativeBoatRenderStallMs", providers.gradleProperty("sifucraft.nativeBoatRenderStallMs").getOrElse("0")

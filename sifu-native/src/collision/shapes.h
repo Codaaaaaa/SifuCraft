@@ -35,11 +35,14 @@ struct TriangleShape {
     FVector v[3]{};
     float walkable_z = kDefaultWalkableFloorZ;
 };
+struct UnknownBounds {FVector min{},max{};};
 
 struct ShapeSet {
     std::vector<ConvexShape> convexes;
     std::vector<CapsuleShape> capsules;
     std::vector<TriangleShape> triangles;
+    std::vector<UnknownBounds> unknown;
+    bool unknown_bounds=false;
 
     float pawn_walkable_z = kDefaultWalkableFloorZ;  // the pawn's own WalkableFloorZ
 

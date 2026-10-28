@@ -41,6 +41,11 @@ public final class SceneFluidGeometry {
         var query=view(level);if(!query.ready)return false;var scene=query.scene;return scene==null||scene.placement().containsX(pos.getX())&&scene.fluidCell(pos);
     }
     public static boolean available(BlockGetter level){return view(level).ready;}
+    public static boolean knownVolume(BlockGetter level,net.minecraft.world.phys.AABB box){
+        var query=view(level);if(!query.ready)return false;var scene=query.scene;if(scene==null||!scene.grid().hasCoverage())return true;
+        for(var pos:BlockPos.betweenClosed(BlockPos.containing(box.minX,box.minY,box.minZ),BlockPos.containing(box.maxX-1e-7,box.maxY-1e-7,box.maxZ-1e-7)))if(!scene.knownBlock(pos))return false;
+        return true;
+    }
     /** A machine bucket must not reach through an imported face into a neighbouring cell. */
     public static boolean canDispenseTo(BlockGetter level,BlockPos source,BlockPos target){
         return inActiveMap(level,source)&&canOccupy(level,target)&&canContact(level,source,target);

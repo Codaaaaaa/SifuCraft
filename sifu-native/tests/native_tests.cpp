@@ -25,6 +25,7 @@
 #include "combat/launch_params.h"
 #include "collision/voxels.h"
 #include "collision/export.h"
+#include "collision/region_cache.h"
 #include "collision/walk_check.h"
 #include "core/build_guard.h"
 #include "core/log.h"
@@ -121,6 +122,17 @@ void TestGridPublication() {
 void TestCoverageFile(const char* fixture){
     using namespace sifucraft::collision;
     Coverage c{{{{-8,0,0},{16,8,8}}},{{{0,0,0},{1,1,1}}}};
+    VoxelGrid clipped;clipped.Clip({{-8,0,0},{8,8,8}});clipped.SetRow(-100,100,0,0);clipped.Set(8,0,0);clipped.Set(0,8,0);
+    Expect(clipped.CellCount()==16&&clipped.Get(-8,0,0)&&clipped.Get(7,0,0)&&!clipped.Get(8,0,0),"voxel writes and runs stay inside the certified finite region");
+    VoxelGrid replacement,merged;replacement.Set(0,0,0);merged.Set(-9,0,0);merged.Set(1,0,0);merged.ReplaceRegion(replacement,{{-8,0,0},{8,8,8}});
+    Expect(merged.CellCount()==2&&merged.Get(-9,0,0)&&merged.Get(0,0,0)&&!merged.Get(1,0,0),"new known air clears stale solid geometry without erasing another region");
+    RegionCache cache;auto first=std::make_shared<VoxelGrid>();first->Set(1,1,1);first->Set(6,1,1);
+    auto a=cache.Put(2,"map",1,{{0,0,0},{8,8,8}},first,Coverage{{{{0,0,0},{8,8,8}}},{{{0,0,0},{8,8,8}}}});
+    auto fresh=std::make_shared<VoxelGrid>();fresh->Set(9,1,1);
+    auto b=cache.Put(2,"map",1,{{4,0,0},{12,8,8}},fresh,Coverage{{{{4,0,0},{12,8,8}}},{}});
+    Expect(b.grid->Get(1,1,1)&&!b.grid->Get(6,1,1)&&b.grid->Get(9,1,1)&&!b.coverage.Known(1,1,1)&&b.coverage.Known(6,1,1),"overlapping newer observations remove stale solids and repair only their part of an old unknown hole");
+    b=cache.Put(3,"map",1,{{4,0,0},{12,8,8}},fresh,Coverage{{{{4,0,0},{12,8,8}}},{}});
+    Expect(!b.grid->Get(1,1,1)&&!b.coverage.Known(1,1,1),"a new world cannot retain a previous world's geometry certificate");
     Expect(c.valid()&&c.Known(-8,0,0)&&c.Known(4,4,4)&&!c.Known(0,0,0)&&!c.Known(-9,0,0)&&!c.Known(16,4,4),"finite known empty region, negative coordinates, unknown hole and exclusive boundary");
     wchar_t directory[MAX_PATH];GetTempPathW(MAX_PATH,directory);auto path=std::wstring(directory)+L"sifucraft_coverage_test.scvx";
     VoxelGrid grid;grid.Set(-1,7,0);Expect(WriteVoxelFile(path,grid,"CoverageFixture",{0,0,0},&c),"write coverage-bearing SCVXv2");

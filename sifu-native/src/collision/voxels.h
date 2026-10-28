@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
+#include <optional>
+#include "collision/coverage.h"
 
 #include "collision/shapes.h"
 
@@ -27,6 +29,8 @@ public:
     };
 
     bool operator==(const VoxelGrid&) const = default;
+    void Clip(CellRegion region){clip_=region;}
+    void ReplaceRegion(const VoxelGrid& source,const CellRegion& region);
 
     // Global cell coordinates (cell = floor(position / kCellCm)).
     void Set(int x, int y, int z);
@@ -45,6 +49,7 @@ public:
 
 private:
     std::unordered_map<std::int64_t, Block> blocks_;
+    std::optional<CellRegion> clip_;
 };
 
 // The top (cm) of the highest solid cell in the column under (x, y), searched from a metre above

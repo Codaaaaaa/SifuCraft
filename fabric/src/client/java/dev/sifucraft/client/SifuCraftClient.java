@@ -117,6 +117,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private NativeBoatCheck nativeBoatCheck;
     private NativeExplosionCheck nativeExplosionCheck;
     private CannonCheck cannonCheck;
+    private CoverageSceneCheck coverageSceneCheck;
     private EnvironmentDamageCheck environmentDamageCheck;
     private NativePauseCheck nativePauseCheck;
     private FluidMotionCheck fluidMotionCheck;
@@ -391,6 +392,7 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerLifecycleEvents.SERVER_STOPPING.register(nativeExplosionCheck::restore);
         }
         if(Boolean.getBoolean("sifucraft.cannonSelfTest"))cannonCheck=CannonCheck.attach();
+        if(Boolean.getBoolean("sifucraft.coverageSceneSelfTest")){coverageSceneCheck=new CoverageSceneCheck();ServerTickEvents.END_SERVER_TICK.register(coverageSceneCheck::tick);ServerLifecycleEvents.SERVER_STOPPING.register(coverageSceneCheck::restore);}
         if(Boolean.getBoolean("sifucraft.catalogLogicSelfTest")){
             catalogLogicCheck=new CatalogLogicCheck();ServerTickEvents.END_SERVER_TICK.register(catalogLogicCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(catalogLogicCheck::restore);
@@ -710,6 +712,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(nativeBoatCheck!=null)nativeBoatCheck.clientTick(minecraft,frame);
         if(nativeExplosionCheck!=null)nativeExplosionCheck.clientTick(minecraft,frame);
         if(cannonCheck!=null)cannonCheck.clientTick(minecraft,frame);
+        if(coverageSceneCheck!=null)coverageSceneCheck.clientTick(minecraft,frame);
         if(environmentDamageCheck!=null)environmentDamageCheck.clientTick(minecraft,frame);
         if(nativePauseCheck!=null)nativePauseCheck.clientTick(minecraft);
         if(fluidMotionCheck!=null)fluidMotionCheck.clientTick(minecraft);
@@ -955,7 +958,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         var dynamic = doors.grid();
         if (dynamic != null && !dynamic.map().equals(grid.map())) dynamic = null;
         long session=bridge.peerSession();int world=bridge.collisionManifest().worldGeneration();
-        if (current != null && current.grid() == grid && current.doors() == dynamic && current.matchesScope(session,world)) return;
+        if (current != null && current.baseGrid() == grid && current.doors() == dynamic && current.matchesScope(session,world)) return;
         MapPlacement placement = slots.placement(grid.map());
         SifuCollision.set(new SifuCollision.Active(grid, placement, dynamic,session,world));
         LOG.info("[collision] in force: {} ({} blocks) at Minecraft origin ({}, {}, {})", grid.map(), grid.blockCount(),
@@ -974,10 +977,13 @@ public final class SifuCraftClient implements ClientModInitializer {
         var scene=SifuCollision.active();var manifest=bridge.collisionManifest();var dynamic=bridge.doors();
         boolean ready=required&&bridge.peerConnected()&&frame!=null&&manifest.generation()!=0&&
                 manifest.worldGeneration()==frame.worldGeneration()&&collision.loadedGeneration()==manifest.generation()&&
-                scene!=null&&scene.grid()==collision.grid()&&scene.matchesScope(bridge.peerSession(),frame.worldGeneration())&&
+                scene!=null&&scene.baseGrid()==collision.grid()&&scene.matchesScope(bridge.peerSession(),frame.worldGeneration())&&
                 scene.placement().map().equals(UnrealSpace.mapName(frame.worldPath()))&&
                 (dynamic.generation()==0||dynamic.worldGeneration()==frame.worldGeneration()&&doors.loadedGeneration()==dynamic.generation()&&
                         scene.doors()!=null&&scene.doors()==doors.grid()&&scene.doors().map().equals(scene.placement().map()));
+        var status=worldMotion.status();
+        if(required&&(status==null||((status.capabilities()&dev.sifucraft.bridge.WorldMotionProtocol.COVERAGE_CAPABILITY)!=0&&
+            (dynamic.generation()==0||scene==null||!scene.grid().hasCoverage()))))ready=false;
         dev.sifucraft.blocks.SceneFluidGeometry.publish(required,ready,scene);
     }
 

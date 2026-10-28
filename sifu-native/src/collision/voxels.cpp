@@ -397,6 +397,7 @@ void VoxelGrid::Unkey(std::int64_t key, int* bx, int* by, int* bz) {
 }
 
 void VoxelGrid::Set(int x, int y, int z) {
+    if(clip_&&!clip_->contains(x,y,z))return;
     Block& block = blocks_[Key(FloorDiv(x, kCellsPerBlock), FloorDiv(y, kCellsPerBlock), FloorDiv(z, kCellsPerBlock))];
     const int lx = x - FloorDiv(x, kCellsPerBlock) * kCellsPerBlock;
     const int ly = y - FloorDiv(y, kCellsPerBlock) * kCellsPerBlock;
@@ -405,6 +406,7 @@ void VoxelGrid::Set(int x, int y, int z) {
 }
 
 void VoxelGrid::SetRow(int x0, int x1, int y, int z) {
+    if(clip_){if(y<clip_->min[1]||y>=clip_->max[1]||z<clip_->min[2]||z>=clip_->max[2])return;x0=std::max(x0,clip_->min[0]);x1=std::min(x1,clip_->max[0]-1);}
     const int by = FloorDiv(y, kCellsPerBlock), bz = FloorDiv(z, kCellsPerBlock);
     const int ly = y - by * kCellsPerBlock, lz = z - bz * kCellsPerBlock;
     for (int x = x0; x <= x1;) {
@@ -414,6 +416,18 @@ void VoxelGrid::SetRow(int x0, int x1, int y, int z) {
         const std::uint64_t run = ((std::uint64_t{1} << (last - first + 1)) - 1) << first;
         blocks_[Key(bx, by, bz)].layers[lz] |= run << (kCellsPerBlock * ly);
         x = (bx + 1) * kCellsPerBlock;
+    }
+}
+
+void VoxelGrid::ReplaceRegion(const VoxelGrid& source,const CellRegion& region){
+    for(auto at=blocks_.begin();at!=blocks_.end();){
+        int x,y,z;Unkey(at->first,&x,&y,&z);x*=8;y*=8;z*=8;
+        if(x+8<=region.min[0]||x>=region.max[0]||y+8<=region.min[1]||y>=region.max[1]||z+8<=region.min[2]||z>=region.max[2]){++at;continue;}
+        if(x>=region.min[0]&&x+8<=region.max[0]&&y>=region.min[1]&&y+8<=region.max[1]&&z>=region.min[2]&&z+8<=region.max[2])at=blocks_.erase(at);
+        else {for(int dz=0;dz<8;dz++)for(int dy=0;dy<8;dy++)for(int dx=0;dx<8;dx++)if(region.contains(x+dx,y+dy,z+dz))at->second.layers[dz]&=~(std::uint64_t{1}<<(dx+8*dy));if(std::all_of(std::begin(at->second.layers),std::end(at->second.layers),[](auto bits){return bits==0;}))at=blocks_.erase(at);else ++at;}
+    }
+    for(const auto& [key,block]:source.blocks_){int x,y,z;Unkey(key,&x,&y,&z);x*=8;y*=8;z*=8;
+        for(int dz=0;dz<8;dz++)for(int dy=0;dy<8;dy++)for(int dx=0;dx<8;dx++)if(region.contains(x+dx,y+dy,z+dz)&&((block.layers[dz]>>(dx+8*dy))&1))Set(x+dx,y+dy,z+dz);
     }
 }
 

@@ -11,6 +11,7 @@
 #include "collision/shapes.h"
 #include "collision/voxels.h"
 #include "collision/coverage.h"
+#include "collision/region_cache.h"
 
 // Turns extracted shapes into the voxel grid off the runtime thread and publishes each grid as a
 // file Minecraft loads (SifuCraft\collision\<map>-<generation>.scvx; the last two are kept). One
@@ -25,10 +26,14 @@ struct BuildRequest {
     std::string file_tag;
     bool diagnostics = true;
     std::optional<Coverage> coverage;
+    std::optional<CellRegion> clip;
+    bool cache_regions=false;
+    std::uint64_t coverage_epoch=0;
 };
 
 // The latest grid written for Minecraft.
 struct PublishedGrid {
+    std::uint64_t coverage_epoch=0;
     std::uint32_t generation = 0;        // unique per grid, also across Sifu sessions; 0 = none yet
     std::uint32_t world_generation = 0;
     std::uint32_t block_count = 0;
@@ -44,11 +49,12 @@ struct PublishedContent {
     std::uint32_t world = 0;
     std::string map, tag;
     std::optional<Coverage> coverage;
+    std::uint64_t coverage_epoch=0;
     bool Matches(const BuildRequest& request, const VoxelGrid& candidate) const {
-        return grid && world == request.generation && map == request.map && tag == request.file_tag && coverage==request.coverage && *grid == candidate;
+        return grid && world == request.generation && map == request.map && tag == request.file_tag && coverage==request.coverage && coverage_epoch==request.coverage_epoch && *grid == candidate;
     }
     void Confirm(const BuildRequest& request, std::shared_ptr<const VoxelGrid> accepted) {
-        grid = std::move(accepted); world = request.generation; map = request.map; tag = request.file_tag;coverage=request.coverage;
+        grid = std::move(accepted); world = request.generation; map = request.map; tag = request.file_tag;coverage=request.coverage;coverage_epoch=request.coverage_epoch;
     }
 };
 
@@ -77,6 +83,7 @@ private:
     std::uint32_t next_generation_;
     std::vector<std::wstring> written_;
     PublishedContent content_;
+    RegionCache regions_;
 };
 
 }  // namespace sifucraft::collision

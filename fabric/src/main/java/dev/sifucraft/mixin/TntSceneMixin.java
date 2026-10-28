@@ -13,7 +13,7 @@ public abstract class TntSceneMixin {
     @Inject(method = "tick", at = @At("HEAD"), cancellable = true)
     private void sifucraft$waitForScene(CallbackInfo ci) {
         var tnt = (PrimedTnt)(Object)this;
-        if (!SceneFluidGeometry.available(tnt.level()) || !dev.sifucraft.combat.SceneExplosions.canAdvance(tnt) ||
+        if (!SceneFluidGeometry.available(tnt.level()) || !SceneFluidGeometry.knownVolume(tnt.level(),tnt.getBoundingBox().expandTowards(tnt.getDeltaMovement()))||!dev.sifucraft.combat.SceneExplosions.canAdvance(tnt) ||
                 !SceneFluidGeometry.inActiveMap(tnt.level(), tnt.blockPosition())) ci.cancel();
     }
 }
