@@ -3,10 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cctype>
-#include <unordered_map>
 
 #include "collision/components.h"
 #include "collision/physx_mesh.h"
+#include "collision/owned_scene.h"
+#include "core/log.h"
 #include "core/safe_memory.h"
 #include "generated/sifu_build.g.h"
 #include "ue/objects.h"
@@ -195,32 +196,19 @@ std::vector<Affine> WorldTransforms(std::uintptr_t component, std::uintptr_t ins
 
 }  // namespace
 
-namespace {
-std::unordered_map<std::uintptr_t, ue::ObjectIdentity> g_interactive_owners;
-void RefreshInteractiveOwners(std::uintptr_t world) {
-    g_interactive_owners.clear();
-    const auto cls = ue::FindClass("InteractionObjectComponent");
-    if (!cls) return;
-    for (int i = 0, count = ue::ObjectCount(); i < count; ++i) {
-        const auto component = ue::ObjectAt(i);
-        if (!ue::IsLive(component) || !ue::IsA(component, cls)) continue;
-        const auto owner = ue::OuterOf(component);
-        if (ue::IsLive(owner) && VisibleLevelOf(component, world)) g_interactive_owners[owner] = ue::IdentityOf(owner);
-    }
-}
-}
 bool DynamicSceneComponent(std::uintptr_t component) {
     const auto owner = ue::OuterOf(component);
     if (!ue::IsLive(owner)) return false;
     const auto character = ue::FindClass("Character");
-    if (character && ue::IsA(owner, character)) return false;
-    if (auto at = g_interactive_owners.find(owner); !IsFixed(component) && at != g_interactive_owners.end() && at->second == ue::IdentityOf(owner)) return true;
+    const auto id=ue::IdentityOf(owner);const auto name=ue::NameOf(owner);
+    const bool derived=owned_scene_actors.Contains(owner,id.index,id.serial,(std::uint64_t(name.number)<<32)|name.comparison_index);
+    if(derived||(character&&ue::IsA(owner,character)))return false;
+    if(!IsFixed(component))return true;
     std::string text = ue::ClassName(owner) + " " + ue::ObjectName(component);
     std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return text.find("door") != std::string::npos;
+    return text.find("door")!=std::string::npos;
 }
 std::vector<std::uintptr_t> DynamicSceneComponents(std::uintptr_t world) {
-    RefreshInteractiveOwners(world);
     const auto primitive = ue::FindClass("PrimitiveComponent");
     std::vector<std::uintptr_t> out;
     for (int i = 0, count = ue::ObjectCount(); i < count; ++i) {
@@ -236,14 +224,13 @@ ShapeSet ExtractComponents(const std::vector<std::uintptr_t>& components, const 
     for (const auto component : components) {
         if (!ue::IsLive(component) || !Blocks(component, pawn)) continue;
         const auto setup = BodySetupOf(component);
-        if (!setup) continue;
+        if (!setup) {++out.no_body_setup;continue;}
         auto transforms = WorldTransforms(component, instanced, &out);
         if (!transforms.empty()) extractor.AddComponent(setup, transforms, WalkableFloorZOn(component, walkable_z));
     }
     return out;
 }
 ShapeSet ExtractShapes(std::uintptr_t world, const Responses& pawn_responses, float pawn_walkable_z) {
-    RefreshInteractiveOwners(world);
     ShapeSet out;
     out.pawn_walkable_z = pawn_walkable_z;
     static const std::uintptr_t primitive_class = ue::FindClass("PrimitiveComponent");
@@ -255,9 +242,12 @@ ShapeSet ExtractShapes(std::uintptr_t world, const Responses& pawn_responses, fl
         const std::uintptr_t component = ue::ObjectAt(i);
         if (!component || !ue::IsA(component, primitive_class) || !ue::IsLive(component)) continue;
         if (!VisibleLevelOf(component, world) || !Blocks(component, pawn_responses)) continue;
+        const auto owner=ue::OuterOf(component);const auto id=ue::IdentityOf(owner);const auto name=ue::NameOf(owner);
+        if(owned_scene_actors.Contains(owner,id.index,id.serial,(std::uint64_t(name.number)<<32)|name.comparison_index))continue;
         if (DynamicSceneComponent(component)) continue;
         if (!IsFixed(component)) {
             ++out.skipped_movable;
+            static unsigned audit=0;if(audit++<24)SC_LOG("[collision] excluded movable character owner=%s component=%s",ue::ClassName(owner).c_str(),ue::ClassName(component).c_str());
             continue;
         }
         const std::uintptr_t setup = BodySetupOf(component);

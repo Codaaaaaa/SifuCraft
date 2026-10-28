@@ -12,6 +12,7 @@
 
 #include "collision/shape_file.h"
 #include "collision/builder.h"
+#include "collision/owned_scene.h"
 #include "combat/activation_tracker.h"
 #include "combat/damage_ledger.h"
 #include "combat/hit_sample.h"
@@ -1124,6 +1125,13 @@ void TestDoorViewHandover() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    {
+        using namespace sifucraft::collision;
+        OwnedSceneActors registry;registry.Add(100,7,0,50);
+        Expect(registry.Contains(100,7,0,50)&&registry.Contains(100,7,19,50),"derived scene exclusion adopts a lazy serial for the same unique name/index");
+        Expect(!registry.Contains(100,7,20,50)&&!registry.Contains(100,8,19,50)&&!registry.Contains(100,7,19,51),"reused pointer/index/name cannot hide a foreign scene actor");
+        registry.Remove(100);Expect(!registry.Contains(100,7,19,50),"removed derived collision is no longer an original-scene exclusion");
+    }
     TestBoundedLogs();
     TestInventoryRouting();
     {

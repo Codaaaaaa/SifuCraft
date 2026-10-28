@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "collision/components.h"
+#include "collision/owned_scene.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "generated/sifu_build.g.h"
@@ -640,6 +641,8 @@ std::uintptr_t SpawnActor(const ue::FVector& at, Fn&& setup) {
     std::uintptr_t actor = 0;
     std::memcpy(&actor, g_params + c.begin_return, sizeof(actor));
     if (!actor) return 0;
+    const auto identity=ue::IdentityOf(actor);const auto name=ue::NameOf(actor);
+    collision::owned_scene_actors.Add(actor,identity.index,identity.serial,(std::uint64_t(name.number)<<32)|name.comparison_index);
     const std::uintptr_t component = mem::ReadPtr(actor + c.component);
     if (component) setup(component);
     Clear(c.finish);
@@ -802,8 +805,9 @@ void LogSpawned(const BlockEntry& e, std::uintptr_t actor) {
 }
 
 void Destroy(std::uintptr_t actor) {
-    if (!actor || !ue::IsLive(actor) || ue::ClassOf(actor) != g_calls.actor_class) return;
+    if (!actor || !ue::IsLive(actor) || ue::ClassOf(actor) != g_calls.actor_class) {collision::owned_scene_actors.Remove(actor);return;}
     Invoke(g_calls.destroy, actor);
+    collision::owned_scene_actors.Remove(actor);
 }
 
 void DestroyShape(const ShapeShown& s) {

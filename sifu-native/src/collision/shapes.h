@@ -47,7 +47,7 @@ struct ShapeSet {
     int components = 0;
     int boxes = 0, spheres = 0, capsule_elems = 0, convex_elems = 0, triangle_meshes = 0, instances = 0;
     int unreadable_meshes = 0;   // triangle meshes whose layout did not validate (left out)
-    int skipped_movable = 0;     // blocking but movable: doors, props (not imported in P3)
+    int skipped_movable = 0;     // moving character bodies, intentionally not terrain
     int no_body_setup = 0;
     int capped = 0;              // arrays larger than the sanity limits (left out)
     int slope_overrides = 0;     // components whose walkable slope override changes the pawn's

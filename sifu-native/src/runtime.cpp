@@ -619,13 +619,8 @@ public:
             if (!ue::IsLive(p) || ue::IdentityOf(p) != id || !collision::VisibleLevelOf(p, world)) continue;
             ue::Affine transform;
             if (!ue::ReadComponentToWorld(p, &transform)) continue;
-            ue::FVector origin = transform.t, extent{};
-            mem::Read(p + off::USceneComponent::Bounds + off::FBoxSphereBounds::Origin, &origin);
-            mem::Read(p + off::USceneComponent::Bounds + off::FBoxSphereBounds::BoxExtent, &extent);
-            const float dx = std::max(0.0f, std::fabs(origin.x - center.x) - extent.x),
-                dy = std::max(0.0f, std::fabs(origin.y - center.y) - extent.y),
-                dz = std::max(0.0f, std::fabs(origin.z - center.z) - extent.z);
-            if (dx * dx + dy * dy + dz * dz > 2500 * 2500) continue;
+            // Import all loaded movable scene blockers. Water/TNT/boats can
+            // remain active after the player leaves a 25m neighbourhood.
             nearby.push_back(p); mix(static_cast<std::uint32_t>(id.index)); mix(id.serial);
             mix(collision::Blocks(p, reference));
             mix(collision::BodySetupOf(p));
@@ -637,6 +632,8 @@ public:
             hash_ = hash;
             collision::BuildRequest request;
             request.shapes = collision::ExtractComponents(nearby, reference, collision.WalkableZ(pawn));
+            SC_LOG("[collision-dynamic] candidates=%llu blocking=%d convex=%llu capsules=%llu triangles=%llu unreadable=%d missing_setup=%d",static_cast<unsigned long long>(nearby.size()),request.shapes.components,
+                static_cast<unsigned long long>(request.shapes.convexes.size()),static_cast<unsigned long long>(request.shapes.capsules.size()),static_cast<unsigned long long>(request.shapes.triangles.size()),request.shapes.unreadable_meshes,request.shapes.no_body_setup);
             request.map = path.substr(path.find_last_of('.') + 1); request.generation = generation;
             request.file_tag = "-doors"; request.diagnostics = false; request.pawn_feet = center;
             builder_.Submit(std::move(request));
