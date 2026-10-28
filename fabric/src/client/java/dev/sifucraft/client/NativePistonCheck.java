@@ -47,6 +47,8 @@ final class NativePistonCheck {
     private final boolean pause=Boolean.getBoolean("sifucraft.pistonPauseSelfTest");
     private final boolean player=Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest");
     private final boolean lift=Boolean.getBoolean("sifucraft.nativePlayerPistonLift");
+    private final boolean ceiling=Boolean.getBoolean("sifucraft.nativePlayerPistonCeiling");
+    private boolean ceilingRemoved;private long jammedAt;private PistonMachines.Stats jammedMachines;
     private final boolean slime=Boolean.getBoolean("sifucraft.nativePlayerPistonSlime");
     private double nativePeak,referencePeak;private boolean nativeApex;
     private final java.nio.file.Path f8File=java.nio.file.Path.of(System.getProperty("sifucraft.playerPistonF8Control"));
@@ -57,6 +59,7 @@ final class NativePistonCheck {
     NativePistonCheck(){require(DevWorld.LEVEL_ID.startsWith(player?"sifucraft-player-piston-check-":"sifucraft-piston-native-check-"),"disposable save required");
         require(!lift||player,"lift diagnostic requires player mode");if(lift)stage=-3;
         require(!slime||lift,"slime diagnostic requires the elevated player fixture");
+        require(!ceiling||lift&&!slime,"ceiling fixture uses the original honey player lift");
         if(slime)dev.sifucraft.combat.FluidMotion.observe(new dev.sifucraft.combat.FluidMotion.Observer(){
             public void prepared(dev.sifucraft.combat.FluidMotion.Sample value){}
             public void simulated(dev.sifucraft.combat.FluidMotion.Sample value){}
@@ -140,6 +143,17 @@ final class NativePistonCheck {
             var proxy=NativeMotionSubjects.find(target.key());require(proxy!=null,"same activation retained");
             if(stage==1){var power=direction==Direction.UP?base.west():base.relative(direction,-1);originals.putIfAbsent(power,level.getBlockState(power));level.setBlockAndUpdate(power,Blocks.REDSTONE_BLOCK.defaultBlockState());stage=2;return;}
             if(stage==2){
+                if(ceiling&&!ceilingRemoved){
+                    var stats=PistonMachines.stats();
+                    if(stats.cancelRestored()==0||stats.pending()!=0)return;
+                    require(stats.applied()==0&&stats.committed()==0&&stats.cancelRestoreFailed()==0,"ceiling-clipped preview restores the real player without a physical STEP or BE commit: "+stats);
+                    require(proxy.position().distanceTo(start)<.03,"real player remains at the uncommitted lift start");
+                    if(jammedAt==0){jammedAt=System.currentTimeMillis();jammedMachines=stats;return;}
+                    if(System.currentTimeMillis()-jammedAt<600)return;
+                    set(liftPayload.above(3),Blocks.AIR.defaultBlockState());ceilingRemoved=true;
+                    LoggerFactory.getLogger("sifucraft").info("[native-piston-test] real player ceiling jam restored, removed obstruction; stats={}",stats);
+                    return;
+                }
                 var destination=base.relative(direction,2);
                 if(!level.getBlockState(base).getValue(BlockStateProperties.EXTENDED)||!level.getBlockState(destination).is(lift?(slime?Blocks.SLIME_BLOCK:Blocks.HONEY_BLOCK):Blocks.STONE)||level.getBlockEntity(destination) instanceof PistonMovingBlockEntity||PistonMachines.stats().pending()!=0)return;
                 require(reference!=null,"physical binding produced the independent reference");
@@ -180,6 +194,7 @@ final class NativePistonCheck {
             }
             require(liftPayload!=null,"empty elevated player platform and headroom");
             set(liftPayload.below(),Blocks.PISTON.defaultBlockState().setValue(BlockStateProperties.FACING,Direction.UP));set(liftPayload,(slime?Blocks.SLIME_BLOCK:Blocks.HONEY_BLOCK).defaultBlockState());
+            if(ceiling)set(liftPayload.above(3),Blocks.STONE.defaultBlockState());
             setupPosition=Vec3.atBottomCenterOf(liftPayload).add(0,slime?1:.9375,0);
             backing.teleportTo(level,setupPosition.x,setupPosition.y+.15,setupPosition.z,java.util.Set.of(),backing.getYRot(),backing.getXRot(),true);
             stage=-2;deadline=System.currentTimeMillis()+20000;
@@ -216,6 +231,7 @@ final class NativePistonCheck {
         report.put("prepared",stats.prepared());report.put("steps",stats.applied());report.put("released",stats.released());report.put("restored_ticks",player?1:7);report.put("post_release_ms",slime?0:3000);
         report.put("direction",direction.toString());report.put("payload",lift?(slime?"slime":"honey"):"stone");report.put("native_player_hp",playerHealth);report.put("ordinary_mc_setup_and_return",lift);
         if(lift)report.put("final_native_handback_stable_ms",3000);
+        if(ceiling){require(ceilingRemoved&&jammedMachines!=null,"ceiling jam was physically observed before clear-stroke recovery");report.put("ceiling_preflight_jam",true);report.put("jammed_machines",jammedMachines);report.put("cancel_restore_failed",stats.cancelRestoreFailed());}
         if(slime){report.put("native_peak_y",nativePeak);report.put("reference_peak_y",referencePeak);report.put("fluid_stats",dev.sifucraft.combat.FluidMotion.stats().toString());report.put("handoff_at_apex",true);}
         AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve(player?"p8-native-player-piston.json":"p8-native-piston.json"),out->new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(report,out));
         LoggerFactory.getLogger("sifucraft").info("[native-piston-test] PASS real actor, vanilla reference, geometry barriers, required movement handback; slime_apex_handoff={} stats={}",slime,stats);

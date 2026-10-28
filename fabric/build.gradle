@@ -56,8 +56,11 @@ loom {
 			property "sifucraft.shapeUpdateSelfTest", providers.gradleProperty("sifucraft.shapeUpdateSelfTest").getOrElse("false")
 			property "sifucraft.pistonTransactionSelfTest", providers.gradleProperty("sifucraft.pistonTransactionSelfTest").getOrElse("false")
 			property "sifucraft.nativePistonSelfTest", providers.gradleProperty("sifucraft.nativePistonSelfTest").getOrElse("false")
+			property "sifucraft.pistonObstructionSelfTest", providers.gradleProperty("sifucraft.pistonObstructionSelfTest").getOrElse("false")
+			property "sifucraft.pistonObstructionCase", providers.gradleProperty("sifucraft.pistonObstructionCase").getOrElse("mc-wall")
 			property "sifucraft.nativePlayerPistonSelfTest", providers.gradleProperty("sifucraft.nativePlayerPistonSelfTest").getOrElse("false")
 			property "sifucraft.nativePlayerPistonLift", providers.gradleProperty("sifucraft.nativePlayerPistonLift").getOrElse("false")
+			property "sifucraft.nativePlayerPistonCeiling", providers.gradleProperty("sifucraft.nativePlayerPistonCeiling").getOrElse("false")
 			property "sifucraft.nativePlayerPistonSlime", providers.gradleProperty("sifucraft.nativePlayerPistonSlime").getOrElse("false")
 			property "sifucraft.nativePlayerPistonDwellMs", providers.gradleProperty("sifucraft.nativePlayerPistonDwellMs").getOrElse("300")
 			property "sifucraft.playerPistonF8Control", file('../build/p8-native-player-f8-control.txt').canonicalPath

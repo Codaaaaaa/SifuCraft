@@ -460,6 +460,16 @@ void PlayerMovementOnly(){
 }
 
 void LateStopProof(){
+    for(bool partial:{false,true}){
+        Case blocked;blocked.Acquire();blocked.backend.block=true;blocked.backend.fraction=partial?.25f:0.f;
+        auto step=blocked.CommandFor(Op::Step);blocked.Send(step);auto moved=blocked.Pop(partial?Status::Partial:Status::Blocked);
+        blocked.Restore();auto stop=blocked.CommandFor(Op::Cancel);blocked.Send(stop);auto restored=blocked.Pop(Status::Cancelled);
+        Require(restored.restored==7&&restored.position[0]==moved.position[0]&&restored.actor_serial==19&&restored.component_token==818,
+            "late stop after physical obstruction retains the exact actual endpoint and all original tick observations");
+        const auto calls=blocked.backend.moves;blocked.Send(stop);blocked.Pop(Status::Cancelled);
+        blocked.Send(blocked.CommandFor(Op::Step));blocked.Pop(Status::Stale);
+        Require(blocked.backend.moves==calls,"a restored obstruction proof cannot replay a partial sweep or revive movement");
+    }
     Case c;c.Acquire();c.now+=501;c.Tick();Require(!c.engine.Skip(c.now),"timeout stops motion without a Java callback");
     c.Restore();Require(c.engine.phase()==Engine::Phase::Free,"expired lease is already free before late cancel");
     auto stop=c.CommandFor(Op::Cancel);c.Send(stop);auto receipt=c.Pop(Status::TimedOut);

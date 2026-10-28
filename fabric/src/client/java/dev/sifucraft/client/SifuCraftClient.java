@@ -102,6 +102,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private ShapeUpdateCheck shapeUpdateCheck;
     private PistonTransactionCheck pistonTransactionCheck;
     private NativePistonCheck nativePistonCheck;
+    private PistonObstructionCheck pistonObstructionCheck;
     private AirEnvironmentCheck airEnvironmentCheck;
     private HotFloorCheck hotFloorCheck;
     private BubbleMatrixCheck bubbleMatrixCheck;
@@ -376,6 +377,10 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(Boolean.getBoolean("sifucraft.nativePistonSelfTest")||Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest")){
             nativePistonCheck=new NativePistonCheck();ServerTickEvents.END_SERVER_TICK.register(nativePistonCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(nativePistonCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.pistonObstructionSelfTest")){
+            pistonObstructionCheck=new PistonObstructionCheck();ServerTickEvents.END_SERVER_TICK.register(pistonObstructionCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(pistonObstructionCheck::restore);
         }
         if(Boolean.getBoolean("sifucraft.fluidSceneSelfTest")){
             fluidSceneCheck=new FluidSceneCheck();ServerTickEvents.END_SERVER_TICK.register(fluidSceneCheck::tick);
@@ -729,6 +734,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(shapeUpdateCheck!=null)shapeUpdateCheck.clientTick(minecraft,guiAvailable(frame));
         if(pistonTransactionCheck!=null)pistonTransactionCheck.clientTick(minecraft,guiAvailable(frame));
         if(nativePistonCheck!=null)nativePistonCheck.clientTick(minecraft,guiAvailable(frame),frame);
+        if(pistonObstructionCheck!=null)pistonObstructionCheck.clientTick(minecraft,guiAvailable(frame));
         if(fluidSceneCheck!=null)fluidSceneCheck.clientTick(minecraft,guiAvailable(frame));
         if(fluidPersistenceCheck!=null)fluidPersistenceCheck.clientTick(minecraft,guiAvailable(frame));
         if(playerItemBubbleCheck!=null)playerItemBubbleCheck.clientTick(minecraft,guiAvailable(frame));

@@ -72,6 +72,15 @@ public final class P8OfflineTest {
         dev.sifucraft.client.BlockShapesOfflineTest.run();
         Path report = Path.of(args.length == 0 ? "build/reports/p8/block-catalog.json" : args[0]);
         Files.createDirectories(report.toAbsolutePath().getParent()); RedstoneCatalog.write(report);
+        var audit=com.google.gson.JsonParser.parseString(Files.readString(report)).getAsJsonObject();
+        int audited=0;var unknown=new java.util.ArrayList<String>();
+        for(var value:audit.getAsJsonArray("blocks")){
+            var block=value.getAsJsonObject();if(!block.get("redstone_candidate").getAsBoolean())continue;audited++;
+            if(block.get("native_boundary").getAsString().equals("unreviewed_candidate"))unknown.add(block.get("id").getAsString());
+        }
+        check(unknown.isEmpty(),"installed candidate classes require an explicit Native boundary review: "+unknown);
+        check(audited==audit.get("candidate_count").getAsInt(),"boundary report contains every installed candidate without truncation");
+        System.out.println("P8 catalog boundaries: "+audited+" candidates classified, behavior acceptance remains in separate evidence");
         System.out.println("P8 offline PASS: " + states + " installed state roundtrips, separate shapes, revisions/tombstones, 32768 blocks; catalog=" + report);
     }
 }

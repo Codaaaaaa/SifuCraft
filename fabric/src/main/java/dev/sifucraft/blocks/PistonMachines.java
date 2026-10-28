@@ -77,12 +77,16 @@ public final class PistonMachines {
     private static volatile long offeredRevision;
     private static volatile java.util.function.BiConsumer<EnemyFrame.Key,Reply> preparedObserver;
     private static volatile java.util.function.BooleanSupplier preparedGate;
+    private static volatile java.util.function.BiConsumer<EnemyFrame.Key,Reply> motionObserver;
+    public static void observeMotion(java.util.function.BiConsumer<EnemyFrame.Key,Reply> observer){
+        if(observer!=null&&!Boolean.getBoolean("sifucraft.pistonObstructionSelfTest"))throw new IllegalStateException("isolated obstruction fixture only");motionObserver=observer;
+    }
     public static void preparedGate(java.util.function.BooleanSupplier gate){
         if(gate!=null&&!Boolean.getBoolean("sifucraft.boatPistonSelfTest"))throw new IllegalStateException("isolated boat fixture only");preparedGate=gate;
     }
     /** Isolated real-game test observes the physical binding before creating its independent reference. */
     public static void observePrepared(java.util.function.BiConsumer<EnemyFrame.Key,Reply> observer){
-        if(observer!=null&&!Boolean.getBoolean("sifucraft.nativePistonSelfTest")&&!Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest")&&!Boolean.getBoolean("sifucraft.pistonPauseSelfTest")&&!Boolean.getBoolean("sifucraft.boatPistonSelfTest"))throw new IllegalStateException("isolated fixture only");preparedObserver=observer;
+        if(observer!=null&&!Boolean.getBoolean("sifucraft.nativePistonSelfTest")&&!Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest")&&!Boolean.getBoolean("sifucraft.pistonPauseSelfTest")&&!Boolean.getBoolean("sifucraft.boatPistonSelfTest")&&!Boolean.getBoolean("sifucraft.pistonObstructionSelfTest"))throw new IllegalStateException("isolated fixture only");preparedObserver=observer;
     }
     private static long prepared,applied,committed,cancelled,released,releaseFailed,refundedSteps,cancelRestored,cancelRestoreFailed;private static double refundedCm;
     public record Stats(long prepared,long applied,long committed,long cancelled,long released,long releaseFailed,int pending,long refundedSteps,double refundedCm,long cancelRestored,long cancelRestoreFailed){}
@@ -277,12 +281,21 @@ public final class PistonMachines {
                 f.moves.add(watchMove(f,work,view.requests().request(f.scope,id->command(f,work.target,work.source,STEP,id,work.target.binding,work.position,work.delta,work.revision,now)),distance));f.dispatched++;
             }
             for(int i=0;i<f.moves.size();i++)if(done(f.moves.get(i))){
-                var reply=result(f.moves.get(i));if(reply==null||reply.status()!=2){cancel(view,f,"STEP refused: "+reply);return;}
-                if(!f.reported.add(reply.id()))continue;var target=f.work.get(i).target;
+                var reply=result(f.moves.get(i));var target=f.work.get(i).target;
+                // Partial/blocked sweeps are final physical observations too.
+                // Preserve their real endpoint before cancelling the uncommitted
+                // BE; a later preview must not start at the preceding full step.
+                boolean observed=reply!=null&&(reply.status()==2||reply.status()==4||reply.status()==5)&&
+                    reply.actorSerial()==target.binding.actorSerial()&&reply.componentToken()==target.binding.componentToken()&&reply.health()==target.entry.health();
+                if(!observed){cancel(view,f,"STEP refused: "+reply);return;}
+                if(!f.reported.add(reply.id()))continue;
                 if(target.last==null||reply.id()>target.last.id()){
                     target.last=reply;poses.put(target.key,new Pose(f.scope,reply.position(),reply.nativeFrame(),now+1500,false));updateProxy(view,target,reply);
+                    var observer=motionObserver;if(observer!=null)observer.accept(target.key,reply);
                 }
-                applied++;f.lastRevision=Math.max(f.lastRevision,reply.shapeRevision());
+                f.lastRevision=Math.max(f.lastRevision,reply.shapeRevision());
+                if(reply.status()!=2){cancel(view,f,"actual obstruction, retained endpoint: "+reply);return;}
+                applied++;
             }
             if(f.dispatched<f.work.size()||f.moves.stream().anyMatch(p->!done(p)))return;
             f.phase=Phase.COMMIT;

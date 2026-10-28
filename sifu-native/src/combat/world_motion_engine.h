@@ -97,7 +97,7 @@ public:
             // Keep only an authenticated proof of a completed handback. A late
             // owner CANCEL can read it; it cannot renew or revive authority.
             terminal_valid_=observed&&restored_==Parts()&&!identity_lost_&&
-                (reason_==Status::Released||reason_==Status::Cancelled||reason_==Status::TimedOut||reason_==Status::TargetLost);
+                (reason_==Status::Released||reason_==Status::Cancelled||reason_==Status::TimedOut||reason_==Status::TargetLost||reason_==Status::Partial||reason_==Status::Blocked);
             terminal_until_=now+2000;
             backend_.Forget();phase_=Phase::Free;
         }
@@ -120,8 +120,10 @@ public:
         const bool heartbeat=command.op==Op::Renew&&phase_==Phase::Owned&&Owns(command);
         if(!Scope(command)||command.issued_ms>now||(now-command.issued_ms>200&&!heartbeat)) {Reject(command,Status::Stale,now);return true;}
         if(command.op==Op::Cancel&&phase_==Phase::Free&&terminal_valid_&&now<=terminal_until_&&Owns(command)){
-            const auto receipt=Make(command,reason_==Status::TargetLost?Status::Cancelled:reason_,now,{},restore_flags_,true);
-            if(ledger_->Finish(command.id,receipt))out_.push_back(receipt);return true;
+            const auto stopped=reason_==Status::TargetLost||reason_==Status::Partial||reason_==Status::Blocked?Status::Cancelled:reason_;
+            const auto receipt=Make(command,stopped,now,{},restore_flags_,true);
+            if(ledger_->Finish(command.id,receipt))out_.push_back(receipt);
+            return true;
         }
         // Releasing authority needs no ready movement world. A real pause must
         // not reject the owner's stop request as Busy.
