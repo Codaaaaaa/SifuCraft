@@ -24,10 +24,13 @@ import org.slf4j.LoggerFactory;
 /** Vanilla boat + production MC passenger adapter + separate native world-command endpoint. */
 final class NativeBoatCheck {
     private final boolean live=Boolean.getBoolean("sifucraft.nativeBoatLive");
+    private final boolean pair=Boolean.getBoolean("sifucraft.nativeBoatPair");
+    private EnemyFrame.Key pickup;private boolean pickupStarted;
     private final Map<EnemyFrame.Key,EnemyFrame.Entry> initial=new HashMap<>();
     private volatile boolean ready,finished;
     private AbstractBoat boat;private Vec3 origin;private int stage,ticks;
     private long deadline,began,initialFailed,initialReleased;private double moved,yawChange;private int initialBoarded;
+    private final long startupDeadline=System.currentTimeMillis()+180000;
     private final int renderStallMs=Math.clamp(Integer.getInteger("sifucraft.nativeBoatRenderStallMs",0),0,1500);
     private volatile boolean stallRequested,stallCompleted;
     private java.nio.file.Path threadReport;
@@ -55,13 +58,15 @@ final class NativeBoatCheck {
     private EnemyFrame.Entry current(WorldMotionWorld.View view,EnemyFrame.Key key){return view.enemies().entries().stream().filter(e->e.key().equals(key)).findFirst().orElse(null);}
     void tick(MinecraftServer server){
         if(finished)return;
-        if(began==0)began=System.currentTimeMillis();
         try{
-            require(System.currentTimeMillis()-began<90000,"bounded complete fixture");
-            var view=WorldMotionWorld.current();if(stage==0&&!ready)return;
+            var view=WorldMotionWorld.current();
+            if(stage==0&&!ready){require(System.currentTimeMillis()<startupDeadline,"bounded startup");began=0;return;}
+            if(began==0)began=System.currentTimeMillis();
+            require(System.currentTimeMillis()-began<120000,"bounded complete fixture");
             if(stage==0){
-                var candidates=view.enemies().entries().stream().filter(e->e.alive()&&EnemyMirrors.hitAttacker(e.id(),e.spawn())!=null).limit(live?1:2).toList();
-                if(candidates.size()<(live?1:2))return;
+                int countWanted=live&&!pair?1:2;
+                var candidates=view.enemies().entries().stream().filter(e->e.alive()&&EnemyMirrors.hitAttacker(e.id(),e.spawn())!=null).limit(countWanted).toList();
+                if(candidates.size()<countWanted)return;
                 began=System.currentTimeMillis();
                 threadReport=server.getWorldPath(LevelResource.ROOT).resolve("p11-stalled-render-threads.txt");
                 for(var entry:candidates)initial.put(entry.key(),entry);
@@ -69,6 +74,11 @@ final class NativeBoatCheck {
                 double x=0,y=0,z=0;
                 for(var entry:initial.values()){x+=view.placement().mcX(entry.location().x());y+=view.placement().mcY(entry.location().z()-entry.halfHeight());z+=view.placement().mcZ(entry.location().y());}
                 int count=initial.size();origin=new Vec3(x/count,y/count+.4,z/count);
+                if(pair){
+                    require(live,"pair pickup is a real-game fixture");var first=candidates.getFirst();pickup=candidates.getLast().key();
+                    origin=new Vec3(view.placement().mcX(first.location().x()),view.placement().mcY(first.location().z()-first.halfHeight())+.4,view.placement().mcZ(first.location().y()));
+                    require(origin.distanceTo(EnemyMirrors.hitAttacker(pickup.id(),pickup.spawn()).position())<15,"bounded local pickup route");
+                }
                 var type=BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.withDefaultNamespace("oak_boat"));
                 boat=(AbstractBoat)type.create(server.overworld(),EntitySpawnReason.COMMAND);require(boat!=null,"installed original boat");
                 boat.setPos(origin);require(server.overworld().addFreshEntity(boat),"one registered original boat");
@@ -81,7 +91,7 @@ final class NativeBoatCheck {
                     }
                     require(direction!=null,"a short boat path fits the imported scene before moving a real NPC");
                 }
-                initialBoarded=(int)BoatPassengers.stats().boarded();initialFailed=BoatPassengers.stats().failed();initialReleased=BoatPassengers.stats().released();deadline=System.currentTimeMillis()+20000;stage=1;
+                initialBoarded=(int)BoatPassengers.stats().boarded();initialFailed=BoatPassengers.stats().failed();initialReleased=BoatPassengers.stats().released();deadline=System.currentTimeMillis()+(pair?60000:20000);stage=1;
                 LoggerFactory.getLogger("sifucraft").info("[native-boat-test] placed original boat at {} near {} activations live={}",origin,initial.keySet(),live);return;
             }
             if(!ready)return;
@@ -93,8 +103,21 @@ final class NativeBoatCheck {
                 yawChange=Math.max(yawChange,Math.abs(net.minecraft.util.Mth.wrapDegrees(e.yaw()-entry.yaw())));
             }
             if(stage==1){
+                if(pair&&boat.getPassengers().size()==1){
+                    require(BoatPassengers.stats().failed()==initialFailed,"pickup retains its first actual passenger");
+                    var other=EnemyMirrors.hitAttacker(pickup.id(),pickup.spawn());require(other!=null,"second actual body remains current");
+                    var toward=other.position().subtract(boat.position()).multiply(1,0,1);
+                    if(toward.length()>.9){
+                        // Approach in reverse: the empty rear seat meets the new
+                        // body before the occupied front seat. No NPC teleport.
+                        boat.setYRot((float)Math.toDegrees(Math.atan2(toward.x,-toward.z)));
+                        boat.setDeltaMovement(toward.normalize().scale(.08));
+                    }else boat.setDeltaMovement(Vec3.ZERO);
+                    if(!pickupStarted){pickupStarted=true;LoggerFactory.getLogger("sifucraft").info("[native-boat-test] carrying first actual NPC toward second activation {} with original boat physics",pickup);}
+                }
                 if(boat.getPassengers().size()<initial.size())return;
                 require(BoatPassengers.stats().boarded()>=initialBoarded+initial.size(),"MC relationship waited for native lease preparation");
+                if(pair){boat.setDeltaMovement(Vec3.ZERO);origin=boat.position();LoggerFactory.getLogger("sifucraft").info("[native-boat-test] two actual NPCs boarded one original boat at {}",origin);}
                 stage=2;ticks=0;deadline=System.currentTimeMillis()+20000;return;
             }
             if(stage==2){

@@ -82,6 +82,7 @@ loom {
 			property "sifucraft.worldRecoveryPhase", providers.gradleProperty("sifucraft.worldRecoveryPhase").getOrElse("prepare")
 			property "sifucraft.nativeBoatSelfTest", providers.gradleProperty("sifucraft.nativeBoatSelfTest").getOrElse("false")
 			property "sifucraft.nativeBoatLive", providers.gradleProperty("sifucraft.nativeBoatLive").getOrElse("false")
+			property "sifucraft.nativeBoatPair", providers.gradleProperty("sifucraft.nativeBoatPair").getOrElse("false")
 			property "sifucraft.nativeBoatRenderStallMs", providers.gradleProperty("sifucraft.nativeBoatRenderStallMs").getOrElse("0")
 			property "sifucraft.nativeExplosionSelfTest", providers.gradleProperty("sifucraft.nativeExplosionSelfTest").getOrElse("false")
 			property "sifucraft.nativeExplosionLive", providers.gradleProperty("sifucraft.nativeExplosionLive").getOrElse("false")
