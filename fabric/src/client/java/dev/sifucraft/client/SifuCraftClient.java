@@ -247,6 +247,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         doors = new CollisionLoader(message -> LOG.info("[doors] {}", message));
         appearance = new BlockAppearance(minecraft, message -> LOG.info("[blocks] {}", message));
         instance = this;
+        NpcDebugCommands.install(minecraft,bridge);
         if (Boolean.getBoolean("sifucraft.survivalDifficultySelfTest")) {
             ServerLifecycleEvents.SERVER_STARTED.register(SurvivalDifficultyCheck::prepare);
             var check = new SurvivalDifficultyCheck();

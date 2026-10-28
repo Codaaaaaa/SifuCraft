@@ -44,6 +44,7 @@ add_library(sifucraft_native SHARED
     src/combat/enemies.cpp
     src/combat/motion_probe.cpp
     src/combat/world_motion_service.cpp
+    src/combat/npc_debug.cpp
     src/combat/player_world_probe.cpp
     src/combat/player_idle_gate.cpp
     src/combat/base_sync.cpp

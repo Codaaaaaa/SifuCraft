@@ -17,6 +17,7 @@
 #include "combat/enemies.h"
 #include "combat/motion_probe.h"
 #include "combat/world_motion_service.h"
+#include "combat/npc_debug.h"
 #include "combat/damage.h"
 #include "combat/player_hits.h"
 #include "core/config.h"
@@ -739,6 +740,7 @@ void Run(std::uintptr_t image_base) {
     g_bridge.Start();
     const config::Settings settings = config::Load();
     combat::motion::Configure(settings.npc_motion_probe,settings.npc_ai_probe);
+    npc_debug::Configure(settings.npc_debug);
     hooks::Configure(image_base, settings.stage);
     bool engine_hooked = false;
     Ownership ownership;

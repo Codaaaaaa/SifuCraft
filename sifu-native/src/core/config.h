@@ -18,6 +18,7 @@ struct Settings {
     bool npc_ai_probe = false;
     bool player_world_observe = false;
     bool collision_census = false;
+    bool npc_debug = false; // extra in-game developer tool, startup opt-in
 };
 
 Settings Load();

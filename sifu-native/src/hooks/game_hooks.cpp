@@ -11,6 +11,7 @@
 #include "combat/base_sync.h"
 #include "combat/motion_probe.h"
 #include "combat/world_motion_service.h"
+#include "combat/npc_debug.h"
 #include "combat/shield_timing.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
@@ -310,6 +311,7 @@ void EngineTickHook(void* engine, float delta_seconds, bool idle_mode) {
     if (g_stage >= 7) combat::damage::ApplyOnGameThread(g_image_base);
     if (g_stage >= 10) combat::motion::ApplyOnGameThread(g_image_base);
     if (g_stage >= 10) world_motion::ApplyOnGameThread(g_image_base);
+    if (g_stage >= 10) npc_debug::ApplyOnGameThread(g_image_base);
     g_engine_tick.original<EngineTickFn>()(engine, delta_seconds, idle_mode);
     interaction::AfterTick(g_image_base, g_stage);
     if (g_stage >= 8) ui::ApplyHudOnGameThread(g_image_base,

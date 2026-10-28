@@ -1,4 +1,5 @@
 #include "combat/world_motion_service.h"
+#include "combat/npc_debug.h"
 #include <windows.h>
 #include <atomic>
 #include <cstring>
@@ -328,6 +329,7 @@ PublishedTargets RetainedTargets(std::uint32_t world,std::uint64_t now){
     AcquireSRWLockShared(&g_lock);PublishedTargets targets{g_retained.Active(world),g_retained.Snapshot(world,now)};ReleaseSRWLockShared(&g_lock);return targets;
 }
 void Exchange(Context context,Mailbox& mailbox) {
+    npc_debug::Exchange(context);
     const auto scope=context.actors.scope;
     AcquireSRWLockExclusive(&g_lock);
     const bool changed=g_io_native!=scope.native_session||g_io_peer!=scope.peer_session;
