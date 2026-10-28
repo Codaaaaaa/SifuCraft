@@ -37,12 +37,15 @@ public:
         auto at=entries_.find(Of(c));if(at==entries_.end())return;
         at->second.effect=effect;at->second.complete=true;
     }
-    bool Motion(const Command& c,std::int32_t actor_serial){
+    bool EligibleMotion(const Command& c,std::int32_t actor_serial)const{
         auto at=entries_.find(Of(c));if(at==entries_.end())return false;
-        auto& old=at->second;
-        if(!old.complete||old.motion||old.effect.serial!=actor_serial||old.effect.health!=c.health||
-            (old.effect.status!=Status::Applied&&old.effect.status!=Status::Blocked))return false;
-        old.motion=true;return true;
+        const auto& old=at->second;
+        return old.complete&&!old.motion&&old.effect.serial==actor_serial&&old.effect.health==c.health&&
+            (old.effect.status==Status::Applied||old.effect.status==Status::Blocked);
+    }
+    bool Motion(const Command& c,std::int32_t actor_serial){
+        if(!EligibleMotion(c,actor_serial))return false;
+        entries_.at(Of(c)).motion=true;return true;
     }
     std::size_t size()const{return entries_.size();}
 private:

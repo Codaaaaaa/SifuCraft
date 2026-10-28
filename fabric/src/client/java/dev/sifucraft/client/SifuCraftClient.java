@@ -115,6 +115,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private CatalogLogicCheck catalogLogicCheck;
     private CircuitScaleCheck circuitScaleCheck;
     private NativeBoatCheck nativeBoatCheck;
+    private NativeExplosionCheck nativeExplosionCheck;
     private EnvironmentDamageCheck environmentDamageCheck;
     private NativePauseCheck nativePauseCheck;
     private FluidMotionCheck fluidMotionCheck;
@@ -382,6 +383,10 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(Boolean.getBoolean("sifucraft.nativeBoatSelfTest")){
             nativeBoatCheck=new NativeBoatCheck();ServerTickEvents.END_SERVER_TICK.register(nativeBoatCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(nativeBoatCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.nativeExplosionSelfTest")){
+            nativeExplosionCheck=new NativeExplosionCheck();ServerTickEvents.END_SERVER_TICK.register(nativeExplosionCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(nativeExplosionCheck::restore);
         }
         if(Boolean.getBoolean("sifucraft.catalogLogicSelfTest")){
             catalogLogicCheck=new CatalogLogicCheck();ServerTickEvents.END_SERVER_TICK.register(catalogLogicCheck::tick);
@@ -699,7 +704,8 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(catalogModelCheck!=null)catalogModelCheck.tick(minecraft,guiAvailable(frame));
         if(catalogLogicCheck!=null)catalogLogicCheck.clientTick(minecraft,guiAvailable(frame));
         if(circuitScaleCheck!=null)circuitScaleCheck.clientTick(minecraft,frame,blockShapes.metrics());
-        if(nativeBoatCheck!=null)nativeBoatCheck.clientTick(minecraft);
+        if(nativeBoatCheck!=null)nativeBoatCheck.clientTick(minecraft,frame);
+        if(nativeExplosionCheck!=null)nativeExplosionCheck.clientTick(minecraft,frame);
         if(environmentDamageCheck!=null)environmentDamageCheck.clientTick(minecraft,frame);
         if(nativePauseCheck!=null)nativePauseCheck.clientTick(minecraft);
         if(fluidMotionCheck!=null)fluidMotionCheck.clientTick(minecraft);

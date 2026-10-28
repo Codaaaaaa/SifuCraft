@@ -35,6 +35,9 @@ class Backend {
 public:
     virtual ~Backend()=default;
     virtual bool Bind(const Command&,Body*)=0;
+    // Commit a source claim only after the observed pose passes the request's
+    // preconditions. A rejected reservation never consumes a motion event.
+    virtual bool Bound(const Command&){return true;}
     virtual bool Check(Body*)=0;
     virtual bool Observe(Body* body){return Check(body);} // final original-Tick pose, without requiring an idle AI
     virtual bool SupportsPlayer(Source)const{return false;}
@@ -126,7 +129,7 @@ public:
             if(!env_.settled){Reject(command,Status::Busy,now);return true;}
             if(command.shape_revision!=env_.revision||now-command.issued_ms>=command.duration_ms) {Reject(command,Status::Stale,now);return true;}
             Body body;
-            if(!backend_.Bind(command,&body)||!Expected(command,body)) {
+            if(!backend_.Bind(command,&body)||!Expected(command,body)||!backend_.Bound(command)) {
                 backend_.Forget();Reject(command,Status::TargetLost,now);return true;
             }
             source_=command;body_=body;deadline_=command.issued_ms+command.duration_ms;

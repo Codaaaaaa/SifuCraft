@@ -11,6 +11,7 @@
 #include "combat/damage.h"
 #include "combat/world_motion_engine.h"
 #include "combat/explosion_ledger.h"
+#include "combat/explosion_ai_state.h"
 #include "combat/target_retention.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
@@ -59,6 +60,7 @@ public:
     bool Bind(const Command& c,Body* out)override {
         if(motion::CheckWorld(g_base,g_current.actors,GetTickCount64()))return false;
         player_=(c.flags&kPlayer)!=0;
+        explosion_=c.source==Source::Explosion;
         if(player_)return BindPlayer(c,out);
         const auto& targets=g_current.actors.targets;
         const auto it=std::find_if(targets.begin(),targets.end(),[&](const auto& t){return t.id==c.target&&t.spawn==c.spawn;});
@@ -66,11 +68,16 @@ public:
         const auto movement=mem::ReadPtr(it->actor+off::ACharacter::CharacterMovement);
         const auto id=ue::IdentityOf(movement);
         target_={it->actor,movement,it->id,it->spawn,it->identity.serial,id.index,id.serial};
+        if(explosion_){
+            g_explosions.World(g_current.actors.scope.native_session,g_current.actors.scope.generation);
+            if(!g_explosions.EligibleMotion(c,target_.serial))return Refuse("explosion-unproven");
+        }
         // Original terrain and MC platforms share the actual root sweep. Do not
         // infer eligibility from UE Walking alone: Sifu's verified idle grunts use
         // mode None(0), including the successful M1/M3 live fixtures.
         if(const auto why=motion::CheckBody(g_current.actors,target_,&sample_,true,false))return Refuse(why);
-        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers_,true))return Refuse(why);
+        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers_,!explosion_))return Refuse(why);
+        if(explosion_&&!ExplosionPeers(true))return Refuse("explosion-ai-state");
         hit_=mem::ReadPtr(target_.actor+off::AFightingCharacter::m_HitCapsule);hit_id_=ue::IdentityOf(hit_);
         if(!hit_id_.valid()||ue::OuterOf(hit_)!=target_.actor)return false;
         if(!combat::ai_gate::Install(g_base,peers_))return false;
@@ -87,12 +94,16 @@ public:
         retained_world_=g_current.actors.scope.generation;
         AcquireSRWLockExclusive(&g_lock);const bool retained=g_retained.Keep(retained_world_,target_.id,target_.spawn,GetTickCount64());ReleaseSRWLockExclusive(&g_lock);
         if(!retained)return false;
-        if(c.source==Source::Explosion){
-            g_explosions.World(g_current.actors.scope.native_session,g_current.actors.scope.generation);
-            if(!g_explosions.Motion(c,target_.serial))return Refuse("explosion-already-attempted-or-unproven");
+        if(explosion_){
+            const auto& p=out->position;
+            SC_LOG("[world-explosion] reserve expected=(%.3f,%.3f,%.3f) actual=(%.3f,%.3f,%.3f) HP=%.3f/%.3f capsule=%.3f,%.3f/%.3f,%.3f serial=%llu/%d",
+                c.position[0],c.position[1],c.position[2],p[0],p[1],p[2],c.health,out->health,c.radius,c.half_height,out->radius,out->half,c.actor_stamp,out->serial);
         }
         SC_LOG("[world-motion] observe target=%u/%u/%d token=%016llX thread=%lu",target_.id,target_.spawn,target_.serial,token_,GetCurrentThreadId());
         return true;
+    }
+    bool Bound(const Command& c)override {
+        return !explosion_||g_explosions.Motion(c,target_.serial);
     }
     bool Identity()const {
         if(player_)return target_.valid()&&g_current.actors.pawn==target_.actor&&
@@ -120,7 +131,8 @@ public:
         if(player_){if(motion::CheckPlayerBody(g_current.actors,target_,&sample_,false)||sample_.mode!=mode_)return false;return Convert(sample_,out);}
         motion::Peers peers;
         if(motion::CheckBody(g_current.actors,target_,&sample_,false,false)||
-           sample_.mode!=mode_||motion::CheckPeers(g_base,g_current.actors,target_,&peers,true)||peers!=peers_)return false;
+           sample_.mode!=mode_||motion::CheckPeers(g_base,g_current.actors,target_,&peers,!explosion_)||peers!=peers_||
+           (explosion_&&!ExplosionPeers(false)))return false;
         return Convert(sample_,out);
     }
     bool Observe(Body* out)override{
@@ -183,9 +195,27 @@ public:
         if(!player_){AcquireSRWLockExclusive(&g_lock);g_retained.Release(retained_world_,target_.id,target_.spawn,GetTickCount64());ReleaseSRWLockExclusive(&g_lock);}retained_world_=0;
         for(auto& watch:g_watches[slot_])watch.store(0);
         if(gate_){gate_=false;if(g_gate_users&&!--g_gate_users&&!combat::ai_gate::Uninstall())SC_LOG("[world-motion] cleanup slot changed; all filters cleared");}
-        target_={};peers_={};sample_={};token_=0;hit_=0;hit_id_={};player_=false;
+        target_={};peers_={};sample_={};token_=0;hit_=0;hit_id_={};player_=false;explosion_=false;
     }
 private:
+    bool ExplosionPeers(bool capture){
+        // A signed, already-resolved blast may leave the AI out of idle after
+        // its hit order finishes. Preserve that state; only the same unchanged
+        // running, unpaused peers can be held. Orders/montages/root motion,
+        // velocity, HP and identity still go through the strict body checks.
+        namespace bits=gen::bits::UBehaviorTreeComponent;
+        const auto ai=peers_.ai.pointer,bt=peers_.behavior.pointer;
+        std::uint8_t running=0,paused=0,out=255,force=255;
+        if(!mem::Read(bt+bits::bIsRunning_Offset,&running)||!mem::Read(bt+bits::bIsPaused_Offset,&paused)||
+            !mem::Read(ai+off::UAIFightingComponent::m_bIsOutOfIdle,&out)||out>1||
+            !mem::Read(ai+off::UAIFightingComponent::m_bForceActionHandlerTick,&force)||force||
+            !((running>>bits::bIsRunning_Shift)&1)||((paused>>bits::bIsPaused_Shift)&1))return false;
+        const ExplosionAiState state{out,force,static_cast<std::uint8_t>((running>>bits::bIsRunning_Shift)&1),static_cast<std::uint8_t>((paused>>bits::bIsPaused_Shift)&1)};
+        if(!state.eligible())return false;
+        if(capture)explosion_ai_=state;
+        return state.retains(explosion_ai_);
+    }
+    bool explosion_=false;ExplosionAiState explosion_ai_;
     bool BindPlayer(const Command& c,Body* out){
         if(c.actor_stamp!=Stamp(g_current.actors.pawn_identity))return Refuse("player-stamp");
         if(const auto why=PlayerBody(&target_,&sample_,true))return Refuse(why);

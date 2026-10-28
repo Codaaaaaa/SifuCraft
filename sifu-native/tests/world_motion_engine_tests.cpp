@@ -5,16 +5,18 @@
 #include "combat/target_retention.h"
 #include "combat/pose_fall_origin.h"
 #include "combat/explosion_ledger.h"
+#include "combat/explosion_ai_state.h"
 using namespace sifucraft::world_motion;
 namespace {
 unsigned checks=0;
 void Require(bool value,const char* label){++checks;if(!value){std::fprintf(stderr,"FAIL %s\n",label);std::exit(1);}}
 struct Fake final:Backend {
     Body body{19,818,{0,0,90},60,30,90};
-    int binds=0,moves=0,forgets=0,hurts=0;bool valid=true,bind=true,block=false,penetrate=false,returned=true,read=true,effects=false;
+    int binds=0,claims=0,moves=0,forgets=0,hurts=0;bool valid=true,bind=true,block=false,penetrate=false,returned=true,read=true,effects=false;
     float fraction=1,last_facing=0;bool invoked=true,player=false,player_fluid=false;
     std::array<float,3> normal{};
     bool Bind(const Command& c,Body* out)override{++binds;*out=body;return bind&&(!(c.flags&kPlayer)||c.actor_stamp==((73ull<<32)|static_cast<std::uint32_t>(body.serial)));}
+    bool Bound(const Command&)override{++claims;return true;}
     bool SupportsPlayer(Source source)const override{return player&&(source==Source::Machine||(player_fluid&&source==Source::Fluid));}
     bool Check(Body* out)override{*out=body;return valid;}
     Sweep Move(const Body&,const std::array<float,3>& d)override{++moves;if(invoked)for(int i=0;i<3;++i)body.position[i]+=d[i]*fraction;return {body,invoked,read,returned,block,penetrate,normal};}
@@ -43,6 +45,8 @@ struct Case {
     void Restore(){for(auto part:{1u,2u,4u})engine.Original(part);Tick();Require(engine.phase()==Engine::Phase::Free,"all originals restored before reuse");}
 };
 void HandshakeAndReplay(){
+    {Case rejected;auto reserve=rejected.CommandFor();reserve.position[0]=2;rejected.Send(reserve);rejected.Pop(Status::TargetLost);
+     Require(rejected.backend.claims==0&&rejected.backend.moves==0,"pose rejection cannot consume the source motion claim");}
     Case c;auto reserve=c.CommandFor();c.Send(reserve);c.Send(reserve);c.Empty();
     c.engine.Original(1);c.engine.Original(2);c.Tick();c.Empty();Require(!c.engine.Skip(c.now),"missing BT keeps forwarding");
     c.engine.Original(4);c.Tick();auto r=c.Pop(Status::Prepared);c.Send(reserve);auto replay=c.Pop(Status::Prepared);
@@ -267,9 +271,17 @@ void ExplosionEventIdentity(){
     Require(ledger.Begin(altered,&result)==ExplosionLedger::Decision::Conflict,"same blast UUID cannot change final damage");
     auto motion=command;motion.source=Source::Explosion;motion.health=45;
     Require(!ledger.Motion(motion,20),"pooled actor serial cannot consume another actor's blast impulse");
+    Require(ledger.EligibleMotion(motion,19)&&ledger.EligibleMotion(motion,19),"read-only blast qualification does not consume the motion permission");
     Require(ledger.Motion(motion,19)&&!ledger.Motion(motion,19),"blast motion has its own at-most-once execution bit");
     ledger.World(100,2);Require(ledger.Begin(command,&result)==ExplosionLedger::Decision::Cached,"peer reconnect preserves the event ledger in the same native world");
     ledger.World(100,3);Require(ledger.Begin(command,&result)==ExplosionLedger::Decision::Fresh,"new world starts a new activation namespace");
+    for(std::uint8_t idle:{0u,1u}){
+        ExplosionAiState stable{idle,0,1,0};Require(stable.eligible()&&stable.retains(stable),"signed blast can retain either unchanged idle flag with a running unpaused brain");
+        auto changed=stable;changed.out_idle=1-idle;Require(!changed.retains(stable),"new AI phase revokes the signed blast lease");
+        changed=stable;changed.force=1;Require(!changed.retains(stable),"forced native handler always takes priority");
+        changed=stable;changed.running=0;Require(!changed.retains(stable),"stopped native behavior cannot be acquired");
+        changed=stable;changed.paused=1;Require(!changed.retains(stable),"paused native behavior cannot be acquired");
+    }
 }
 void PassengerPose(){
     Case c;auto reserve=c.CommandFor();reserve.source=Source::Passenger;c.Send(reserve);

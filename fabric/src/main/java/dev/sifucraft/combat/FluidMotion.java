@@ -49,6 +49,7 @@ public final class FluidMotion {
         final long action;final Vec3 initialVelocity;
         final boolean machine;final long playerStamp;
         final int authoritySource;final long actorStamp;
+        final Impulse originImpulse;
         final PistonContacts.Source machineSource;
         Phase phase=Phase.ACQUIRE;CompletableFuture<Reply> pending;Reply binding,last;
         List<CompletableFuture<Reply>> burst=List.of();
@@ -63,6 +64,7 @@ public final class FluidMotion {
             key=e.key();initial=e;scope=view.scope();this.level=level;source=impulse!=null?impulse.source:handoff==null?proxy.getUUID():handoff.source.capture();sourcePos=handoff==null?at:handoff.source.pos();action=impulse!=null?ShapeProtocol.mapHash(impulse.authority==EXPLOSION?"sifucraft:explosion_motion":"sifucraft:passenger_fall"):handoff==null?ACTION:handoff.source.action();
             machine=handoff!=null;
             authoritySource=impulse==null?FLUID:impulse.authority;actorStamp=impulse==null?0:impulse.actorStamp;
+            originImpulse=impulse;
             playerStamp=NativeMotionSubjects.player(key)?view.nativeStatus().playerStamp():0;
             machineSource=handoff==null?null:handoff.source;
             initialVelocity=impulse!=null?impulse.velocity:handoff==null?new Vec3(e.velocity().x()/2000.0,e.velocity().z()/2000.0,e.velocity().y()/2000.0):handoff.velocity;
@@ -129,7 +131,7 @@ public final class FluidMotion {
     public record Sample(EnemyFrame.Key key,Vec3 position,Vec3 velocity,float width,float height,long seed,int entityId,long tick,boolean grounded,int entityTick){}
     public interface Observer {void prepared(Sample initial);default void beforeSimulation(Sample initial,VanillaFluidBody body){}void simulated(Sample planned);void completed(Sample actual);}
     private static volatile Observer observer;
-    public static void observe(Observer value){if(value!=null&&!Boolean.getBoolean("sifucraft.fluidMotionSelfTest")&&!Boolean.getBoolean("sifucraft.bubbleMatrixSelfTest")&&!Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest")&&!Boolean.getBoolean("sifucraft.nativeLiftSelfTest")&&!Boolean.getBoolean("sifucraft.pistonAftermathSelfTest")&&!Boolean.getBoolean("sifucraft.fluidPartialSelfTest"))throw new IllegalStateException("isolated fixture only");observer=value;}
+    public static void observe(Observer value){if(value!=null&&!Boolean.getBoolean("sifucraft.fluidMotionSelfTest")&&!Boolean.getBoolean("sifucraft.bubbleMatrixSelfTest")&&!Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest")&&!Boolean.getBoolean("sifucraft.nativeLiftSelfTest")&&!Boolean.getBoolean("sifucraft.pistonAftermathSelfTest")&&!Boolean.getBoolean("sifucraft.fluidPartialSelfTest")&&!Boolean.getBoolean("sifucraft.nativeExplosionSelfTest"))throw new IllegalStateException("isolated fixture only");observer=value;}
     private static Sample sample(Flight f){return new Sample(f.key,f.body.position(),f.body.getDeltaMovement(),f.body.getBbWidth(),f.body.getBbHeight(),((long)f.key.id()<<32)^f.key.spawn(),f.body.getId(),f.lastTick,f.body.onGround(),f.body.tickCount);}
     private static boolean sameWorld(WorldMotionWorld.View v,ServerLevel level){
         if(v==null||!WorldBlocks.ENABLED||!v.scope().equals(v.requests().scope())||v.scope().save()!=PistonMovePlans.saveKey(level)||v.scene()==null||
@@ -327,7 +329,15 @@ public final class FluidMotion {
             if(op==STEP)sendPart(v,f,now);else send(v,f,op,f.last.position(),f.pendingDelta,now);return;
         }
         if(f.phase==Phase.ACQUIRE){
-            var r=result(f.pending);if(r==null||r.status()!=1||r.actorSerial()<=0||r.rootRadius()<10||r.rootHalfHeight()<r.rootRadius()){retire(f,false);return;}
+            var r=result(f.pending);
+            if(f.authoritySource==EXPLOSION&&f.originImpulse!=null&&r!=null&&(r.status()==8||r.status()==9||r.status()==12)&&
+                r.actorSerial()==0&&r.componentToken()==0&&now>=f.originImpulse.at&&now-f.originImpulse.at<1000){
+                // The native binding did not acquire a body or issue a sweep.
+                // A short H7 hit order may finish naturally; retry only this
+                // unacquired movement authority, never its already-applied HP.
+                flights.remove(f.key);impulses.putIfAbsent(f.key,f.originImpulse);retry.put(f.key,now+50);return;
+            }
+            if(r==null||r.status()!=1||r.actorSerial()<=0||r.rootRadius()<10||r.rootHalfHeight()<r.rootRadius()){retire(f,false);return;}
             f.binding=f.last=r;f.pending=null;
             long seed=((long)f.key.id()<<32)^f.key.spawn();
             f.body=NativeMotionSubjects.player(f.key)?new VanillaPlayerBody(f.level,r.rootRadius(),r.rootHalfHeight(),seed):new VanillaFluidBody(f.level,r.rootRadius(),r.rootHalfHeight(),seed,true);

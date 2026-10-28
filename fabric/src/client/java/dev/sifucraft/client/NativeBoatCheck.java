@@ -31,15 +31,18 @@ final class NativeBoatCheck {
     private final int renderStallMs=Math.clamp(Integer.getInteger("sifucraft.nativeBoatRenderStallMs",0),0,1500);
     private volatile boolean stallRequested,stallCompleted;
     private java.nio.file.Path threadReport;
+    private Vec3 direction=new Vec3(-1,0,0);
+    private volatile float playerHealth=Float.NaN;private float initialPlayerHealth;
     NativeBoatCheck(){require(DevWorld.LEVEL_ID.startsWith("sifucraft-boat-passengers-check-"),"disposable save required");}
     private static void require(boolean ok,String why){if(!ok)throw new AssertionError("native boat: "+why);}
-    void clientTick(Minecraft mc){
+    void clientTick(Minecraft mc,dev.sifucraft.bridge.SifuFrame frame){
+        if(frame!=null)playerHealth=frame.health();
         if(finished){mc.stop();return;}
         if(stallRequested&&!stallCompleted){
             java.util.concurrent.CompletableFuture.delayedExecutor(350,java.util.concurrent.TimeUnit.MILLISECONDS).execute(()->{
                 try{var text=new StringBuilder();for(var info:java.lang.management.ManagementFactory.getThreadMXBean().dumpAllThreads(true,true)){
                     text.append(info.getThreadName()).append(' ').append(info.getThreadState()).append(" lock=").append(info.getLockName()).append(" owner=").append(info.getLockOwnerName()).append('\n');
-                    for(var frame:info.getStackTrace())text.append("  ").append(frame).append('\n');
+                    for(var stackFrame:info.getStackTrace())text.append("  ").append(stackFrame).append('\n');
                 }java.nio.file.Files.writeString(threadReport,text.toString());}catch(java.io.IOException e){throw new java.io.UncheckedIOException(e);}
             });
             try{Thread.sleep(renderStallMs);}catch(InterruptedException e){Thread.currentThread().interrupt();throw new RuntimeException(e);}
@@ -59,18 +62,30 @@ final class NativeBoatCheck {
             if(stage==0){
                 var candidates=view.enemies().entries().stream().filter(e->e.alive()&&EnemyMirrors.hitAttacker(e.id(),e.spawn())!=null).limit(live?1:2).toList();
                 if(candidates.size()<(live?1:2))return;
+                began=System.currentTimeMillis();
                 threadReport=server.getWorldPath(LevelResource.ROOT).resolve("p11-stalled-render-threads.txt");
                 for(var entry:candidates)initial.put(entry.key(),entry);
+                initialPlayerHealth=playerHealth;
                 double x=0,y=0,z=0;
                 for(var entry:initial.values()){x+=view.placement().mcX(entry.location().x());y+=view.placement().mcY(entry.location().z()-entry.halfHeight());z+=view.placement().mcZ(entry.location().y());}
                 int count=initial.size();origin=new Vec3(x/count,y/count+.4,z/count);
                 var type=BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.withDefaultNamespace("oak_boat"));
                 boat=(AbstractBoat)type.create(server.overworld(),EntitySpawnReason.COMMAND);require(boat!=null,"installed original boat");
                 boat.setPos(origin);require(server.overworld().addFreshEntity(boat),"one registered original boat");
+                if(live){
+                    direction=null;
+                    for(var d:List.of(new Vec3(-1,0,0),new Vec3(1,0,0),new Vec3(0,0,-1),new Vec3(0,0,1))){
+                        var swept=boat.getBoundingBox().expandTowards(d.scale(.9)).deflate(.001);
+                        boolean blocked=false;for(var shape:server.overworld().getBlockCollisions(boat,swept))if(!shape.isEmpty()){blocked=true;break;}
+                        if(!blocked){direction=d;break;}
+                    }
+                    require(direction!=null,"a short boat path fits the imported scene before moving a real NPC");
+                }
                 initialBoarded=(int)BoatPassengers.stats().boarded();initialFailed=BoatPassengers.stats().failed();initialReleased=BoatPassengers.stats().released();deadline=System.currentTimeMillis()+20000;stage=1;
                 LoggerFactory.getLogger("sifucraft").info("[native-boat-test] placed original boat at {} near {} activations live={}",origin,initial.keySet(),live);return;
             }
             if(!ready)return;
+            if(live)require(Float.isFinite(initialPlayerHealth)&&initialPlayerHealth>0&&playerHealth==initialPlayerHealth,"original player HP remains unchanged during the NPC fixture");
             require(System.currentTimeMillis()<deadline,"bounded stage="+stage+" passenger="+BoatPassengers.stats()+" fluid="+FluidMotion.stats());
             for(var entry:initial.values()){
                 var e=current(view,entry.key());require(e!=null&&e.alive()&&e.health()==entry.health(),"same activation and HP throughout passenger motion");
@@ -84,10 +99,11 @@ final class NativeBoatCheck {
             }
             if(stage==2){
                 require(boat.getPassengers().size()==initial.size(),"native passengers remain attached while moving");
-                boat.setDeltaMovement(-.06,0,0);boat.setYRot(boat.getYRot()+3);
+                var distance=new Vec3(boat.getX()-origin.x,0,boat.getZ()-origin.z).length();
+                boat.setDeltaMovement(live?(distance<.6?direction.scale(.015):Vec3.ZERO):direction.scale(.06));boat.setYRot(boat.getYRot()+3);
                 if(ticks==30&&renderStallMs>0)stallRequested=true;
                 if(++ticks<100)return;
-                require(moved>.75&&yawChange>20,"native snapshots actually translated and turned with the boat: moved="+moved+" yaw="+yawChange);
+                require(moved>(live?.2:.75)&&yawChange>20,"native snapshots actually translated and turned with the boat: moved="+moved+" yaw="+yawChange);
                 stage=3;ticks=0;deadline=System.currentTimeMillis()+20000;return;
             }
             if(stage==3){
