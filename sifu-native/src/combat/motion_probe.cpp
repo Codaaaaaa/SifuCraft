@@ -397,6 +397,18 @@ bool SweepBody(const Context& c,const Target& t,const BodySample& before,const u
     result->returned=bytes[g_params.offset[SweepParams::Return]]!=0;
     result->blocking=(hit[bits::bBlockingHit_Offset]>>bits::bBlockingHit_Shift)&1;
     result->penetrating=(hit[bits::bStartPenetrating_Offset]>>bits::bStartPenetrating_Shift)&1;
+    static unsigned contact_logs=0;
+    if(result->blocking&&contact_logs++<24){
+        std::string contacts;
+        for(const auto& property:ue::ListProperties(g_move.function()))if(property.name=="SweepHitResult"&&property.type=="StructProperty"){
+            const auto structure=mem::ReadPtr(property.field+off::FStructProperty::Struct);
+            for(const auto& field:ue::ListProperties(structure))if(field.type=="WeakObjectProperty"&&field.element_size==8&&field.offset>=0&&field.offset<=static_cast<int>(gen::size::FHitResult)-8){
+                const auto object=ue::ResolveWeak(reinterpret_cast<std::uintptr_t>(hit+field.offset));
+                if(object)contacts+=" "+field.name+"="+ue::PathName(object);
+            }
+        }
+        SC_LOG("[world-sweep] target=%u/%u penetrating=%d from=(%.2f,%.2f,%.2f) delta=(%.2f,%.2f,%.2f)%s",t.id,t.spawn,result->penetrating,before.position.x,before.position.y,before.position.z,delta.x,delta.y,delta.z,contacts.c_str());
+    }
     static_assert(off::FHitResult::ImpactNormal+sizeof(ue::FVector)<=gen::size::FHitResult);
     std::memcpy(&result->normal,hit+off::FHitResult::ImpactNormal,sizeof(result->normal));
     const float norm=Distance(result->normal,{});

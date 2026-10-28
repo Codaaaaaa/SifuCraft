@@ -298,6 +298,14 @@ void ExplosionEventIdentity(){
     }
 }
 void PassengerPose(){
+    {Case ride;auto reserve=ride.CommandFor();reserve.source=Source::Passenger;ride.Send(reserve);for(auto part:{1u,2u,4u})ride.engine.Original(part);ride.Tick();ride.Pop(Status::Prepared);
+     std::optional<Command> retired;
+     for(int i=0;i<1000;i++){
+        ride.now++;ride.Tick();if(i%100==0){auto renew=ride.CommandFor(Op::Renew);renew.source=Source::Passenger;ride.Send(renew);ride.Pop(Status::Applied);}
+        auto step=ride.CommandFor(Op::Step);step.source=Source::Passenger;step.delta[0]=1;if(!retired)retired=step;ride.Send(step);ride.Pop(Status::Applied);
+     }
+     Require(ride.backend.moves==1000&&ride.engine.Skip(ride.now),"one passenger lease survives repeated bounded-ledger eviction while renewing");
+     ride.Send(*retired);ride.Pop(Status::Stale);Require(ride.backend.moves==1000,"retired passenger command cannot replay a move after ledger turnover");}
     Case c;auto reserve=c.CommandFor();reserve.source=Source::Passenger;c.Send(reserve);
     for(auto part:{1u,2u,4u})c.engine.Original(part);c.Tick();c.Pop(Status::Prepared);
     auto turn=c.CommandFor(Op::Step);turn.source=Source::Passenger;turn.delta[0]=0;turn.facing=15;
@@ -307,10 +315,30 @@ void PassengerPose(){
     auto seat=c.CommandFor(Op::Step);seat.source=Source::Passenger;seat.delta[0]=6;seat.delta[2]=6;seat.facing=30;
     c.Send(seat);c.Pop(Status::Applied);Require(c.backend.last_facing==30&&c.backend.body.position[2]==96,"seat follow preserves requested yaw and vertical movement");
     auto heartbeat=c.CommandFor(Op::Renew);heartbeat.source=Source::Passenger;c.Send(heartbeat);c.Pop(Status::Applied);
+    c.backend.block=true;c.backend.fraction=.25f;
+    seat=c.CommandFor(Op::Step);seat.source=Source::Passenger;seat.delta[0]=8;c.Send(seat);
+    auto partial=c.Pop(Status::Partial);
+    Require(partial.delta[0]==2&&c.engine.Skip(c.now),"a passenger obstruction reports actual partial travel and retains short ownership");
+    c.backend.fraction=0;seat=c.CommandFor(Op::Step);seat.source=Source::Passenger;c.Send(seat);c.Pop(Status::Blocked);
+    Require(c.engine.Skip(c.now),"a stationary passenger contact does not repeatedly restore and reacquire its AI");
     auto release=c.CommandFor(Op::Cancel);release.source=Source::Passenger;c.Send(release);c.Empty();c.Restore();c.Pop(Status::Cancelled);
-    Require(c.backend.body.position[0]==6&&c.backend.body.position[2]==96,"passenger release restores all originals without rewinding its seat pose");
+    Require(c.backend.body.position[0]==8&&c.backend.body.position[2]==96,"passenger release restores all originals without rewinding its seat pose");
 }
 void RenewalDuringPublication(){
+    for(auto source:{Source::Fluid,Source::Explosion,Source::Passenger}){
+        Case delayed;auto first=delayed.CommandFor();first.source=source;delayed.Send(first);
+        for(auto part:{1u,2u,4u})delayed.engine.Original(part);delayed.Tick();delayed.Pop(Status::Prepared);
+        delayed.now=1400;delayed.Tick();auto late=delayed.CommandFor(Op::Renew);late.source=source;late.issued_ms=1150;
+        delayed.Send(late);delayed.Pop(Status::Applied);Require(delayed.backend.moves==0&&delayed.engine.Skip(delayed.now),"delayed non-moving heartbeat can retain an unexpired qualified lease");
+        delayed.now=1649;delayed.Tick();delayed.Send(late);delayed.Pop(Status::Applied);
+        delayed.now=1650;delayed.Tick();Require(!delayed.engine.Skip(delayed.now),"late heartbeat and exact retry expire at authorization+500ms, never receipt+500ms");delayed.Restore();
+        Case expired;first=expired.CommandFor();first.source=source;expired.Send(first);for(auto part:{1u,2u,4u})expired.engine.Original(part);expired.Tick();expired.Pop(Status::Prepared);
+        expired.now=1600;late=expired.CommandFor(Op::Renew);late.source=source;late.issued_ms=1200;expired.Send(late);expired.Pop(Status::TimedOut);
+        Require(!expired.engine.Skip(expired.now),"a delayed heartbeat cannot resurrect expired ownership even before the next Update");expired.Restore();
+        Case motion;first=motion.CommandFor();first.source=source;motion.Send(first);for(auto part:{1u,2u,4u})motion.engine.Original(part);motion.Tick();motion.Pop(Status::Prepared);
+        motion.now=1300;auto oldStep=motion.CommandFor(Op::Step);oldStep.source=source;oldStep.issued_ms=1000;motion.Send(oldStep);motion.Pop(Status::Stale);
+        Require(motion.backend.moves==0,"the heartbeat exception never permits an old movement command");
+    }
     Case c;auto reserve=c.CommandFor();reserve.source=Source::Fluid;c.Send(reserve);
     for(auto part:{1u,2u,4u})c.engine.Original(part);
     c.Tick();c.Pop(Status::Prepared);

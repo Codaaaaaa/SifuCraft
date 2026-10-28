@@ -131,12 +131,16 @@ public:
             !motion::CheckPeers(g_base,g_current.actors,target_,&peers,false)&&peers==peers_;
     }
     bool Check(Body* out)override {
-        if(g_wrong_thread[slot_].load()||!Identity()||motion::CheckWorld(g_base,g_current.actors,GetTickCount64()))return false;
+        if(g_wrong_thread[slot_].load())return CheckRefused("thread");
+        if(!Identity())return CheckRefused("identity");
+        if(const auto why=motion::CheckWorld(g_base,g_current.actors,GetTickCount64()))return CheckRefused(why);
         if(player_){if(motion::CheckPlayerBody(g_current.actors,target_,&sample_,false)||sample_.mode!=mode_)return false;return Convert(sample_,out);}
         motion::Peers peers;
-        if(motion::CheckBody(g_current.actors,target_,&sample_,false,false)||
-           sample_.mode!=mode_||motion::CheckPeers(g_base,g_current.actors,target_,&peers,!explosion_||wind_)||peers!=peers_||
-           (explosion_&&!wind_&&!ExplosionPeers(false)))return false;
+        if(const auto why=motion::CheckBody(g_current.actors,target_,&sample_,false,false))return CheckRefused(why);
+        if(sample_.mode!=mode_)return CheckRefused("movement-mode");
+        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers,!explosion_||wind_))return CheckRefused(why);
+        if(peers!=peers_)return CheckRefused("brain-identity");
+        if(explosion_&&!wind_&&!ExplosionPeers(false))return CheckRefused("explosion-ai-state");
         return Convert(sample_,out);
     }
     bool Observe(Body* out)override{
@@ -226,6 +230,7 @@ public:
         target_={};peers_={};sample_={};token_=0;hit_=0;hit_id_={};player_=false;explosion_=false;
     }
 private:
+    bool CheckRefused(const char* why)const{SC_LOG("[world-motion] control invalidated target=%u/%u reason=%s",target_.id,target_.spawn,why);return false;}
     bool ExplosionPeers(bool capture){
         // A signed, already-resolved blast may leave the AI out of idle after
         // its hit order finishes. Preserve that state; only the same unchanged
@@ -357,7 +362,11 @@ void ApplyOnGameThread(std::uintptr_t base) {
     base_sync::Context(base,&g_current.actors,g_current.enabled);
     const Environment env{scope.native_session,scope.peer_session,g_current.save,g_current.map,blocks::ShapesAppliedRevision(),g_current.actors.native_frame,scope.generation,flags,ready,settled};
     if(input::Router().owner()==protocol::InputOwner::Minecraft)for(std::size_t i=0;i<kTargets;++i)g_fleet.at(i).PlayerControlWillTransfer();
+    std::array<Engine::Phase,kTargets> previous;
+    for(std::size_t i=0;i<kTargets;i++)previous[i]=g_fleet.at(i).phase();
     g_fleet.Update(env,now);
+    for(std::size_t i=0;i<kTargets;i++)if(previous[i]==Engine::Phase::Owned&&g_fleet.at(i).phase()!=Engine::Phase::Owned)
+        SC_LOG("[world-motion] ownership ended slot=%u reason=%u ready=%d flags=%u context_age_ms=%llu shapes_ready=%d settled=%d",static_cast<unsigned>(i),static_cast<unsigned>(g_fleet.at(i).release_reason()),ready,flags,now>=g_current.actors.updated_ms?now-g_current.actors.updated_ms:0,blocks::ShapesReady(),settled);
     for(std::size_t i=0;i<kTargets;++i){
         auto& engine=g_fleet.at(i);
         if(g_wrong_thread[i].load())engine.CallbackThreadLost();

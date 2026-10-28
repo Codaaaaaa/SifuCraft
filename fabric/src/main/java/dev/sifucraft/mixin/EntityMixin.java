@@ -29,6 +29,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  */
 @Mixin(Entity.class)
 public abstract class EntityMixin {
+    @org.spongepowered.asm.mixin.injection.ModifyVariable(method="collide",at=@At("HEAD"),argsOnly=true)
+    private Vec3 sifucraft$nativeBoatPassengerClearance(Vec3 movement){
+        return (Object)this instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat boat
+            ?dev.sifucraft.combat.BoatPassengers.constrainBoat(boat,movement):movement;
+    }
     @Inject(method="applyMovementEmissionAndPlaySound",at=@At("HEAD"),cancellable=true)
     private void sifucraft$ignoreInactivePlayerFootsteps(Entity.MovementEmission emission,Vec3 motion,
             net.minecraft.core.BlockPos pos,net.minecraft.world.level.block.state.BlockState state,CallbackInfo ci) {

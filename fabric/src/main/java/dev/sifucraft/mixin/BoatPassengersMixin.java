@@ -18,6 +18,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(AbstractBoat.class)
 public abstract class BoatPassengersMixin {
+    @com.llamalad7.mixinextras.injector.ModifyReturnValue(method="getDismountLocationForPassenger",at=@At("RETURN"))
+    private net.minecraft.world.phys.Vec3 sifucraft$nativePassengerDismount(net.minecraft.world.phys.Vec3 vanilla,net.minecraft.world.entity.LivingEntity passenger){
+        return BoatPassengers.dismount((AbstractBoat)(Object)this,passenger,vanilla);
+    }
     @Inject(method="tick",at=@At("HEAD"),cancellable=true)
     private void sifucraft$waitForCoverage(CallbackInfo ci){
         var boat=(AbstractBoat)(Object)this;

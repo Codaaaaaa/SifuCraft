@@ -56,6 +56,22 @@ final class BoatBaselineCheck {
             require(clone.getUUID().equals(boat.getUUID())&&clone.position().equals(boat.position())&&clone.getYRot()==boat.getYRot(),"boat identity/position/yaw persisted "+entry.id());
             if(clone instanceof Container container){require(ItemStack.matches(container.getItem(0),cargo)&&container.getItem(container.getContainerSize()-1).getCount()==7,"chest cargo components/counts persisted");}
             reports.add(Map.of("kind","boat_baseline","type",entry.id().toString(),"capacity",capacity,"seats",seats,"cargo_slots",boat instanceof Container c?c.getContainerSize():0,"nbt_roundtrip",true));
+            // A low hull fits under this obstacle, but an upright Sifu passenger
+            // must stop at it. Empty boats retain the installed vanilla result.
+            var proxy=new dev.sifucraft.combat.EnemyProxy(dev.sifucraft.combat.EnemyEntities.ENEMY_PROXY,level);
+            proxy.setPos(24.5,201,8.5);require(proxy.startRiding(boat),"test passenger boards "+entry.id());
+            var obstacle=new BlockPos(26,202,8);level.setBlockAndUpdate(obstacle,Blocks.STONE.defaultBlockState());
+            var requested=new Vec3(3,0,0);
+            var hull=net.minecraft.world.entity.Entity.collideBoundingBox(boat,requested,boat.getBoundingBox(),level,List.of());
+            var occupied=dev.sifucraft.combat.BoatPassengers.constrainBoat(boat,requested);
+            require(hull.equals(requested)&&occupied.x>0&&occupied.x<2&&occupied.y==0&&occupied.z==0,"upright passenger clearance differs from hull "+entry.id());
+            require(Math.abs(proxy.getBoundingBox().maxX+occupied.x-26)<1e-6,"passenger stops at the actual obstacle face "+entry.id());
+            var rider=cows.getFirst();rider.setPos(boat.position());
+            var exit=dev.sifucraft.combat.BoatPassengers.dismount(boat,rider,boat.position());
+            require(!exit.equals(boat.position())&&!rider.getBoundingBox().move(exit.subtract(rider.position())).intersects(boat.getBoundingBox().minmax(proxy.getBoundingBox())),"water fallback avoids occupied native boat "+entry.id());
+            proxy.stopRiding();require(dev.sifucraft.combat.BoatPassengers.constrainBoat(boat,requested).equals(requested),"empty boat is unmodified "+entry.id());
+            require(dev.sifucraft.combat.BoatPassengers.dismount(boat,rider,boat.position()).equals(boat.position()),"ordinary empty-boat dismount is unchanged "+entry.id());
+            proxy.discard();level.setBlockAndUpdate(obstacle,Blocks.AIR.defaultBlockState());
             for(var cow:cows){cow.stopRiding();cow.discard();}boat.discard();clone.discard();
         }
         require(!reports.isEmpty(),"installed boats enumerated");

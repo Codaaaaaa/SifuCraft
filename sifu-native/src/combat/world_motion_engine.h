@@ -104,7 +104,11 @@ public:
         case Ledger::Decision::Invalid:Queue(command,Status::Invalid,now);return true;
         case Ledger::Decision::Fresh:break;
         }
-        if(!Scope(command)||command.issued_ms>now||now-command.issued_ms>200) {Reject(command,Status::Stale,now);return true;}
+        // A heartbeat makes no move and already carries an absolute <=500ms
+        // expiry from its original server authorization. Delayed delivery may
+        // retain an OWNED lease, never revive one that has already expired.
+        const bool heartbeat=command.op==Op::Renew&&phase_==Phase::Owned&&Owns(command);
+        if(!Scope(command)||command.issued_ms>now||(now-command.issued_ms>200&&!heartbeat)) {Reject(command,Status::Stale,now);return true;}
         // Releasing authority needs no ready movement world. A real pause must
         // not reject the owner's stop request as Busy.
         if((command.op==Op::Cancel||command.op==Op::Release)&&phase_!=Phase::Free&&Owns(command)){
@@ -221,6 +225,7 @@ public:
     Phase phase()const{return phase_;}
     unsigned restored()const{return restored_;}
     const Body& body()const{return body_;}
+    Status release_reason()const{return reason_;}
     bool Target(const Command& command)const{return phase_!=Phase::Free&&source_.target==command.target&&source_.spawn==command.spawn&&source_.flags==command.flags;}
 private:
     unsigned Parts()const{return source_.flags&kPlayer?1u:7u;}

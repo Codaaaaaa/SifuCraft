@@ -115,6 +115,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private CatalogLogicCheck catalogLogicCheck;
     private CircuitScaleCheck circuitScaleCheck;
     private NativeBoatCheck nativeBoatCheck;
+    private BoatDrivingCheck boatDrivingCheck;
     private NativeExplosionCheck nativeExplosionCheck;
     private CannonCheck cannonCheck;
     private CoverageSceneCheck coverageSceneCheck;
@@ -390,6 +391,10 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(Boolean.getBoolean("sifucraft.nativeBoatSelfTest")){
             nativeBoatCheck=new NativeBoatCheck();ServerTickEvents.END_SERVER_TICK.register(nativeBoatCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(nativeBoatCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.boatDrivingSelfTest")){
+            boatDrivingCheck=new BoatDrivingCheck();ServerTickEvents.END_SERVER_TICK.register(boatDrivingCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(boatDrivingCheck::restore);
         }
         if(Boolean.getBoolean("sifucraft.nativeExplosionSelfTest")){
             nativeExplosionCheck=new NativeExplosionCheck();ServerTickEvents.END_SERVER_TICK.register(nativeExplosionCheck::tick);
@@ -733,6 +738,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(circuitScaleCheck!=null)circuitScaleCheck.clientTick(minecraft,frame,blockShapes.metrics());
         if(nativeBoatCheck!=null)nativeBoatCheck.clientTick(minecraft,frame);
         if(nativeExplosionCheck!=null)nativeExplosionCheck.clientTick(minecraft,frame);
+        if(boatDrivingCheck!=null)boatDrivingCheck.clientTick(minecraft,input,frame,guiAvailable(frame));
         if(cannonCheck!=null)cannonCheck.clientTick(minecraft,frame);
         if(coverageSceneCheck!=null)coverageSceneCheck.clientTick(minecraft,frame);
         if(environmentDamageCheck!=null)environmentDamageCheck.clientTick(minecraft,frame);
@@ -784,6 +790,15 @@ public final class SifuCraftClient implements ClientModInitializer {
         slots.open(server.getWorldPath(LevelResource.ROOT));
         MapPlacement placement = slots.placement(UnrealSpace.mapName(frame.worldPath()));
         long now = System.currentTimeMillis();
+        if(player.getVehicle() instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat boat&&
+            !boat.isRemoved()&&boat.level()==minecraft.level&&placement.containsX(boat.blockPosition().getX())&&space.canRetainBoat(frame,placement,player.position())){
+            var pawn=frame.playerLocation();var nativeFeet=new Vec3(placement.mcX(pawn.x()),placement.mcY(pawn.z()-frame.capsuleHalfHeight()),placement.mcZ(pawn.y()));
+            var seat=player.position();
+                // A same-world handoff while still at the boat is not a new
+                // player spawn. Teleporting here would make vanilla dismount.
+                space.anchor(frame,placement);lastGround=null;teleportEpoch=frame.anchorEpoch();teleportWorld=frame.worldGeneration();teleportTarget=seat;teleportSentMs=now;
+                LOG.info("[space] epoch {} retained original boat {} at native handoff distance {}m",frame.anchorEpoch(),boat.getUUID(),fmt(nativeFeet.distanceTo(seat)));return;
+        }
         boolean sameHandOver = teleportEpoch == frame.anchorEpoch() && teleportWorld == frame.worldGeneration();
         if (!sameHandOver || now - teleportSentMs > TELEPORT_RETRY_MS) {
             SifuFrame.Vec3 pawn = frame.playerLocation();

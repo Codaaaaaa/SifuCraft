@@ -128,6 +128,7 @@ loom {
 			property "sifucraft.nativeMachineEffects", providers.gradleProperty("sifucraft.nativeMachineEffects").getOrElse("false")
 			property "sifucraft.nativeWindSelfTest", providers.gradleProperty("sifucraft.nativeWindSelfTest").getOrElse("false")
 			property "sifucraft.boatDrivingSelfTest", providers.gradleProperty("sifucraft.boatDrivingSelfTest").getOrElse("false")
+			property "sifucraft.boatDrivingControl", file('../build/p11-boat-driving-control.txt').canonicalPath
 			property "sifucraft.pistonAftermathSelfTest", providers.gradleProperty("sifucraft.pistonAftermathSelfTest").getOrElse("false")
 			property "sifucraft.aftermathHeight", providers.gradleProperty("sifucraft.aftermathHeight").getOrElse("2")
 			property "sifucraft.aftermathVariant", providers.gradleProperty("sifucraft.aftermathVariant").getOrElse("eastHoney")

@@ -19,6 +19,22 @@ import net.minecraft.world.phys.Vec3;
 
 /** No Minecraft client, world, server or native game is created by these offline checks. */
 public final class P7OfflineTest {
+    private static dev.sifucraft.bridge.SifuFrame ridingFrame(int world,int epoch,int owner){
+        var zero=dev.sifucraft.bridge.SifuFrame.Vec3.ZERO;var pos=new dev.sifucraft.bridge.SifuFrame.Vec3(100,200,90);
+        return new dev.sifucraft.bridge.SifuFrame(1,0,world,dev.sifucraft.bridge.Protocol.SNAPSHOT_HAS_PAWN,pos,zero,zero,pos,zero,90,180,120,"/SifuCraft/Test/Boat",0,0,0,owner,90,epoch);
+    }
+    private static void ridingAnchor(){
+        var space=new UnrealSpace();var map=new MapPlacement("BoatMap",4096,64,0);var seat=new Vec3(4097,64,2);
+        var initial=ridingFrame(2,7,dev.sifucraft.bridge.Protocol.OWNER_MINECRAFT);var returned=ridingFrame(2,8,dev.sifucraft.bridge.Protocol.OWNER_MINECRAFT);
+        check(!space.canRetainBoat(returned,map,seat),"a saved boat is not a new Native-session anchor");space.anchor(initial,map);
+        check(space.canRetainBoat(returned,map,seat),"same-world F8 return at the boat retains the original relationship");
+        check(!space.canRetainBoat(ridingFrame(3,8,dev.sifucraft.bridge.Protocol.OWNER_MINECRAFT),map,seat),"reused boat coordinates cannot bind a new Native world");
+        check(!space.canRetainBoat(returned,new MapPlacement("OtherMap",4096,64,0),seat),"same coordinates in another map cannot inherit the boat");
+        check(!space.canRetainBoat(ridingFrame(2,8,dev.sifucraft.bridge.Protocol.OWNER_SIFU),map,seat),"Native-owned movement is not reanchored onto the boat");
+        check(!space.canRetainBoat(returned,map,seat.add(3,0,0))&&!space.canRetainBoat(returned,map,seat.add(0,2,0)),"leaving the boat in Native space uses the actual new player location");
+        check(!space.canRetainBoat(returned,map,new Vec3(Double.NaN,64,2)),"unreadable seat cannot acquire an anchor");space.reset();
+        check(!space.canRetainBoat(returned,map,seat),"disconnect or respawn invalidates the old riding anchor");
+    }
     private static void check(boolean ok, String why) { if (!ok) throw new AssertionError(why); }
 
     private static void atomic(Path directory) throws IOException {
@@ -113,7 +129,7 @@ public final class P7OfflineTest {
 
     public static void main(String[] args) throws Exception {
         Path directory = Files.createTempDirectory("sifucraft-p7-offline-");
-        try { atomic(directory); camera(directory); persistence(directory); }
+        try { atomic(directory); camera(directory); persistence(directory); ridingAnchor(); }
         finally {
             // Only files created by this fixture, under its own temporary directory.
             try (var paths = Files.walk(directory)) {
