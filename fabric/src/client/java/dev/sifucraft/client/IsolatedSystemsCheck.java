@@ -164,6 +164,7 @@ final class IsolatedSystemsCheck {
                 explosions(server.overworld());
                 tntLifecycle(server.overworld());
                 reports.addAll(BoatBaselineCheck.run(server.overworld()));
+                reports.addAll(SuffocationCases.run(server.overworld()));
             }
             var report = new LinkedHashMap<String,Object>(); report.put("passed",true); report.put("bridge_connected",false); report.put("cases",reports);
             AtomicFiles.write(server.getWorldPath(LevelResource.ROOT).resolve("sifucraft-isolated-systems-report.json"),

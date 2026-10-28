@@ -130,6 +130,13 @@ public final class WorldEffects {
         if(entry==null||entry.radius()<10||entry.radius()>100||entry.halfHeight()>200)return null;
         return view;
     }
+    static BlockPos suffocation(EnemyProxy proxy){
+        var v=view(proxy);
+        if(v==null||!FluidMotion.currentGeometry(v)||!SceneFluidGeometry.knownVolume(proxy.level(),proxy.getBoundingBox()))return null;
+        var pos=SuffocationContacts.block(proxy);if(pos==null)return null;
+        var section=WorldBlocks.index().snapshot(SectionPos.of(pos).asLong());
+        return section!=null&&proxy.level().getBlockState(pos).equals(section.states().get(SectionPos.sectionRelativePos(pos)))?pos:null;
+    }
     private static Evidence evidence(EnemyProxy proxy,DamageSource source){
         var timed=MachineEffects.evidence(proxy,source);
         if(timed!=null)return new Evidence(source.typeHolder().unwrapKey().orElseThrow().identifier().toString(),timed.pos(),timed);
@@ -140,6 +147,7 @@ public final class WorldEffects {
         var machine=MachineProjectiles.evidence(proxy,source);
         if(machine!=null)return new Evidence(source.typeHolder().unwrapKey().orElseThrow().identifier().toString(),machine.pos(),machine);
         if(source.getEntity()!=null||source.getDirectEntity()!=null)return null; // machine projectiles need their separate origin credential
+        if(source.is(DamageTypes.IN_WALL)){var pos=suffocation(proxy);return pos==null?null:new Evidence("minecraft:in_wall",pos);}
         var path=pathProof.get();
         if(path!=null&&path.target==proxy&&WorldMotionWorld.current()!=null&&path.scope.equals(WorldMotionWorld.current().scope())){
             String type=source.is(DamageTypes.LAVA)?"minecraft:lava":source.is(DamageTypes.IN_FIRE)?"minecraft:in_fire":null;
@@ -163,8 +171,7 @@ public final class WorldEffects {
                 if(source.is(DamageTypes.LAVA)&&fluid.is(FluidTags.LAVA)&&area.intersects(new AABB(at.getX(),at.getY(),at.getZ(),at.getX()+1,at.getY()+fluid.getHeight(level,at),at.getZ()+1)))return new Evidence("minecraft:lava",at.immutable());
             }
         }
-        // Fall and crush require actual external-motion receipts. A NativeFree
-        // mirror must not duplicate Sifu's own fall damage or invent suffocation.
+        // Unproven falls and Native geometry cannot supply MC damage evidence.
         return null;
     }
     public static boolean canCapture(EnemyProxy proxy,DamageSource source){return view(proxy)!=null&&evidence(proxy,source)!=null;}

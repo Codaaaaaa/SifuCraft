@@ -99,6 +99,13 @@ public final class EnemyProxy extends Mob {
         boolean applied=super.addEffect(effect,source);MachineEffects.added(this,effect,source,applied);return applied;
     }
     @Override protected void tickEffects(){MachineEffects.tick(this,super::tickEffects);}
+    @Override public boolean isInWall(){
+        if(WorldEffects.suffocation(this)==null)return false;
+        // Only the original read-only eye query bypasses the mirror's flag.
+        // Movement, entity collisions and every other tick retain noPhysics.
+        boolean previous=noPhysics;noPhysics=false;
+        try{return super.isInWall();}finally{noPhysics=previous;}
+    }
     @Override public void remove(Entity.RemovalReason reason){MachineEffects.detached(this);super.remove(reason);}
     @Override protected boolean isAffectedByBlocks(){return BlockEnvironment.active(this)?!isRemoved():super.isAffectedByBlocks();}
 

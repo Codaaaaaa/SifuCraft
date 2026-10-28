@@ -116,6 +116,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private CircuitScaleCheck circuitScaleCheck;
     private NativeBoatCheck nativeBoatCheck;
     private BoatDrivingCheck boatDrivingCheck;
+    private NativeSuffocationCheck nativeSuffocationCheck;
     private NativeExplosionCheck nativeExplosionCheck;
     private CannonCheck cannonCheck;
     private CoverageSceneCheck coverageSceneCheck;
@@ -397,8 +398,13 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerLifecycleEvents.SERVER_STOPPING.register(boatDrivingCheck::restore);
         }
         if(Boolean.getBoolean("sifucraft.nativeExplosionSelfTest")){
+            // Independent fixture modes use the same production world endpoint.
             nativeExplosionCheck=new NativeExplosionCheck();ServerTickEvents.END_SERVER_TICK.register(nativeExplosionCheck::tick);
             ServerLifecycleEvents.SERVER_STOPPING.register(nativeExplosionCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.nativeSuffocationSelfTest")){
+            nativeSuffocationCheck=new NativeSuffocationCheck();ServerTickEvents.END_SERVER_TICK.register(nativeSuffocationCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(nativeSuffocationCheck::restore);
         }
         if(Boolean.getBoolean("sifucraft.cannonSelfTest"))cannonCheck=CannonCheck.attach();
         if(Boolean.getBoolean("sifucraft.coverageSceneSelfTest")){coverageSceneCheck=new CoverageSceneCheck();ServerTickEvents.END_SERVER_TICK.register(coverageSceneCheck::tick);ServerLifecycleEvents.SERVER_STOPPING.register(coverageSceneCheck::restore);}
@@ -739,6 +745,7 @@ public final class SifuCraftClient implements ClientModInitializer {
         if(nativeBoatCheck!=null)nativeBoatCheck.clientTick(minecraft,frame);
         if(nativeExplosionCheck!=null)nativeExplosionCheck.clientTick(minecraft,frame);
         if(boatDrivingCheck!=null)boatDrivingCheck.clientTick(minecraft,input,frame,guiAvailable(frame));
+        if(nativeSuffocationCheck!=null)nativeSuffocationCheck.clientTick(minecraft,frame,guiAvailable(frame));
         if(cannonCheck!=null)cannonCheck.clientTick(minecraft,frame);
         if(coverageSceneCheck!=null)coverageSceneCheck.clientTick(minecraft,frame);
         if(environmentDamageCheck!=null)environmentDamageCheck.clientTick(minecraft,frame);
