@@ -22,6 +22,10 @@ public final class SceneExplosions {
     public record Proof(UUID event,WorldMotionRequests.Scope scope,BlockPos center) {}
     private record Frame(ServerExplosion explosion,Proof proof,Map<EnemyProxy,CompletableFuture<WorldMotionProtocol.Reply>> damage) {}
     private static final ThreadLocal<Frame> current = new ThreadLocal<>();
+    private static volatile java.util.function.Consumer<UUID> observer;
+    public static void observe(java.util.function.Consumer<UUID> value){
+        if(value!=null&&!Boolean.getBoolean("sifucraft.tntStressSelfTest"))throw new IllegalStateException("isolated TNT fixture only");observer=value;
+    }
     /** Preserve TNT state while nearby native targets cannot accept a complete world event. */
     public static boolean canAdvance(net.minecraft.world.entity.item.PrimedTnt tnt){
         var view=WorldMotionWorld.current();if(view==null||view.enemies()==null)return true;
@@ -36,7 +40,8 @@ public final class SceneExplosions {
         var proof=view==null||view.nativeStatus()==null||(view.nativeStatus().capabilities()&WorldMotionProtocol.EXPLOSION_CAPABILITY)==0
                 ?null:new Proof(identity,view.scope(),BlockPos.containing(explosion.center()));
         var previous=current.get();current.set(new Frame(explosion,proof,new HashMap<>()));
-        try{return action.get();}finally{if(previous==null)current.remove();else current.set(previous);}
+        try{T result=action.get();var listener=observer;if(listener!=null&&explosion.getDirectSourceEntity() instanceof net.minecraft.world.entity.item.PrimedTnt tnt)listener.accept(tnt.getUUID());return result;}
+        finally{if(previous==null)current.remove();else current.set(previous);}
     }
     static Proof proof(EnemyProxy target,DamageSource source) {
         var frame=current.get();var view=WorldMotionWorld.current();
