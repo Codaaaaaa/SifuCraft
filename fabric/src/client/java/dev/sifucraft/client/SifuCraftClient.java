@@ -637,7 +637,8 @@ public final class SifuCraftClient implements ClientModInitializer {
         var client = instance;
         return client != null && client.input.minecraftOwnsInput() && client.guiAvailable(client.bridge.latest()) &&
                 (client.minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> ||
-                 client.minecraft.gui.screen() instanceof DeathScreen);
+                 client.minecraft.gui.screen() instanceof DeathScreen ||
+                 client.minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.ChatScreen);
     }
     static int cursorReferenceWidth() {
         return instance.overlay.viewportWidth() > 0 ? instance.overlay.viewportWidth() : instance.minecraft.getWindow().getWidth();
@@ -707,7 +708,6 @@ public final class SifuCraftClient implements ClientModInitializer {
         blockShapes.update(minecraft, bridge, space.placement());
         WorldTerrain.update(minecraft);
         publishBlocks(previous);
-        enforceNoFlight();
         rescueFromFall(previous);
         var outgoing=currentState(previous);
         if(playerSignalCheck!=null)outgoing=playerSignalCheck.protectNativePose(outgoing,guiAvailable(previous));
@@ -966,24 +966,16 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (screen == null || minecraft.player == null || !bridge.peerConnected() || screen instanceof DeathScreen) return;
         String name = screen.getClass().getSimpleName();
         if (name.contains("Loading") || name.contains("Receiving") || name.contains("Message")) return;
-        if (guiAvailable(bridge.latest()) && screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>) return;
+        if (mirroredScreenActive()) return; // containers and chat are shown in Sifu
         if (screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>) minecraft.player.closeContainer();
         else minecraft.gui.setScreen(null);
         if (closedScreens.add(name)) LOG.info("[input] closed {}: Minecraft's window is hidden while attached to Sifu", name);
     }
 
-    /** While attached to Sifu the player walks on Sifu's level: no flying (creative grants it again on every ability sync). */
-    private void enforceNoFlight() {
-        Player player = minecraft.player;
-        if (player == null || !bridge.peerConnected() || !player.getAbilities().mayfly) return;
-        player.getAbilities().mayfly = false;
-        player.getAbilities().flying = false;
-        player.onUpdateAbilities();
-    }
-
     /**
      * A player that drops far below where it last stood (a hole in the grid, a gap between Sifu's
      * collision and the edge of the level) is put back there instead of falling through the world.
+     * A creative player flying down on purpose is not falling.
      */
     private void rescueFromFall(SifuFrame frame) {
         Player player = minecraft.player;
@@ -1004,7 +996,7 @@ public final class SifuCraftClient implements ClientModInitializer {
             return;
         }
         long now = System.currentTimeMillis();
-        if (lastGround == null || player.getY() > lastGround.y - FALL_RESCUE_BLOCKS || now - rescueSentMs < RESCUE_COOLDOWN_MS) {
+        if (lastGround == null || player.getAbilities().flying || player.getY() > lastGround.y - FALL_RESCUE_BLOCKS || now - rescueSentMs < RESCUE_COOLDOWN_MS) {
             return;
         }
         rescueSentMs = now;

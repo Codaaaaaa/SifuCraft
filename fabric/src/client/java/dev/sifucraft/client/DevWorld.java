@@ -47,9 +47,11 @@ final class DevWorld {
         }
     }
 
-    /** Blocks shown in Sifu are lit by Minecraft's sky: keep it at noon instead of following the day cycle. */
+    /** Blocks shown in Sifu are lit by Minecraft's sky: keep it at a clear noon instead of following the day and weather cycles. */
     static void lockDaytime(MinecraftServer server) {
         if (!enabled()) return;
+        server.getGameRules().set(net.minecraft.world.level.gamerules.GameRules.ADVANCE_WEATHER, false, server);
+        server.overworld().resetWeatherCycle();
         var clock = server.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.WORLD_CLOCK)
                 .getOrThrow(net.minecraft.world.clock.WorldClocks.OVERWORLD);
         server.clockManager().moveToTimeMarker(clock, net.minecraft.world.clock.ClockTimeMarkers.NOON);

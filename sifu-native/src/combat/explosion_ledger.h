@@ -21,7 +21,8 @@ public:
         if(!native||!world)return;
         if(native!=native_||world!=world_){entries_.clear();native_=native;world_=world;}
     }
-    static bool DamageType(std::uint64_t type){return type==EffectTag("minecraft:explosion")||type==EffectTag("minecraft:player_explosion");}
+    // An iron golem's hit (one id per swing) authorizes one toss the same way, so it also lifts NPCs out of idle.
+    static bool DamageType(std::uint64_t type){return type==EffectTag("minecraft:explosion")||type==EffectTag("minecraft:player_explosion")||type==EffectTag("minecraft:mob_attack");}
     Decision Begin(const Command& c,Effect* cached){
         auto at=entries_.find(Of(c));
         if(at!=entries_.end()){

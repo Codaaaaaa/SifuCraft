@@ -89,8 +89,9 @@ public:
         if(const auto why=motion::CheckBody(g_current.actors,target_,&sample_,true,false))return Refuse(why);
         passenger_return_=g_passenger_returns.Candidate(c,target_.serial,sample_.hp,GetTickCount64());
         if(passenger_return_)SC_LOG("[passenger-effect] return candidate target=%u/%u source=%u",c.target,c.spawn,static_cast<unsigned>(c.source));
-        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers_,(!explosion_&&!passenger_return_)||wind_))return Refuse(why);
-        if(((explosion_&&!wind_)||passenger_return_)&&!ExplosionPeers(true))return Refuse("world-effect-ai-state");
+        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers_,(!explosion_&&!passenger_&&!passenger_return_)||wind_))return Refuse(why);
+        // A seated NPC may already be fighting: like a blast, hold its unchanged running AI instead of demanding idle.
+        if(((explosion_&&!wind_)||passenger_||passenger_return_)&&!ExplosionPeers(true))return Refuse("world-effect-ai-state");
         hit_=mem::ReadPtr(target_.actor+off::AFightingCharacter::m_HitCapsule);hit_id_=ue::IdentityOf(hit_);
         if(!hit_id_.valid()||ue::OuterOf(hit_)!=target_.actor)return false;
         const auto health_id=ue::IdentityOf(sample_.health);if(!health_id.valid())return false;
@@ -151,9 +152,9 @@ public:
         motion::Peers peers;
         if(const auto why=motion::CheckBody(g_current.actors,target_,&sample_,false,false))return CheckRefused(why);
         if(sample_.mode!=mode_)return CheckRefused("movement-mode");
-        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers,(!explosion_&&!passenger_return_)||wind_))return CheckRefused(why);
+        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers,(!explosion_&&!passenger_&&!passenger_return_)||wind_))return CheckRefused(why);
         if(peers!=peers_)return CheckRefused("brain-identity");
-        if(((explosion_&&!wind_)||passenger_return_)&&!ExplosionPeers(false))return CheckRefused("world-effect-ai-state");
+        if(((explosion_&&!wind_)||passenger_||passenger_return_)&&!ExplosionPeers(false))return CheckRefused("world-effect-ai-state");
         return Convert(sample_,out);
     }
     bool Observe(Body* out)override{

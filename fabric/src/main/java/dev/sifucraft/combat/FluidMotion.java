@@ -79,11 +79,17 @@ public final class FluidMotion {
     private static final Map<EnemyFrame.Key,Pose> poses=new HashMap<>();
     private static final Map<EnemyFrame.Key,Handoff> handoffs=new HashMap<>();
     private static final Map<EnemyFrame.Key,Impulse> impulses=new HashMap<>();
+    /** A toss is waiting for its lease or already flying. */
+    public static boolean moving(EnemyFrame.Key key){return flights.containsKey(key)||impulses.containsKey(key);}
     static void explosionImpulse(EnemyProxy proxy,WorldMotionRequests.Scope expected,UUID source,Vec3 velocity,Reply receipt){
         explosionImpulse(proxy,expected,source,velocity,receipt,false);
     }
     /** The final vanilla explosion vector, after native HP acknowledgement; it is not a light-hit impulse. */
     static void explosionImpulse(EnemyProxy proxy,WorldMotionRequests.Scope expected,UUID source,Vec3 velocity,Reply receipt,boolean passenger){
+        explosionImpulse(proxy,expected,source,velocity,receipt,passenger,passenger?8000:1000);
+    }
+    /** {@code lifeMs}: how long the toss waits for Native to qualify the NPC (a hit reaction refuses it meanwhile). */
+    static void explosionImpulse(EnemyProxy proxy,WorldMotionRequests.Scope expected,UUID source,Vec3 velocity,Reply receipt,boolean passenger,long lifeMs){
         var v=WorldMotionWorld.current();
         if(receipt==null||(receipt.status()!=2&&receipt.status()!=4)||receipt.health()<=0||receipt.actorSerial()<=0||
             v==null||!expected.equals(v.scope())||!sameWorld(v,(ServerLevel)proxy.level())||v.nativeStatus()==null||
@@ -92,7 +98,7 @@ public final class FluidMotion {
         if(old!=null&&old.scope.equals(expected)&&old.source.equals(source))return;
         if(old!=null&&old.scope.equals(expected))velocity=velocity.add(old.velocity);
         long now=WorldWriter.clockMillis();
-        impulses.put(proxy.sifuKey(),new Impulse(expected,source,velocity,receipt.health(),receipt.actorSerial(),now,now+(passenger?8000:1000),EXPLOSION));
+        impulses.put(proxy.sifuKey(),new Impulse(expected,source,velocity,receipt.health(),receipt.actorSerial(),now,now+lifeMs,EXPLOSION));
         retry.remove(proxy.sifuKey());
     }
     /** A genuine passenger release continues gravity/water once, without inventing a piston source. */
