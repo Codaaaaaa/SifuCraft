@@ -21,6 +21,8 @@ struct Fake final:Backend {
     std::array<float,3> normal{};
     bool Bind(const Command& c,Body* out)override{++binds;*out=body;return bind&&(!(c.flags&kPlayer)||c.actor_stamp==((73ull<<32)|static_cast<std::uint32_t>(body.serial)));}
     bool Bound(const Command&)override{++claims;return true;}
+    bool hold=false;int holds=0;
+    bool Hold(const Command&)override{++holds;return hold;}
     bool SupportsPlayer(Source source)const override{return player&&(source==Source::Machine||(player_fluid&&source==Source::Fluid));}
     bool Check(Body* out)override{*out=body;return valid;}
     Sweep Move(const Body&,const std::array<float,3>& d)override{++moves;if(invoked)for(int i=0;i<3;++i)body.position[i]+=d[i]*fraction;return {body,invoked,read,returned,block,penetrate,normal};}
@@ -565,6 +567,23 @@ void PlayerFluidAndPoseOwner(){
 }
 
 }
+void SettleFightingNpc(){
+    Case c;c.backend.bind=false;c.backend.hold=true;
+    auto reserve=c.CommandFor();reserve.source=Source::Passenger;c.Send(reserve);c.Empty();
+    Require(c.engine.phase()==Engine::Phase::Settling&&c.backend.holds==1,"a fighting NPC is held instead of refused");
+    Require(c.engine.Skip(c.now,2)&&c.engine.Skip(c.now,4)&&!c.engine.Skip(c.now,1),"settling holds AI and behavior only; movement runs out its order");
+    c.now+=400;c.Tick();c.Empty();
+    c.backend.bind=true;c.backend.body.position[0]=40; // it finished its step meanwhile
+    c.now+=100;c.Tick();auto r=c.Pop(Status::Prepared);
+    Require(c.engine.phase()==Engine::Phase::Owned&&r.position[0]==40,"a settled NPC is owned in the same update, at its settled pose");
+    Require(c.engine.Skip(c.now,1)&&c.engine.Skip(c.now,2)&&c.engine.Skip(c.now,4),"no tick of a settled NPC runs free: its in-flight move and next attack never start");
+    c.now+=450;Require(c.engine.Skip(c.now),"a settled lease runs from settling, not from the reserve");
+    Case late;late.backend.bind=false;late.backend.hold=true;auto toss=late.CommandFor();toss.source=Source::Explosion;late.Send(toss);
+    late.now+=1000;late.Tick();late.Pop(Status::TargetLost);
+    Require(late.engine.phase()==Engine::Phase::Free&&late.backend.forgets>=1&&!late.engine.Skip(late.now,2),"settling gives up after 1 s and releases the hold");
+    Case machine;machine.backend.bind=false;machine.backend.hold=true;machine.Send(machine.CommandFor());machine.Pop(Status::TargetLost);
+    Require(machine.backend.holds==0,"machines never settle");
+}
 int main(){
     {
         Case test;Command query{};query.op=Op::Coverage;query.source=Source::WorldEffect;query.id=1;query.issued_ms=test.now;query.source_hi=1;query.action=1;query.save=30;query.map=40;query.world=2;query.position[0]=-16800;Seal(query);
@@ -588,5 +607,5 @@ int main(){
     }
     Require(!TranslateFallOrigin(1e9f,-1e9f,1e9f,&origin),"reject unreasonable translated origin without writing");
     Require(!TranslateFallOrigin(90,90,90,nullptr),"reject missing cache output");
-    HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();UnexecutedCredits();Lifetime();PausedHandback();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();ExplosionMotion();ExplosionEventIdentity();PassengerPose();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();PlayerMovementOnly();LateStopProof();PassengerBlastLandingProof();PassengerEffectReturnProof();PlayerFluidAndPoseOwner();std::printf("world motion arbiter PASS %u assertions\n",checks);
+    HandshakeAndReplay();BoundsAndInvalidation();SweepFailures();UnexecutedCredits();Lifetime();PausedHandback();Capacity();GeometryBarrier();MultipleTargets();ReleaseObservation();PhysicalBinding();WorldEffects();FluidRenewal();ExplosionMotion();ExplosionEventIdentity();PassengerPose();RenewalDuringPublication();RetainedPublication();MachinePriority();ContactNormals();PlayerMovementOnly();LateStopProof();PassengerBlastLandingProof();PassengerEffectReturnProof();PlayerFluidAndPoseOwner();SettleFightingNpc();std::printf("world motion arbiter PASS %u assertions\n",checks);
 }
