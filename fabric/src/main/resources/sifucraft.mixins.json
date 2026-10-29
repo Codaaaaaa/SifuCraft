@@ -37,6 +37,7 @@
 		"PistonStructureMixin",
 		"ProjectileSourceMixin",
 		"ShieldBlockingMixin",
+		"SmashParticlesMixin",
 		"TntSceneMixin",
 		"WindChargeCollisionMixin",
 		"WindChargeSceneHitMixin",
