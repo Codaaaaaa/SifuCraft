@@ -34,6 +34,11 @@ public abstract class EntityMixin {
         return (Object)this instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat boat
             ?dev.sifucraft.combat.BoatPassengers.constrainBoat(boat,movement):movement;
     }
+    /** Vehicles without their own seat code (minecarts) seat a native passenger only on its actual reserved root. */
+    @Inject(method="positionRider(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/entity/Entity$MoveFunction;)V",at=@At("HEAD"),cancellable=true)
+    private void sifucraft$actualHitMirror(Entity passenger,Entity.MoveFunction move,CallbackInfo ci){
+        if(!dev.sifucraft.combat.BoatPassengers.positionRider(passenger))ci.cancel();
+    }
     @Inject(method="applyMovementEmissionAndPlaySound",at=@At("HEAD"),cancellable=true)
     private void sifucraft$ignoreInactivePlayerFootsteps(Entity.MovementEmission emission,Vec3 motion,
             net.minecraft.core.BlockPos pos,net.minecraft.world.level.block.state.BlockState state,CallbackInfo ci) {

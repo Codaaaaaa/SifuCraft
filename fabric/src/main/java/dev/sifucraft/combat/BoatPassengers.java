@@ -26,11 +26,13 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
-/** Actual native passengers, with one bounded lease and the vanilla boat's own seat transform. */
+/** Actual native passengers of a boat or minecart, with one bounded lease and the vehicle's own vanilla seat transform. */
 public final class BoatPassengers {
     private BoatPassengers() {}
     private static final long ACTION=ShapeProtocol.mapHash("sifucraft:boat_passenger");
     private static final ThreadLocal<EnemyProxy> seatQuery=new ThreadLocal<>();
+    /** A minecart has one seat, already checked by vanilla through isVehicle. */
+    private static boolean fits(Entity vehicle,EnemyProxy proxy){return vehicle instanceof AbstractBoat boat?boat.hasEnoughSpaceFor(proxy):!vehicle.isVehicle();}
     public static boolean positionRider(Entity passenger){return !(passenger instanceof EnemyProxy)||seatQuery.get()==passenger;}
     private static void evaluateSeat(Passenger p){
         var old=seatQuery.get();seatQuery.set(p.proxy);
@@ -39,7 +41,7 @@ public final class BoatPassengers {
     private enum Phase { ACQUIRE,SEATED,RELEASE,MACHINE }
     private record PendingStep(CompletableFuture<Reply> result,float facing){}
     private static final class Passenger {
-        final AbstractBoat boat;final EnemyProxy proxy;final EnemyFrame.Entry initial;final WorldMotionRequests.Scope scope;
+        final Entity boat;final EnemyProxy proxy;final EnemyFrame.Entry initial;final WorldMotionRequests.Scope scope;
         final AtomicBoolean queued=new AtomicBoolean();
         Phase phase=Phase.ACQUIRE;CompletableFuture<Reply> pending;Reply binding,last;
         List<PendingStep> batch;
@@ -49,7 +51,7 @@ public final class BoatPassengers {
         long lease,deadline,renewAt;int operation;float facing,sentFacing;boolean closing,failed,obstructed;
         long releaseUntil;boolean releasePaused;
         SifuFrame.Vec3 wanted;float targetYaw;
-        Passenger(AbstractBoat boat,EnemyProxy proxy,EnemyFrame.Entry initial,WorldMotionWorld.View view){
+        Passenger(Entity boat,EnemyProxy proxy,EnemyFrame.Entry initial,WorldMotionWorld.View view){
             this.boat=boat;this.proxy=proxy;this.initial=initial;scope=view.scope();facing=initial.yaw();health=initial.health();
         }
     }
@@ -160,9 +162,9 @@ public final class BoatPassengers {
             v.nativeStatus()!=null&&v.nativeStatus().flags()==0&&(!acquiring||(v.nativeStatus().capabilities()&PASSENGER_CAPABILITY)!=0)&&
             v.nativeStatus().atMs()<=now&&now-v.nativeStatus().atMs()<=200;
     }
-    public static boolean candidate(AbstractBoat boat,EnemyProxy proxy){
+    public static boolean candidate(Entity boat,EnemyProxy proxy){
         if(!(boat.level() instanceof ServerLevel level)||proxy.level()!=level||boat.isRemoved()||proxy.isRemoved()||!proxy.isAlive()||
-            proxy.isPassenger()||proxy.isVehicle()||!boat.hasEnoughSpaceFor(proxy)||holds(proxy.sifuKey())||
+            proxy.isPassenger()||proxy.isVehicle()||!fits(boat,proxy)||holds(proxy.sifuKey())||
             WorldWriter.clockMillis()<retry.getOrDefault(proxy.sifuKey(),0L)||
             !boat.getBoundingBox().inflate(.2,-.01,.2).intersects(proxy.getBoundingBox())||
             EnemyMirrors.hitAttacker(proxy.sifuKey().id(),proxy.sifuKey().spawn())!=proxy)return false;
@@ -171,7 +173,7 @@ public final class BoatPassengers {
         return !SceneExplosions.blocked(v.scene(),from,to)&&level.clip(new ClipContext(from,to,ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,proxy)).getType()==HitResult.Type.MISS;
     }
     /** Only adds native proxies to this boat's vanilla broadphase; free proxy pushing stays disabled. */
-    public static List<Entity> candidates(AbstractBoat boat,AABB box,List<Entity> vanilla){
+    public static List<Entity> candidates(Entity boat,AABB box,List<Entity> vanilla){
         if(!(boat.level() instanceof ServerLevel))return vanilla;
         var result=new ArrayList<>(vanilla);
         for(var entity:boat.level().getEntities(boat,box,e->e instanceof EnemyProxy))
@@ -179,7 +181,7 @@ public final class BoatPassengers {
         return result;
     }
     /** The original boat already checked capacity, size, tags and passenger status. */
-    public static boolean board(AbstractBoat boat,EnemyProxy proxy){
+    public static boolean board(Entity boat,EnemyProxy proxy){
         if(!candidate(boat,proxy)||passengers.size()>=16)return false;
         var v=WorldMotionWorld.current();if(FluidMotion.yieldToMachine(proxy.sifuKey(),v))return false;
         var e=v.enemies().entries().stream().filter(entry->entry.key().equals(proxy.sifuKey())&&entry.alive()).findFirst().orElse(null);
@@ -363,7 +365,7 @@ public final class BoatPassengers {
         sendSteps(v,p,delta,turn);
     }
     private static boolean candidateAfterReservation(Passenger p){
-        return !p.boat.isRemoved()&&!p.proxy.isPassenger()&&p.boat.hasEnoughSpaceFor(p.proxy)&&
+        return !p.boat.isRemoved()&&!p.proxy.isPassenger()&&fits(p.boat,p.proxy)&&
                 p.boat.getBoundingBox().inflate(.2,-.01,.2).intersects(p.proxy.getBoundingBox());
     }
     public static void tick(MinecraftServer server){

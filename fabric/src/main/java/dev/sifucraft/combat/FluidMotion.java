@@ -56,6 +56,7 @@ public final class FluidMotion {
         LivingEntity body;MotionPrediction prediction;long lease,deadline,renewAt,lastTick=Long.MIN_VALUE;Vec3 requested,actualStart,nextVelocity;int parts,part;
         int pendingOp,retryOp;SifuFrame.Vec3 pendingDelta=SifuFrame.Vec3.ZERO;
         boolean resumeMove;
+        Vec3 launch;
         boolean damageYield;
         boolean playerYield;
         boolean machinePending,machineYield;long yieldUntilTick=Long.MIN_VALUE;
@@ -103,6 +104,18 @@ public final class FluidMotion {
         var pending=impulses.get(proxy.sifuKey());
         if(pending!=null&&pending.scope.equals(expected)&&pending.authority==EXPLOSION)return;
         long now=WorldWriter.clockMillis();impulses.put(proxy.sifuKey(),new Impulse(expected,boat,velocity,release.health(),release.actorSerial(),now,now+1000,FLUID));
+        retry.remove(proxy.sifuKey());
+    }
+    /** A Create ejector's original launch vector. It needs no damage receipt;
+     * the ordinary FLUID authority integrates the flight from the actual pose. */
+    public static void launched(EnemyProxy proxy,Vec3 velocity){
+        var v=WorldMotionWorld.current();
+        if(v==null||!available(v,(ServerLevel)proxy.level())||!Double.isFinite(velocity.lengthSqr()))return;
+        var f=flights.get(proxy.sifuKey());
+        if(f!=null){f.launch=velocity;return;} // already carried (e.g. by the feeding belt)
+        var e=NativeMotionSubjects.entry(v,proxy.sifuKey());if(e==null)return;
+        long now=WorldWriter.clockMillis();
+        impulses.put(proxy.sifuKey(),new Impulse(v.scope(),UUID.randomUUID(),velocity,e.health(),0,now,now+1000,FLUID));
         retry.remove(proxy.sifuKey());
     }
     private record Momentum(WorldMotionRequests.Scope scope,Vec3 velocity,long until){}
@@ -169,7 +182,7 @@ public final class FluidMotion {
         // binding/support and tight top-face contact are checked before damage.
         var foot=BlockPos.containing(box.getCenter().x,box.minY-.05,box.getCenter().z);
         if(level.hasChunkAt(foot)&&level.getBlockState(foot).is(net.minecraft.world.level.block.Blocks.MAGMA_BLOCK)&&Math.abs(box.minY-foot.getY()-1)<=.05)return foot;
-        return null;
+        return CreateBelts.moving(level,box); // a running Create belt carries like a current
     }
     private static Vec3 rootFeet(WorldMotionWorld.View v,Reply binding,SifuFrame.Vec3 hit){var offset=binding.rootOffset();return new Vec3(v.placement().mcX(hit.x()+offset.x()),v.placement().mcY(hit.z()+offset.z()-binding.rootHalfHeight()),v.placement().mcZ(hit.y()+offset.y()));}
     private static AABB physicalBox(WorldMotionWorld.View v,Reply binding,SifuFrame.Vec3 hit){var feet=rootFeet(v,binding,hit);double r=binding.rootRadius()/100.0;return new AABB(feet.x-r,feet.y,feet.z-r,feet.x+r,feet.y+binding.rootHalfHeight()/50.0,feet.z+r);}
@@ -405,6 +418,7 @@ public final class FluidMotion {
         if(!v.shapesCurrent()||!valid(v,f.level))return;
         long tick=f.level.getGameTime();if(tick==f.lastTick)return;f.lastTick=tick;
         if(tick<=f.yieldUntilTick)return;
+        if(f.launch!=null){f.body.setDeltaMovement(f.launch);f.body.setOnGround(false);f.launch=null;}
         if(f.body.onGround()&&!support(v,f)&&!(f.nativeGround&&f.groundScene==v.scene()&&f.groundRevision==v.nativeStatus().shapeRevision()))f.body.setOnGround(false);
         if(medium(f.level,f.body.getBoundingBox())==null&&f.body.onGround()&&f.body.getDeltaMovement().horizontalDistance()<.003&&f.body.getDeltaMovement().y<=0){
             f.phase=Phase.RELEASE;send(v,f,RELEASE,f.last.position(),SifuFrame.Vec3.ZERO,now);return;
@@ -414,7 +428,7 @@ public final class FluidMotion {
         var listener=observer;if(listener!=null){if(f.body instanceof VanillaFluidBody mob)listener.beforeSimulation(sample(f),mob);}
         // This body is unregistered, so the world does not call commonTick for it.
         // Use the installed server entry to retain counters/old pose/AI cadence.
-        SifuCollision.withQueryView(v.scene(),()->{f.level.tickNonPassenger(f.body);return null;});
+        SifuCollision.withQueryView(v.scene(),()->{f.level.tickNonPassenger(f.body);CreateBelts.transport(f.body);return null;});
         if(listener!=null)listener.simulated(sample(f));
         f.requested=f.body.position().subtract(f.actualStart);f.nextVelocity=f.body.getDeltaMovement();
         if(!Double.isFinite(f.requested.lengthSqr())||f.requested.length()>4.1){cancel(v,f,now);return;}

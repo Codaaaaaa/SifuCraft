@@ -12,6 +12,9 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
 public final class SifuCraftMod implements ModInitializer {
     @Override public void onInitialize() {
         EnemyEntities.register();
+        if (net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("create"))
+            org.slf4j.LoggerFactory.getLogger("sifucraft").info("[create] belt/ejector NPC adapter {}",
+                dev.sifucraft.combat.CreateBelts.available() ? "active" : "UNAVAILABLE: Create belt API changed");
         dev.sifucraft.blocks.SignalEntities.register();
         dev.sifucraft.blocks.PistonActionTickets.register();
         ServerLifecycleEvents.SERVER_STARTING.register(server -> dev.sifucraft.blocks.PlayerSignalContacts.stop());
