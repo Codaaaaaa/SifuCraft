@@ -36,7 +36,7 @@ public final class DevItemInventoryScreen extends InventoryScreen {
         super.init();
         layoutCatalog();
         search = addRenderableWidget(new EditBox(font, catalogX + 4, topPos + 16, columns * 18, 18, Component.literal("搜索测试物品")));
-        search.setHint(Component.literal("名称 / ID"));
+        search.setHint(Component.literal("名称 / 拼音 / ID"));
         search.setMaxLength(80);
         CreativeModeTabs.tryRebuildTabContents(minecraft.level.enabledFeatures(), true, minecraft.level.registryAccess());
         catalog.clear();
@@ -60,8 +60,24 @@ public final class DevItemInventoryScreen extends InventoryScreen {
 
     private void addToCatalog(ItemStack stack) {
         String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
-        String text = stack.getHoverName().getString() + " " + id + " " + stack.getComponents();
+        String name = stack.getHoverName().getString();
+        String text = name + " " + pinyin(name) + " " + id + " " + stack.getComponents();
         catalog.add(new Entry(stack, id, text.toLowerCase(Locale.ROOT)));
+    }
+
+    // Minecraft already ships ICU4J; one reading per character, so a polyphone may index under its other sound.
+    private static final java.util.Map<String, String> PINYIN = new java.util.HashMap<>();
+    private static com.ibm.icu.text.Transliterator hanLatin;
+    /** 钻石剑 → "zuan shi jian zuanshijian zsj": spaced, joined and initials. */
+    private static String pinyin(String name) {
+        if (name.codePoints().noneMatch(c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.HAN)) return "";
+        return PINYIN.computeIfAbsent(name, n -> {
+            if (hanLatin == null) hanLatin = com.ibm.icu.text.Transliterator.getInstance("Han-Latin; Latin-ASCII; Lower");
+            String spaced = hanLatin.transliterate(n).strip();
+            var initials = new StringBuilder();
+            for (String word : spaced.split("[^a-z0-9]+")) if (!word.isEmpty()) initials.append(word.charAt(0));
+            return spaced + " " + spaced.replaceAll("[^a-z0-9]", "") + " " + initials;
+        });
     }
 
     private void layoutCatalog() {
