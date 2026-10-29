@@ -44,9 +44,10 @@ bool VtableHook::Exchange(std::uintptr_t expected, std::uintptr_t desired) {
 }
 
 bool VtableHook::Install(std::uintptr_t image_base, const gen::hook::Target& target, std::uintptr_t instance,
-                         void* replacement) {
+                         void* replacement, bool log_lifecycle) {
     if (installed_) return true;
     target_ = &target;
+    log_lifecycle_ = log_lifecycle;
     const Resolution r = Resolve(image_base, target, instance);
     if (!r.ready()) {
         SC_LOG("[hook] %s: REFUSED (vtable %s, slot %s)", target.name, r.vtable_ok ? "ok" : "mismatch",
@@ -62,7 +63,7 @@ bool VtableHook::Install(std::uintptr_t image_base, const gen::hook::Target& tar
     replacement_ = reinterpret_cast<std::uintptr_t>(replacement);
     if (!Exchange(original_, replacement_)) return false;
     installed_ = true;
-    SC_LOG("[hook] %s: INSTALLED slot=0x%llX original=+0x%llX", target.name,
+    if (log_lifecycle_) SC_LOG("[hook] %s: INSTALLED slot=0x%llX original=+0x%llX", target.name,
            static_cast<unsigned long long>(slot_address_), static_cast<unsigned long long>(original_ - image_base));
     return true;
 }
@@ -71,7 +72,13 @@ bool VtableHook::Uninstall() {
     if (!installed_) return true;
     if (!Exchange(replacement_, original_)) return false;
     installed_ = false;
-    SC_LOG("[hook] %s: UNINSTALLED (slot restored)", name());
+    if (log_lifecycle_) SC_LOG("[hook] %s: UNINSTALLED (slot restored)", name());
+    return true;
+}
+bool VtableHook::RetireRestored(std::uintptr_t runtime_original) {
+    if (!installed_) return true;
+    if (!runtime_original || runtime_original == replacement_ || mem::ReadPtr(slot_address_) != runtime_original) return false;
+    installed_ = false;
     return true;
 }
 

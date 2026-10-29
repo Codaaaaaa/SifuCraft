@@ -1,6 +1,8 @@
 #include "ue/objects.h"
 
 #include <unordered_map>
+#include <mutex>
+#include <shared_mutex>
 
 #include "core/safe_memory.h"
 #include "ue/names.h"
@@ -18,6 +20,7 @@ constexpr int kMaxSuperDepth = 64;
 std::uintptr_t g_array = 0;  // FChunkedFixedUObjectArray
 std::uintptr_t g_chunks = 0;  // FUObjectItem** (allocated once, never moves)
 std::unordered_map<std::string, std::uintptr_t> g_classes;
+std::shared_mutex g_classes_lock;
 
 std::uintptr_t ItemAddress(std::int32_t index) {
     if (index < 0 || index >= ObjectCount()) return 0;
@@ -41,7 +44,7 @@ bool InitObjects(std::uintptr_t image_base) {
     }
     g_array = array;
     g_chunks = chunks;
-    g_classes.clear();
+    {std::unique_lock lock(g_classes_lock);g_classes.clear();}
     return true;
 }
 
@@ -68,6 +71,14 @@ std::uintptr_t ResolveWeak(std::uintptr_t weak) {
 
 std::uintptr_t ClassOf(std::uintptr_t object) {
     return object ? mem::ReadPtr(object + off::UObjectBase::ClassPrivate) : 0;
+}
+
+ObjectIdentity IdentityOf(std::uintptr_t object) {
+    if (!IsLive(object)) return {};
+    const auto index = mem::ReadOr<std::int32_t>(object + off::UObjectBase::InternalIndex, -1);
+    const auto item = ItemAddress(index);
+    if (!item || mem::ReadPtr(item + off::FUObjectItem::Object) != object) return {};
+    return {index, mem::ReadOr<std::int32_t>(item + off::FUObjectItem::SerialNumber, 0)};
 }
 
 std::uintptr_t OuterOf(std::uintptr_t object) {
@@ -122,17 +133,24 @@ bool IsChildOf(std::uintptr_t ustruct, std::uintptr_t base) {
     return false;
 }
 
+bool IsRegistered(std::uintptr_t object) {
+    if (!object) return false;
+    const auto index = mem::ReadOr<std::int32_t>(object + off::UObjectBase::InternalIndex, -1);
+    std::int32_t internal = 0;
+    return ObjectAt(index, &internal) == object && (internal & (kInternalPendingKill | kInternalUnreachable)) == 0;
+}
+
 bool IsA(std::uintptr_t object, std::uintptr_t ustruct) { return object && IsChildOf(ClassOf(object), ustruct); }
 
 std::uintptr_t FindClass(std::string_view name) {
     const std::string key(name);
-    if (auto it = g_classes.find(key); it != g_classes.end()) return it->second;
+    {std::shared_lock lock(g_classes_lock);if(auto it=g_classes.find(key);it!=g_classes.end())return it->second;}
     const std::int32_t count = ObjectCount();
     for (std::int32_t i = 0; i < count; ++i) {
         const std::uintptr_t object = ObjectAt(i);
         if (!object || NameEntry(NameOf(object).comparison_index) != name) continue;
         if (ClassName(object) != "Class") continue;
-        g_classes.emplace(key, object);
+        {std::unique_lock lock(g_classes_lock);g_classes.emplace(key,object);}
         return object;
     }
     return 0;

@@ -11,6 +11,7 @@
 //   SifuSnapshot           Sifu (seqlock)          McSnapshot   Minecraft (seqlock)
 //   CollisionManifest      Sifu (seqlock)
 //   BlockTable             Minecraft (seqlock)
+//   EnemyTable             Sifu (seqlock)
 //   EventRing              producer owns write_index and the slots, consumer owns read_index/acked_id
 //
 // Every position, rotation and velocity is in Unreal space (cm, Z up, degrees); the Minecraft side
@@ -18,6 +19,7 @@
 // 8-byte aligned so both sides can access them atomically.
 #pragma once
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 
@@ -25,7 +27,7 @@ namespace sifucraft::protocol {
 
 inline constexpr std::uint32_t kMagic = 0x52434653;  // "SFCR"
 // The name carries no version so that mismatched builds see each other and report INCOMPATIBLE.
-inline constexpr std::uint32_t kVersion = 6;
+inline constexpr std::uint32_t kVersion = 20;
 inline constexpr wchar_t kMappingName[] = L"Local\\SifuCraft.Bridge";
 inline constexpr std::uint32_t kMappingSize = 0x10000;
 
@@ -33,6 +35,9 @@ inline constexpr std::uint32_t kMappingSize = 0x10000;
 inline constexpr std::uint32_t kHeartbeatTimeoutMs = 2000;
 inline constexpr std::uint32_t kRingCapacity = 256;
 inline constexpr std::uint32_t kMaxBlocks = 1536;
+inline constexpr std::uint32_t kMaxEnemies = 32;
+inline constexpr float kPlayerSifuHpPerMcHp = 9.0f; // incoming player hits: 180 Sifu HP ~= 20 MC HP
+inline constexpr float kEnemySifuHpPerMcHp = 3.0f;  // outgoing damage/proxy HP: 60 Sifu HP = 20 MC HP
 
 enum class EndpointState : std::uint32_t {
     Absent = 0,
@@ -46,6 +51,14 @@ enum class EventType : std::uint32_t {
     Key = 3,           // Sifu -> Minecraft, InputPayload (code = SDL scancode)
     MouseButton = 4,   // Sifu -> Minecraft, InputPayload (code = SDL mouse button)
     OwnerChanged = 5,  // Sifu -> Minecraft, OwnerPayload
+    EnemyDamage = 6,   // Minecraft -> Sifu, EnemyDamagePayload
+    DamageResult = 7,  // Sifu -> Minecraft, DamageResultPayload
+    PlayerHit = 8,     // Sifu -> Minecraft, PlayerHitPayload
+    GuiMouseMotion = 9, // Sifu -> Minecraft, GuiMousePayload (ordered with clicks)
+    PlayerBlocked = 10, // Minecraft -> Sifu, references an actually published PlayerHit
+    EnemyImpulse = 11, // Minecraft -> Sifu, references an applied smash damage event
+    NativeInteract = 12,
+    NativeInteractResult = 13,
 };
 
 // Who receives the player's keyboard and mouse.
@@ -56,6 +69,7 @@ enum class InputOwner : std::uint32_t {
 
 inline constexpr std::uint32_t kSnapshotHasPawn = 1u << 0;
 inline constexpr std::uint32_t kSnapshotHasCamera = 1u << 1;
+inline constexpr std::uint32_t kSnapshotGuiAvailable = 1u << 2;
 
 inline constexpr std::uint32_t kMcReady = 1u << 0;      // in a world: may receive input
 inline constexpr std::uint32_t kMcHasPose = 1u << 1;    // pose / camera fields are valid
@@ -63,6 +77,11 @@ inline constexpr std::uint32_t kMcOnGround = 1u << 2;
 inline constexpr std::uint32_t kMcSneaking = 1u << 3;
 inline constexpr std::uint32_t kMcSprinting = 1u << 4;
 inline constexpr std::uint32_t kMcFlying = 1u << 5;
+inline constexpr std::uint32_t kMcRequestAnchor = 1u << 6; // respawned; anchor_epoch is the epoch to invalidate
+inline constexpr std::uint32_t kMcDead = 1u << 7;          // keep ownership/protection, publish no pose
+inline constexpr std::uint32_t kMcGuiAvailable = 1u << 8;
+inline constexpr std::uint32_t kMcGuiOpen = 1u << 9;
+inline constexpr std::uint32_t kMcGuiTextInput = 1u << 10;
 
 struct Vec3 {
     float x, y, z;
@@ -118,7 +137,7 @@ struct SifuSnapshot {
     // Bumped each time Sifu hands the player to Minecraft: Minecraft re-anchors to where the pawn
     // is now, and Sifu applies Minecraft's pose / camera only once they carry this epoch back.
     std::uint32_t anchor_epoch;
-    std::uint8_t reserved[20];
+    char language[20];         // current UI culture, ASCII BCP-47 tag; empty if unavailable
 };
 
 struct McSnapshot {
@@ -136,7 +155,11 @@ struct McSnapshot {
     float camera_fov;               // vertical, degrees (Minecraft's convention)
     std::uint32_t anchor_epoch;     // SifuSnapshot.anchor_epoch the pose fields are anchored to
     std::uint32_t collision_generation;  // CollisionManifest.generation Minecraft has loaded (0 = none)
-    std::uint8_t reserved[144];
+    std::uint64_t sifu_session;          // target Sifu lifetime, captured with this pose/request
+    std::uint32_t world_generation;
+    std::uint32_t gui_input_ack; // latest E/Escape prediction token applied by the client
+    std::uint32_t use_binding; // SDL scancode, or 0x10000 | SDL mouse button; 0 unbound
+    std::uint8_t reserved[124];
 };
 
 // Sifu's collision as a voxel grid, published as a file Minecraft loads whole (format: the
@@ -178,6 +201,35 @@ struct BlockTable {
     BlockEntry entries[kMaxBlocks];
 };
 
+inline constexpr std::uint32_t kEnemyAlive = 1u << 0;
+inline constexpr std::uint32_t kEnemyDown = 1u << 1;
+inline constexpr std::uint32_t kEnemyInvincible = 1u << 2;
+inline constexpr std::uint32_t kEnemyCanDie = 1u << 3;
+
+struct EnemyEntry {
+    std::uint32_t id;           // UObject internal index
+    std::uint32_t spawn;        // activation generation, changes on pool reuse or index reuse
+    Vec3 location;              // hit capsule centre, Unreal cm
+    float yaw;
+    float capsule_radius;      // world-space cm
+    float capsule_half_height;
+    float health;
+    float max_health;           // includes difficulty multiplier
+    std::uint32_t flags;
+    std::uint32_t faction;
+    Vec3 velocity;              // cm/s
+    std::uint32_t reserved;
+};
+
+struct EnemyTable {
+    std::uint64_t seq;
+    std::uint64_t frame;        // SifuSnapshot.frame at publication
+    std::uint32_t world_generation;
+    std::uint32_t count;
+    std::uint8_t reserved[40];
+    EnemyEntry entries[kMaxEnemies];
+};
+
 struct PingPayload {
     std::uint64_t nonce;
     std::uint64_t sent_unix_us;
@@ -187,13 +239,90 @@ struct InputPayload {
     std::int32_t code;       // SDL scancode or SDL mouse button
     std::int32_t action;     // 1 press, 0 release, -1 repeat (Minecraft's InputConstants)
     std::int32_t modifiers;  // SDL keymod bits
-    std::int32_t reserved;
+    std::uint32_t gui_revision; // nonzero for inventory/close presses; echoed with GUI state
 };
 
 struct OwnerPayload {
     std::uint32_t owner;  // InputOwner
     std::uint32_t reserved;
 };
+struct GuiMousePayload { double x, y, scroll; }; // cumulative routed motion at this event
+
+inline constexpr std::uint32_t kDamageCritical = 1u << 0;
+inline constexpr std::uint32_t kDamageSweep = 1u << 1;
+inline constexpr std::uint32_t kDamageProjectile = 1u << 2;
+inline constexpr std::uint32_t kDamageSmash = 1u << 3;
+
+struct EnemyDamagePayload {
+    std::uint32_t enemy_id, spawn;
+    float mc_damage;
+    float stun_hint;
+    std::uint32_t flags;
+    std::uint32_t world_generation;
+    std::uint32_t anchor_epoch;
+    std::uint32_t reserved;
+};
+
+enum class DamageOutcome : std::uint32_t {
+    Applied = 0, Dead = 1, Invincible = 2, Stale = 3, NotOwned = 4, Invalid = 5, Busy = 6, Unavailable = 7,
+};
+
+struct DamageResultPayload {
+    std::uint64_t event_id;     // EnemyDamage being answered, within the Minecraft source session
+    std::uint32_t enemy_id, spawn;
+    std::uint32_t result;       // DamageOutcome
+    float sifu_damage;          // observed health loss; may differ from requested damage
+    float health_after;
+    std::uint32_t world_generation;
+};
+
+inline constexpr std::uint32_t kHitCanDefend = 1u << 0;
+inline constexpr std::uint32_t kHitParriable = 1u << 1;
+inline constexpr std::uint32_t kHitCanBeLethal = 1u << 2;
+// Attack power occupies bits 8..15; world/epoch scope takes the space of the draft's Z direction.
+struct PlayerHitPayload {
+    std::uint32_t attacker_id, spawn;
+    float sifu_damage;
+    std::uint32_t flags;
+    std::uint32_t world_generation, anchor_epoch;
+    float dir_x, dir_y;
+};
+inline constexpr std::uint32_t kHitPerfectWindow = 1u << 3; // timing candidate, MC still checks actual blocking
+inline constexpr std::uint32_t kHitGuardBreaker = 1u << 4; // actual limb/weapon glow overlaps this hit; independent of Strong
+inline constexpr std::uint32_t kBlockedPerfect = 1u;
+struct PlayerBlockedPayload {
+    std::uint64_t origin_hit_id;
+    std::uint32_t attacker_id, spawn, world_generation, anchor_epoch;
+    float blocked_damage;
+    std::uint32_t flags;
+};
+static_assert(sizeof(PlayerBlockedPayload) == 32);
+
+struct EnemyImpulsePayload {
+    std::uint64_t origin_damage_id;
+    std::uint32_t enemy_id, spawn, world_generation, anchor_epoch;
+    float mc_x, mc_z;  // horizontal impulse, Minecraft blocks/tick; vertical motion stays with Sifu
+};
+static_assert(sizeof(EnemyImpulsePayload) == 32);
+
+inline constexpr std::uint32_t kInteractAvailable = 1;
+struct InteractionSnapshot {
+    std::uint64_t seq, frame, revision;
+    std::uint32_t world, epoch, flags, target, serial, owner, owner_serial, reserved;
+    Vec3 minimum, maximum, location;
+    float range_cm;
+    char label[32];
+};
+struct InteractPayload {
+    std::uint64_t revision;
+    std::uint32_t target, serial, world, epoch, flags, reserved;
+};
+struct InteractResultPayload {
+    std::uint64_t request_id, revision;
+    std::uint32_t outcome, target, world, epoch;
+};
+static_assert(sizeof(InteractionSnapshot) == 128 && offsetof(InteractionSnapshot, minimum) == 56);
+static_assert(sizeof(InteractPayload) == 32 && sizeof(InteractResultPayload) == 32);
 
 struct Event {
     std::uint64_t id;              // strictly increasing per source session, starting at 1
@@ -223,6 +352,9 @@ inline constexpr std::uint32_t kSifuToMcRingOffset = 0x0400;
 inline constexpr std::uint32_t kMcToSifuRingOffset = 0x4800;
 inline constexpr std::uint32_t kCollisionManifestOffset = 0x9000;
 inline constexpr std::uint32_t kBlockTableOffset = 0x9200;
+inline constexpr std::uint32_t kEnemyTableOffset = 0xF300;
+inline constexpr std::uint32_t kInteractionOffset = 0xFC00;
+inline constexpr std::uint32_t kDoorManifestOffset = 0xFD00;
 
 static_assert(sizeof(ProtocolHeader) == 0x40);
 static_assert(sizeof(EndpointStatus) == 0x40);
@@ -242,6 +374,10 @@ static_assert(offsetof(CollisionManifest, path) == 96);
 static_assert(sizeof(BlockEntry) == 16 && offsetof(BlockTable, map) == 16 && offsetof(BlockTable, entries) == 128);
 static_assert(offsetof(BlockTable, palette_generation) == 80);
 static_assert(sizeof(PingPayload) == 16 && sizeof(InputPayload) == 16 && sizeof(OwnerPayload) == 8);
+static_assert(sizeof(EnemyDamagePayload) == 32 && offsetof(EnemyDamagePayload, world_generation) == 20);
+static_assert(sizeof(DamageResultPayload) == 32 && offsetof(DamageResultPayload, health_after) == 24);
+static_assert(sizeof(PlayerHitPayload) == 32 && offsetof(PlayerHitPayload, world_generation) == 16);
+static_assert(offsetof(McSnapshot, sifu_session) == 112 && offsetof(McSnapshot, world_generation) == 120);
 static_assert(sizeof(Event) == 0x40 && offsetof(Event, payload) == 32);
 static_assert(offsetof(EventRing, read_index) == 64 && offsetof(EventRing, slots) == 128);
 static_assert(sizeof(EventRing) == 0x80 + kRingCapacity * sizeof(Event));
@@ -249,11 +385,33 @@ static_assert(kSifuToMcRingOffset >= kMcSnapshotOffset + sizeof(McSnapshot));
 static_assert(kMcToSifuRingOffset >= kSifuToMcRingOffset + sizeof(EventRing));
 static_assert(kCollisionManifestOffset >= kMcToSifuRingOffset + sizeof(EventRing));
 static_assert(kBlockTableOffset >= kCollisionManifestOffset + sizeof(CollisionManifest));
-static_assert(kBlockTableOffset + sizeof(BlockTable) <= kMappingSize);
+static_assert(sizeof(EnemyEntry) == 64 && offsetof(EnemyEntry, location) == 8);
+static_assert(offsetof(EnemyEntry, yaw) == 20 && offsetof(EnemyEntry, health) == 32);
+static_assert(offsetof(EnemyEntry, flags) == 40 && offsetof(EnemyEntry, velocity) == 48);
+static_assert(sizeof(EnemyTable) == 0x840 && offsetof(EnemyTable, entries) == 64);
+static_assert(kEnemyTableOffset >= kBlockTableOffset + sizeof(BlockTable));
+static_assert(kEnemyTableOffset + sizeof(EnemyTable) <= kMappingSize);
+static_assert(kInteractionOffset >= kEnemyTableOffset + sizeof(EnemyTable));
+static_assert(kDoorManifestOffset >= kInteractionOffset + sizeof(InteractionSnapshot));
+static_assert(kDoorManifestOffset + sizeof(CollisionManifest) <= kMappingSize);
 
 // Hashed in this order by both sides; keep it identical to Protocol.LAYOUT_TABLE in Java.
 inline constexpr std::uint32_t kLayoutTable[] = {
+    kInteractionOffset, sizeof(InteractionSnapshot), offsetof(InteractionSnapshot, revision),
+    offsetof(InteractionSnapshot, world), offsetof(InteractionSnapshot, flags), offsetof(InteractionSnapshot, target),
+    offsetof(InteractionSnapshot, minimum), offsetof(InteractionSnapshot, maximum), offsetof(InteractionSnapshot, location),
+    offsetof(InteractionSnapshot, range_cm), offsetof(InteractionSnapshot, label), kDoorManifestOffset,
+    sizeof(InteractPayload), sizeof(InteractResultPayload),
     kVersion,
+    kSnapshotGuiAvailable, kMcGuiAvailable, kMcGuiOpen, kMcGuiTextInput,
+    static_cast<std::uint32_t>(EventType::GuiMouseMotion), sizeof(GuiMousePayload),
+    static_cast<std::uint32_t>(EventType::PlayerBlocked), sizeof(PlayerBlockedPayload), kHitPerfectWindow, kBlockedPerfect, kHitGuardBreaker,
+    static_cast<std::uint32_t>(EventType::EnemyImpulse), sizeof(EnemyImpulsePayload),
+    offsetof(EnemyImpulsePayload, origin_damage_id), offsetof(EnemyImpulsePayload, enemy_id), offsetof(EnemyImpulsePayload, spawn),
+    offsetof(EnemyImpulsePayload, world_generation), offsetof(EnemyImpulsePayload, anchor_epoch),
+    offsetof(EnemyImpulsePayload, mc_x), offsetof(EnemyImpulsePayload, mc_z),
+    std::bit_cast<std::uint32_t>(kPlayerSifuHpPerMcHp),
+    std::bit_cast<std::uint32_t>(kEnemySifuHpPerMcHp),
     kMappingSize,
     kRingCapacity,
     kHeaderOffset,
@@ -275,6 +433,7 @@ inline constexpr std::uint32_t kLayoutTable[] = {
     offsetof(SifuSnapshot, input_owner),
     offsetof(SifuSnapshot, capsule_half_height),
     offsetof(SifuSnapshot, anchor_epoch),
+    offsetof(SifuSnapshot, language), sizeof(SifuSnapshot::language),
     kMcSnapshotOffset,
     sizeof(McSnapshot),
     offsetof(McSnapshot, last_sifu_frame),
@@ -285,6 +444,10 @@ inline constexpr std::uint32_t kLayoutTable[] = {
     offsetof(McSnapshot, camera_fov),
     offsetof(McSnapshot, anchor_epoch),
     offsetof(McSnapshot, collision_generation),
+    offsetof(McSnapshot, sifu_session),
+    offsetof(McSnapshot, world_generation),
+    offsetof(McSnapshot, gui_input_ack),
+    offsetof(McSnapshot, use_binding),
     kSifuToMcRingOffset,
     kMcToSifuRingOffset,
     sizeof(EventRing),
@@ -295,6 +458,7 @@ inline constexpr std::uint32_t kLayoutTable[] = {
     offsetof(Event, type),
     offsetof(Event, payload),
     sizeof(InputPayload),
+    offsetof(InputPayload, gui_revision),
     kCollisionManifestOffset,
     sizeof(CollisionManifest),
     offsetof(CollisionManifest, generation),
@@ -312,6 +476,48 @@ inline constexpr std::uint32_t kLayoutTable[] = {
     offsetof(BlockTable, entries),
     sizeof(BlockEntry),
     offsetof(BlockTable, palette_generation),
+    kMaxEnemies,
+    kEnemyTableOffset,
+    sizeof(EnemyTable),
+    offsetof(EnemyTable, frame),
+    offsetof(EnemyTable, world_generation),
+    offsetof(EnemyTable, count),
+    offsetof(EnemyTable, entries),
+    sizeof(EnemyEntry),
+    offsetof(EnemyEntry, id),
+    offsetof(EnemyEntry, spawn),
+    offsetof(EnemyEntry, location),
+    offsetof(EnemyEntry, yaw),
+    offsetof(EnemyEntry, capsule_radius),
+    offsetof(EnemyEntry, capsule_half_height),
+    offsetof(EnemyEntry, health),
+    offsetof(EnemyEntry, max_health),
+    offsetof(EnemyEntry, flags),
+    offsetof(EnemyEntry, faction),
+    offsetof(EnemyEntry, velocity),
+    sizeof(EnemyDamagePayload),
+    offsetof(EnemyDamagePayload, enemy_id),
+    offsetof(EnemyDamagePayload, mc_damage),
+    offsetof(EnemyDamagePayload, stun_hint),
+    offsetof(EnemyDamagePayload, flags),
+    offsetof(EnemyDamagePayload, world_generation),
+    offsetof(EnemyDamagePayload, anchor_epoch),
+    sizeof(DamageResultPayload),
+    offsetof(DamageResultPayload, event_id),
+    offsetof(DamageResultPayload, enemy_id),
+    offsetof(DamageResultPayload, result),
+    offsetof(DamageResultPayload, sifu_damage),
+    offsetof(DamageResultPayload, health_after),
+    offsetof(DamageResultPayload, world_generation),
+    sizeof(PlayerHitPayload),
+    offsetof(PlayerHitPayload, attacker_id),
+    offsetof(PlayerHitPayload, spawn),
+    offsetof(PlayerHitPayload, sifu_damage),
+    offsetof(PlayerHitPayload, flags),
+    offsetof(PlayerHitPayload, world_generation),
+    offsetof(PlayerHitPayload, anchor_epoch),
+    offsetof(PlayerHitPayload, dir_x),
+    offsetof(PlayerHitPayload, dir_y),
 };
 
 // FNV-1a 64 over each table entry as 4 little-endian bytes.

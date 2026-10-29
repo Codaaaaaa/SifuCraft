@@ -3,10 +3,31 @@
 	"package": "dev.sifucraft.client.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
+    "PistonTicketDelayMixin",
+    "BlockTerrainRegionMixin",
+    "AvatarSkinMixin",
+    "WorldReadbackMixin",
+    "WorldCameraMixin",
+    "WorldCracksMixin",
+		"ContainerScreenAccessor",
+		"DevItemGuiMixin",
+		"FireworkRocketAccessor",
+		"GameRendererMixin",
+		"HudMixin",
+		"KeyMappingAccessor",
+		"LevelRendererMixin",
 		"MinecraftMixin",
+		"MinecraftUseAccessor",
 		"MouseHandlerAccessor",
 		"MouseHandlerMixin",
-		"SDLEventHandlerMixin"
+		"MusicManagerMixin",
+		"PlayerDataMixin",
+		"ScreenMixin",
+		"SDLEventHandlerMixin",
+		"WorldBorderMixin",
+		"WorldCloudMixin",
+		"WorldTerrainMixin",
+		"WorldWeatherMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

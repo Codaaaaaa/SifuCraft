@@ -6,6 +6,7 @@ plugins {
 def nativeAccess = '--enable-native-access=ALL-UNNAMED'
 
 loom {
+	log4jConfigs.setFrom(file("config/log4j2.xml"))
 	// main: bridge + common code; client: Minecraft client integration.
 	splitEnvironmentSourceSets()
 
@@ -21,8 +22,151 @@ loom {
 			vmArg nativeAccess
 			// Development: enter the superflat test world directly and keep Sifu in the foreground.
 			property "sifucraft.devWorld", "true"
-			property "sifucraft.hideWindow", "true"
-			property "sifucraft.exitWithSifu", "true"
+			property "sifucraft.devWorldName", providers.gradleProperty("sifucraft.devWorldName").getOrElse("sifucraft-dev")
+			property "sifucraft.inventorySelfTest", providers.gradleProperty("sifucraft.inventorySelfTest").getOrElse("false")
+			property "sifucraft.devItems", providers.gradleProperty("sifucraft.devItems").getOrElse("false")
+			property "sifucraft.npcDebug", providers.gradleProperty("sifucraft.npcDebug").getOrElse("false")
+			property "sifucraft.devItemsSelfTest", providers.gradleProperty("sifucraft.devItemsSelfTest").getOrElse("false")
+			property "sifucraft.totemSelfTest", providers.gradleProperty("sifucraft.totemSelfTest").getOrElse("false")
+			property "sifucraft.foodSelfTest", providers.gradleProperty("sifucraft.foodSelfTest").getOrElse("false")
+			property "sifucraft.maceSelfTest", providers.gradleProperty("sifucraft.maceSelfTest").getOrElse("false")
+			property "sifucraft.windChargeSelfTest", providers.gradleProperty("sifucraft.windChargeSelfTest").getOrElse("false")
+			property "sifucraft.survivalDifficultySelfTest", providers.gradleProperty("sifucraft.survivalDifficultySelfTest").getOrElse("false")
+			property "sifucraft.elytraSelfTest", providers.gradleProperty("sifucraft.elytraSelfTest").getOrElse("false")
+			property "sifucraft.nativeInteractionSelfTest", providers.gradleProperty("sifucraft.nativeInteractionSelfTest").getOrElse("false")
+			property "sifucraft.worldEffects", providers.gradleProperty("sifucraft.worldEffects").getOrElse("false")
+			property "sifucraft.worldEffectsSelfTest", providers.gradleProperty("sifucraft.worldEffectsSelfTest").getOrElse("false")
+			property "sifucraft.worldLayers", providers.gradleProperty("sifucraft.worldLayers").getOrElse("false")
+			property "sifucraft.worldParticleMatrix", providers.gradleProperty("sifucraft.worldParticleMatrix").getOrElse("false")
+			property "sifucraft.worldTestVisibleHud", providers.gradleProperty("sifucraft.worldTestVisibleHud").getOrElse("false")
+			property "sifucraft.worldProbe", providers.gradleProperty("sifucraft.worldProbe").getOrElse("false")
+			property "sifucraft.worldCracksSelfTest", providers.gradleProperty("sifucraft.worldCracksSelfTest").getOrElse("false")
+			property "sifucraft.worldCracksHoldMs", providers.gradleProperty("sifucraft.worldCracksHoldMs").getOrElse("400")
+			property "sifucraft.worldModelSelfTest", providers.gradleProperty("sifucraft.worldModelSelfTest").getOrElse("false")
+			property "sifucraft.worldModelHoldMs", providers.gradleProperty("sifucraft.worldModelHoldMs").getOrElse("500")
+			property "sifucraft.worldAudioSelfTest", providers.gradleProperty("sifucraft.worldAudioSelfTest").getOrElse("false")
+			property "sifucraft.avatarSelfTest", providers.gradleProperty("sifucraft.avatarSelfTest").getOrElse("false")
+			property "sifucraft.avatarHoldMs", providers.gradleProperty("sifucraft.avatarHoldMs").getOrElse("650")
+			property "sifucraft.worldStressSelfTest", providers.gradleProperty("sifucraft.worldStressSelfTest").getOrElse("false")
+			property "sifucraft.blockStates", providers.gradleProperty("sifucraft.blockStates").getOrElse("true")
+			property "sifucraft.blockShapes", providers.gradleProperty("sifucraft.blockShapes").getOrElse("true")
+			property "sifucraft.blockModelSelfTest", providers.gradleProperty("sifucraft.blockModelSelfTest").getOrElse("false")
+			property "sifucraft.fluidRenderSelfTest", providers.gradleProperty("sifucraft.fluidRenderSelfTest").getOrElse("false")
+			property "sifucraft.worldGpuSelfTest", providers.gradleProperty("sifucraft.worldGpuSelfTest").getOrElse("false")
+			property "sifucraft.pistonStressSelfTest", providers.gradleProperty("sifucraft.pistonStressSelfTest").getOrElse("false")
+			property "sifucraft.shapeUpdateSelfTest", providers.gradleProperty("sifucraft.shapeUpdateSelfTest").getOrElse("false")
+			property "sifucraft.pistonTransactionSelfTest", providers.gradleProperty("sifucraft.pistonTransactionSelfTest").getOrElse("false")
+			property "sifucraft.nativePistonSelfTest", providers.gradleProperty("sifucraft.nativePistonSelfTest").getOrElse("false")
+			property "sifucraft.pistonObstructionSelfTest", providers.gradleProperty("sifucraft.pistonObstructionSelfTest").getOrElse("false")
+			property "sifucraft.pistonObstructionCase", providers.gradleProperty("sifucraft.pistonObstructionCase").getOrElse("mc-wall")
+			property "sifucraft.nativePlayerPistonSelfTest", providers.gradleProperty("sifucraft.nativePlayerPistonSelfTest").getOrElse("false")
+			property "sifucraft.nativePlayerPistonLift", providers.gradleProperty("sifucraft.nativePlayerPistonLift").getOrElse("false")
+			property "sifucraft.nativePlayerPistonCeiling", providers.gradleProperty("sifucraft.nativePlayerPistonCeiling").getOrElse("false")
+			property "sifucraft.nativePlayerPistonSlime", providers.gradleProperty("sifucraft.nativePlayerPistonSlime").getOrElse("false")
+			property "sifucraft.nativePlayerPistonDwellMs", providers.gradleProperty("sifucraft.nativePlayerPistonDwellMs").getOrElse("300")
+			property "sifucraft.playerPistonF8Control", file('../build/p8-native-player-f8-control.txt').canonicalPath
+			property "sifucraft.fluidSceneSelfTest", providers.gradleProperty("sifucraft.fluidSceneSelfTest").getOrElse("false")
+			property "sifucraft.fluidGeometryLoadDelayMs", providers.gradleProperty("sifucraft.fluidGeometryLoadDelayMs").getOrElse("0")
+			property "sifucraft.fluidReconnectSelfTest", providers.gradleProperty("sifucraft.fluidReconnectSelfTest").getOrElse("false")
+			property "sifucraft.fluidPersistenceSelfTest", providers.gradleProperty("sifucraft.fluidPersistenceSelfTest").getOrElse("false")
+			property "sifucraft.circuitScaleSelfTest", providers.gradleProperty("sifucraft.circuitScaleSelfTest").getOrElse("false")
+			property "sifucraft.isolatedSystemsSelfTest", providers.gradleProperty("sifucraft.isolatedSystemsSelfTest").getOrElse("false")
+			property "sifucraft.cannonSelfTest", providers.gradleProperty("sifucraft.cannonSelfTest").getOrElse("false")
+			property "sifucraft.cannonLive", providers.gradleProperty("sifucraft.cannonLive").getOrElse("false")
+			property "sifucraft.cannonGroundSelfTest", providers.gradleProperty("sifucraft.cannonGroundSelfTest").getOrElse("false")
+			property "sifucraft.cannonGroundScenario", providers.gradleProperty("sifucraft.cannonGroundScenario").getOrElse("survey")
+			property "sifucraft.cannonShots", providers.gradleProperty("sifucraft.cannonShots").getOrElse("12")
+			property "sifucraft.cannonFirstShot", providers.gradleProperty("sifucraft.cannonFirstShot").getOrElse("0")
+			property "sifucraft.machineSpecialSelfTest", providers.gradleProperty("sifucraft.machineSpecialSelfTest").getOrElse("false")
+			property "sifucraft.machineEffectsSelfTest", providers.gradleProperty("sifucraft.machineEffectsSelfTest").getOrElse("false")
+			property "sifucraft.coverageSceneSelfTest", providers.gradleProperty("sifucraft.coverageSceneSelfTest").getOrElse("false")
+			property "sifucraft.coverageHoldTicks", providers.gradleProperty("sifucraft.coverageHoldTicks").getOrElse("0")
+			property "sifucraft.tntStressSelfTest", providers.gradleProperty("sifucraft.tntStressSelfTest").getOrElse("false")
+			property "sifucraft.worldRecoverySelfTest", providers.gradleProperty("sifucraft.worldRecoverySelfTest").getOrElse("false")
+			property "sifucraft.activeSwimSelfTest", providers.gradleProperty("sifucraft.activeSwimSelfTest").getOrElse("false")
+			property "sifucraft.bubbleStructureSelfTest", providers.gradleProperty("sifucraft.bubbleStructureSelfTest").getOrElse("false")
+			property "sifucraft.worldRecoveryPhase", providers.gradleProperty("sifucraft.worldRecoveryPhase").getOrElse("prepare")
+			property "sifucraft.nativeBoatSelfTest", providers.gradleProperty("sifucraft.nativeBoatSelfTest").getOrElse("false")
+			property "sifucraft.nativeBoatLive", providers.gradleProperty("sifucraft.nativeBoatLive").getOrElse("false")
+			property "sifucraft.nativeBoatPair", providers.gradleProperty("sifucraft.nativeBoatPair").getOrElse("false")
+			property "sifucraft.nativeBoatRenderStallMs", providers.gradleProperty("sifucraft.nativeBoatRenderStallMs").getOrElse("0")
+			property "sifucraft.nativeExplosionSelfTest", providers.gradleProperty("sifucraft.nativeExplosionSelfTest").getOrElse("false")
+			property "sifucraft.nativeExplosionLive", providers.gradleProperty("sifucraft.nativeExplosionLive").getOrElse("false")
+			property "sifucraft.circuitScaleLive", providers.gradleProperty("sifucraft.circuitScaleLive").getOrElse("false")
+			property "sifucraft.catalogContainerSelfTest", providers.gradleProperty("sifucraft.catalogContainerSelfTest").getOrElse("false")
+			property "sifucraft.catalogLogicSelfTest", providers.gradleProperty("sifucraft.catalogLogicSelfTest").getOrElse("false")
+			property "sifucraft.catalogModelSelfTest", providers.gradleProperty("sifucraft.catalogModelSelfTest").getOrElse("false")
+			property "sifucraft.fluidAtmosphereSelfTest", providers.gradleProperty("sifucraft.fluidAtmosphereSelfTest").getOrElse("false")
+			property "sifucraft.fluidAtmosphereLive", providers.gradleProperty("sifucraft.fluidAtmosphereLive").getOrElse("false")
+			property "sifucraft.machineInventoryPhase", providers.gradleProperty("sifucraft.machineInventoryPhase").getOrElse("full")
+			property "sifucraft.machineInventorySelfTest", providers.gradleProperty("sifucraft.machineInventorySelfTest").getOrElse("false")
+			property "sifucraft.playerEnvironmentSelfTest", providers.gradleProperty("sifucraft.playerEnvironmentSelfTest").getOrElse("false")
+			property "sifucraft.playerItemBubblesSelfTest", providers.gradleProperty("sifucraft.playerItemBubblesSelfTest").getOrElse("false")
+			property "sifucraft.fluidPersistencePhase", providers.gradleProperty("sifucraft.fluidPersistencePhase").getOrElse("prepare")
+			property "sifucraft.fluidReconnectControl", file('../build/p9-fluid-reconnect-control.txt').canonicalPath
+			property "sifucraft.fluidGateControl", file('../build/p9-fluid-gate.txt').canonicalPath
+			property "sifucraft.motionPauseControl", file('../build/p9-motion-pause.txt').canonicalPath
+			property "sifucraft.environmentDamageSelfTest", providers.gradleProperty("sifucraft.environmentDamageSelfTest").getOrElse("false")
+			property "sifucraft.environmentNativeTest", providers.gradleProperty("sifucraft.environmentNativeTest").getOrElse("false")
+			property "sifucraft.nativePauseSelfTest", providers.gradleProperty("sifucraft.nativePauseSelfTest").getOrElse("false")
+			property "sifucraft.fluidMotionSelfTest", providers.gradleProperty("sifucraft.fluidMotionSelfTest").getOrElse("false")
+			property "sifucraft.bubbleMatrixSelfTest", providers.gradleProperty("sifucraft.bubbleMatrixSelfTest").getOrElse("false")
+			property "sifucraft.bubbleMatrixHeight", providers.gradleProperty("sifucraft.bubbleMatrixHeight").getOrElse("1")
+			property "sifucraft.airEnvironmentSelfTest", providers.gradleProperty("sifucraft.airEnvironmentSelfTest").getOrElse("false")
+			property "sifucraft.hotFloorSelfTest", providers.gradleProperty("sifucraft.hotFloorSelfTest").getOrElse("false")
+			property "sifucraft.hotFloorExpectMissing", providers.gradleProperty("sifucraft.hotFloorExpectMissing").getOrElse("false")
+			property "sifucraft.hotFloorHoverTest", providers.gradleProperty("sifucraft.hotFloorHoverTest").getOrElse("false")
+			property "sifucraft.hotFloorExpectStale", providers.gradleProperty("sifucraft.hotFloorExpectStale").getOrElse("false")
+			property "sifucraft.hotFloorCycles", providers.gradleProperty("sifucraft.hotFloorCycles").getOrElse("1")
+			property "sifucraft.fluidPartialSelfTest", providers.gradleProperty("sifucraft.fluidPartialSelfTest").getOrElse("false")
+			property "sifucraft.environmentPathSelfTest", providers.gradleProperty("sifucraft.environmentPathSelfTest").getOrElse("false")
+			property "sifucraft.pistonTicketsSelfTest", providers.gradleProperty("sifucraft.pistonTicketsSelfTest").getOrElse("false")
+			property "sifucraft.pistonPauseSelfTest", providers.gradleProperty("sifucraft.pistonPauseSelfTest").getOrElse("false")
+			property "sifucraft.pistonTicketsRestart", providers.gradleProperty("sifucraft.pistonTicketsRestart").getOrElse("off")
+			property "sifucraft.nativeFluidSelfTest", providers.gradleProperty("sifucraft.nativeFluidSelfTest").getOrElse("false")
+			property "sifucraft.nativePlayerMotionSelfTest", providers.gradleProperty("sifucraft.nativePlayerMotionSelfTest").getOrElse("false")
+			property "sifucraft.playerPhysicsSelfTest", providers.gradleProperty("sifucraft.playerPhysicsSelfTest").getOrElse("false")
+			property "sifucraft.testFocusSession", providers.gradleProperty("sifucraft.testFocusSession").getOrElse("")
+			property "sifucraft.nativeHotFloorSelfTest", providers.gradleProperty("sifucraft.nativeHotFloorSelfTest").getOrElse("false")
+			property "sifucraft.nativeLiftSelfTest", providers.gradleProperty("sifucraft.nativeLiftSelfTest").getOrElse("false")
+			property "sifucraft.nativeLiftSlime", providers.gradleProperty("sifucraft.nativeLiftSlime").getOrElse("false")
+			property "sifucraft.machineProjectileSelfTest", providers.gradleProperty("sifucraft.machineProjectileSelfTest").getOrElse("false")
+			property "sifucraft.nativeMachineSelfTest", providers.gradleProperty("sifucraft.nativeMachineSelfTest").getOrElse("false")
+			property "sifucraft.nativeMachineEffects", providers.gradleProperty("sifucraft.nativeMachineEffects").getOrElse("false")
+			property "sifucraft.nativeWindSelfTest", providers.gradleProperty("sifucraft.nativeWindSelfTest").getOrElse("false")
+			property "sifucraft.boatDrivingSelfTest", providers.gradleProperty("sifucraft.boatDrivingSelfTest").getOrElse("false")
+			property "sifucraft.boatBubbleSelfTest", providers.gradleProperty("sifucraft.boatBubbleSelfTest").getOrElse("false")
+			property "sifucraft.boatExplosionSelfTest", providers.gradleProperty("sifucraft.boatExplosionSelfTest").getOrElse("false")
+			property "sifucraft.boatExplosionScenario", providers.gradleProperty("sifucraft.boatExplosionScenario").getOrElse("destroy")
+			property "sifucraft.boatPistonSelfTest", providers.gradleProperty("sifucraft.boatPistonSelfTest").getOrElse("false")
+			property "sifucraft.boatPistonPlayer", providers.gradleProperty("sifucraft.boatPistonPlayer").getOrElse("false")
+			property "sifucraft.boatPistonCancel", providers.gradleProperty("sifucraft.boatPistonCancel").getOrElse("false")
+			property "sifucraft.boatPistonFault", providers.gradleProperty("sifucraft.boatPistonFault").getOrElse("none")
+			property "sifucraft.boatPistonDirection", providers.gradleProperty("sifucraft.boatPistonDirection").getOrElse("west")
+			property "sifucraft.boatBubbleDirection", providers.gradleProperty("sifucraft.boatBubbleDirection").getOrElse("up")
+			property "sifucraft.nativeSuffocationSelfTest", providers.gradleProperty("sifucraft.nativeSuffocationSelfTest").getOrElse("false")
+			property "sifucraft.boatDrivingControl", file('../build/p11-boat-driving-control.txt').canonicalPath
+			property "sifucraft.pistonAftermathSelfTest", providers.gradleProperty("sifucraft.pistonAftermathSelfTest").getOrElse("false")
+			property "sifucraft.aftermathHeight", providers.gradleProperty("sifucraft.aftermathHeight").getOrElse("2")
+			property "sifucraft.aftermathVariant", providers.gradleProperty("sifucraft.aftermathVariant").getOrElse("eastHoney")
+			property "sifucraft.sceneSupportSelfTest", providers.gradleProperty("sifucraft.sceneSupportSelfTest").getOrElse("false")
+			property "sifucraft.redstoneSelfTest", providers.gradleProperty("sifucraft.redstoneSelfTest").getOrElse("false")
+			property "sifucraft.signalSelfTest", providers.gradleProperty("sifucraft.signalSelfTest").getOrElse("false")
+			property "sifucraft.signalNativeTest", providers.gradleProperty("sifucraft.signalNativeTest").getOrElse("false")
+			property "sifucraft.playerSignalSelfTest", providers.gradleProperty("sifucraft.playerSignalSelfTest").getOrElse("false")
+			property "sifucraft.sensorSelfTest", providers.gradleProperty("sifucraft.sensorSelfTest").getOrElse("false")
+			property "sifucraft.pistonSceneSelfTest", providers.gradleProperty("sifucraft.pistonSceneSelfTest").getOrElse("false")
+			property "sifucraft.worldFps", providers.gradleProperty("sifucraft.worldFps").getOrElse("30")
+			property "sifucraft.shieldSelfTest", providers.gradleProperty("sifucraft.shieldSelfTest").getOrElse("false")
+			property "sifucraft.shieldTestSupplies", providers.gradleProperty("sifucraft.shieldTestSupplies").getOrElse("false")
+			property "sifucraft.hideWindow", providers.gradleProperty("sifucraft.hideWindow").getOrElse("true")
+			property "sifucraft.overlay", providers.gradleProperty("sifucraft.overlay").getOrElse("false")
+			property "sifucraft.overlayFps", providers.gradleProperty("sifucraft.overlayFps").getOrElse("60")
+			property "sifucraft.exitWithSifu", providers.gradleProperty("sifucraft.exitWithSifu").getOrElse("true")
+			property "sifucraft.combatSelfTest", providers.gradleProperty("sifucraft.combatSelfTest").getOrElse("false")
+			property "sifucraft.playerDamageTest", providers.gradleProperty("sifucraft.playerDamageTest").getOrElse("false")
+			property "sifucraft.playerHitSelfTest", providers.gradleProperty("sifucraft.playerHitSelfTest").getOrElse("false")
+			property "sifucraft.respawnSelfTest", providers.gradleProperty("sifucraft.respawnSelfTest").getOrElse("false")
 		}
 	}
 }
@@ -32,6 +176,14 @@ sourceSets {
 	stub {
 		compileClasspath += sourceSets.main.output
 		runtimeClasspath += sourceSets.main.output
+	}
+	protocolTest {
+		compileClasspath += sourceSets.main.output
+		runtimeClasspath += sourceSets.main.output
+	}
+	offlineTest {
+		compileClasspath += sourceSets.client.compileClasspath + sourceSets.main.output + sourceSets.client.output
+		runtimeClasspath += sourceSets.client.runtimeClasspath + sourceSets.main.output + sourceSets.client.output
 	}
 }
 
@@ -67,4 +219,97 @@ tasks.register('runStub', JavaExec) {
 	classpath = sourceSets.stub.runtimeClasspath
 	mainClass = 'dev.sifucraft.stub.BridgeStub'
 	jvmArgs nativeAccess
+}
+
+tasks.register('protocolTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks enemy table decoding against golden wire bytes and malformed input.'
+	classpath = sourceSets.protocolTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.bridge.EnemyFrameTest'
+}
+tasks.named('check') { dependsOn tasks.named('protocolTest') }
+tasks.register('worldProtocolTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks the independent world color/depth/camera mailbox ABI.'
+	classpath = sourceSets.protocolTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.bridge.WorldWriterTest'
+}
+tasks.named('check') { dependsOn tasks.named('worldProtocolTest') }
+
+tasks.register('p7OfflineTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks camera rays and save recovery without starting a game, window or server.'
+	classpath = sourceSets.offlineTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.client.P7OfflineTest'
+	jvmArgs nativeAccess
+}
+tasks.named('check') { dependsOn tasks.named('p7OfflineTest') }
+
+tasks.register('p8OfflineTest', JavaExec) {
+	group = 'verification'
+	description = 'Checks installed block states, shapes and section revisions without starting a game.'
+	classpath = sourceSets.offlineTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.blocks.P8OfflineTest'
+	jvmArgs nativeAccess
+}
+tasks.named('check') { dependsOn tasks.named('p8OfflineTest') }
+
+tasks.register('p9GeometryTest', JavaExec) {
+	group = 'verification'
+	classpath = sourceSets.offlineTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.blocks.P9GeometryTest'
+	jvmArgs nativeAccess
+}
+tasks.named('check') { dependsOn tasks.named('p9GeometryTest') }
+
+tasks.register('coverageFileTest', JavaExec) {
+	group = 'verification'
+	classpath = sourceSets.offlineTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.collision.CoverageFileTest'
+	args rootProject.file('../protocol/fixtures/collision_coverage.hex').absolutePath
+	jvmArgs nativeAccess
+}
+tasks.named('check') { dependsOn tasks.named('coverageFileTest') }
+
+tasks.register('p10GeometryTest', JavaExec) {
+	group = 'verification'
+	classpath = sourceSets.offlineTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.combat.P10GeometryTest'
+	jvmArgs nativeAccess
+}
+tasks.named('check') { dependsOn tasks.named('p10GeometryTest') }
+tasks.register('shapeProtocolTest', JavaExec) {
+	group = 'verification'
+	classpath = sourceSets.protocolTest.runtimeClasspath
+	mainClass = 'dev.sifucraft.bridge.ShapeWriterTest'
+	jvmArgs nativeAccess
+}
+tasks.named('check') { dependsOn tasks.named('shapeProtocolTest') }
+tasks.register('worldMotionProtocolTest', JavaExec) {
+    group = 'verification'
+    classpath = sourceSets.protocolTest.runtimeClasspath
+    mainClass = 'dev.sifucraft.bridge.WorldMotionProtocolTest'
+    jvmArgs nativeAccess
+}
+tasks.named('check') { dependsOn tasks.named('worldMotionProtocolTest') }
+tasks.register('worldMotionRequestsTest', JavaExec) {
+    group = 'verification'
+    classpath = sourceSets.protocolTest.runtimeClasspath
+    mainClass = 'dev.sifucraft.bridge.WorldMotionRequestsTest'
+}
+tasks.named('check') { dependsOn tasks.named('worldMotionRequestsTest') }
+
+tasks.register('liveTestFocusTest', JavaExec) {
+    group = 'verification'
+    classpath = sourceSets.protocolTest.runtimeClasspath
+    mainClass = 'dev.sifucraft.bridge.LiveTestFocusTest'
+}
+
+tasks.named('check') { dependsOn tasks.named('liveTestFocusTest') }
+tasks.register('worldMotionInteropTest', JavaExec) {
+    group = 'verification'
+    classpath = sourceSets.protocolTest.runtimeClasspath
+    mainClass = 'dev.sifucraft.bridge.WorldMotionInteropTest'
+    args providers.gradleProperty('motionEcho').getOrElse('')
+    jvmArgs nativeAccess
 }

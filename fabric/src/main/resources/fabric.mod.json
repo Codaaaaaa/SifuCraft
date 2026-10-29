@@ -12,6 +12,7 @@
 	},
 	"environment": "client",
 	"entrypoints": {
+		"main": ["dev.sifucraft.SifuCraftMod"],
 		"client": [
 			"dev.sifucraft.client.SifuCraftClient"
 		]

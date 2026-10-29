@@ -8,4 +8,7 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface MouseHandlerAccessor {
     @Accessor("mouseGrabbed")
     void sifucraft$setMouseGrabbed(boolean grabbed);
+    @Accessor("accumulatedDX") void sifucraft$setAccumulatedDX(double value);
+    @Accessor("accumulatedDY") void sifucraft$setAccumulatedDY(double value);
+    @Accessor("ignoreFirstMove") void sifucraft$setIgnoreFirstMove(boolean value);
 }

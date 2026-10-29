@@ -20,7 +20,19 @@ from pathlib import Path
 EXE_NAME = "Sifu-Win64-Shipping.exe"
 
 # Global variables whose RVA the native module reads.
-SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData"]
+SYMBOLS = ["GWorld", "GEngine", "GUObjectArray", "NamePoolData", "GD3D11RHI", "GDynamicRHI", "InternationalizationStore", "LevelStreamingManager", "InteractionKey", "SceneRenderTargets", "DepthTextureVtable", "FidgetResetTimer", "FidgetStartTimer", "FidgetProcessVtable", "CoverageArrayFree", "PassengerBlastLandingHit", "PassengerBlastLandingLanded"]
+SIZED_SYMBOLS = {"DepthTextureVtable": ("TD3D11Texture2D<FD3D11BaseTexture2D>::`vftable'", 88),
+                 "FidgetResetTimer": ("FFidgetPlayerHandler::ResetFidgetTimer", 90),
+                 "FidgetStartTimer": ("FFidgetPlayerHandler::TryToStartLaunchFidgetTimer", 429),
+                 "FidgetProcessVtable": ("APFidget::`vftable'", 72),
+                 "CoverageArrayFree": ("FMemory::Free", 52),
+                 # Read-only stack provenance; neither function is called or hooked.
+                 "PassengerBlastLandingHit": ("OrderFallFromPushed::LaunchHit", 732),
+                 "PassengerBlastLandingLanded": ("OrderFallFromPushed::OnLanded", 2191)}
+SYMBOL_MATCHES = {"InternationalizationStore": ("*FInternationalization*Singleton", "::Singleton"),
+                  "LevelStreamingManager": ("FSCLevelStreamingManager::s_Instance", "::s_Instance"),
+                  "InteractionKey": ("EKeys::Q", "::Q"),
+                  "SceneRenderTargets": ("SceneRenderTargetsSingleton", "SceneRenderTargetsSingleton")}
 
 # Vtable hook plan: name -> (class whose vftable is patched, class that introduces the virtual,
 # method, implementation the slot must hold). Checked against the exe file here and against live
@@ -35,19 +47,78 @@ HOOKS = {
                      "APlayerCameraManager::UpdateCamera"),
     "MovementTick": ("UFightingMovementComponent", "UActorComponent", "TickComponent",
                      "UFightingMovementComponent::TickComponent"),
+    # M3/M4: actual NPC AI tree derives from USC and inherits its Tick implementation.
+    "AIFightingTick": ("UAIFightingComponent", "UActorComponent", "TickComponent", "UAIFightingComponent::TickComponent"),
+    "BehaviorTreeTick": ("UAIBehaviorTreeComponent", "UActorComponent", "TickComponent", "USCBehaviorTreeComponent::TickComponent"),
+    # P5 S0 only inspects these targets; generating a plan does not install a hook.
+    "ValidateHit": ("UHitComponent", "UHitComponent", "BPE_ValidateHit_Implementation",
+                    "UHitComponent::BPE_ValidateHit_Implementation"),
+    "InternalApplyDamage": ("UCharacterHealthComponent", "UHealthComponent", "InternalApplyDamage",
+                            "UCharacterHealthComponent::InternalApplyDamage"),
 }
 
 # Functions sifu-native calls directly: identifier -> symbol.
-FUNCTIONS = {"FKey_Destructor": "FKey::~FKey"}
+FUNCTIONS = {
+    "FKey_Copy": "FKey::FKey",
+    "FKey_Destructor": "FKey::~FKey",
+    "LaunchImpactInternal": "UHitComponent::LaunchImpactInternal",
+    "SaveBaseLocation": "UCharacterMovementComponent::SaveBaseLocation",
+    "MovementOnTeleported": "UCharacterMovementComponent::OnTeleported",
+}
 
 # Virtual slots used for calls (dispatched through the object's own vtable): introducing class -> methods.
-CALL_SLOTS = {"UObject": ["ProcessEvent"]}
+CALL_SLOTS = {"UObject": ["ProcessEvent"], "UMovementComponent": ["OnTeleported"], "UCharacterMovementComponent": ["SaveBaseLocation"]}
+CALL_VERIFY = [("UFightingMovementComponent", "UCharacterMovementComponent", "SaveBaseLocation", "UCharacterMovementComponent::SaveBaseLocation"),
+               ("UFightingMovementComponent", "UMovementComponent", "OnTeleported", "UCharacterMovementComponent::OnTeleported")]
+
+# Short C++ namespaces for PDB template types used by native inspection.
+TYPE_ALIASES = {
+    "D3D11Texture2D": "TD3D11Texture2D<FD3D11BaseTexture2D>",
+    "InternationalizationStore": "TLazySingleton<FInternationalization>",
+    "FloatRangeBound": "TRangeBound<float>",
+    "ScriptDelegate": "TScriptDelegate<FWeakObjectPtr>",
+    "DataTableMap": "TMap<FName,unsigned char *,FDefaultSetAllocator,TDefaultMapHashableKeyFuncs<FName,unsigned char *,0> >",
+    "DataTableSet": "TSet<TTuple<FName,unsigned char *>,TDefaultMapHashableKeyFuncs<FName,unsigned char *,0>,FDefaultSetAllocator>",
+    "DataTableSparse": "TSparseArray<TSetElement<TTuple<FName,unsigned char *> >,TSparseArrayAllocator<TSizedDefaultAllocator<32>,FDefaultBitArrayAllocator> >",
+    "DataTableBits": "TBitArray<FDefaultBitArrayAllocator>",
+    "DataTableBitAllocator": "TInlineAllocator<4,TSizedDefaultAllocator<32> >::ForElementType<unsigned int>",
+    "DataTableElement": "TSetElement<TTuple<FName,unsigned char *> >",
+    "DataTablePair": "TTuple<FName,unsigned char *>",
+    "ComboAttackMap": "TMap<FName,UAttackDB *,FDefaultSetAllocator,TDefaultMapHashableKeyFuncs<FName,UAttackDB *,0> >",
+    "ComboAttackElement": "TSetElement<TTuple<FName,UAttackDB *> >",
+    "ComboAttackPair": "TTuple<FName,UAttackDB *>",
+    "GuardStack": "TSCNamedValueStack<TWeakObjectPtr<UGuardDB,FWeakObjectPtr>,1>",
+    "GuardStackValue": "TSCNamedValueStack<TWeakObjectPtr<UGuardDB,FWeakObjectPtr>,1>::FNameValue",
+    "GuardValueGetter": "UE4Function_Private::TFunctionRefBase<UE4Function_Private::TFunctionStorage<0>,TWeakObjectPtr<UGuardDB,FWeakObjectPtr> __cdecl(void)>",
+}
 
 # type -> members. A member may live in a base class; its offset is then made absolute.
 MEMBERS = {
+    "UCollisionProfile": ["ObjectTypeMapping"],
+    "UBoxComponent": ["BoxExtent"],
+    "FViewUniformShaderParameters": ["WorldToClip", "ViewToClip", "ViewToClipNoAA", "InvDeviceZToWorldZTransform", "WorldCameraOrigin", "TemporalAAJitter", "ViewRectMin", "ViewSizeAndInvSize", "BufferSizeAndInvSize", "NearPlane", "FrameNumber"],
+    "FSceneRenderTargets": ["SceneDepthZ"],
+    "IPooledRenderTarget": ["RenderTargetItem"],
+    "FSceneRenderTargetItem": ["TargetableTexture", "ShaderResourceTexture"],
+    "D3D11Texture2D": ["Resource", "ShaderResourceView"],
+    "FRHITexture2D": ["SizeX", "SizeY"],
+    "FRHITexture": ["NumSamples", "Format"],
+    "AFightingPlayerController": ["m_CurrentInteractionObjectComponent"],
+    "UInteractionObjectComponent": ["m_DetectionComponent", "m_VisualComponent", "m_bIsUsable", "m_bUseCustomWalkInteractionDist", "m_fCustomWalkInteractionDist"],
+    "FSCLevelStreamingManager": ["m_World", "m_bStreamingVolumesEnabled"],
+    "InternationalizationStore": ["Data", "Ptr"],
+    "FInternationalization": ["bIsInitialized", "CurrentLanguage"],
+    "FCulture": ["CachedName"],
+    "UWidget": ["Visibility", "VisibilityDelegate", "NativeBindings", "Slot"],
+    "UUserWidget": ["WidgetTree"],
+    "UPanelSlot": ["Parent", "Content"],
+    "ScriptDelegate": ["Object", "FunctionName"],
+    "FD3D11DynamicRHI": ["Viewports", "Direct3DDeviceIMContext", "Direct3DDevice"],
+    "FD3D11Viewport": ["WindowHandle", "SwapChain", "PixelColorSpace"],
     # CoreUObject
     "UObjectBase": ["ObjectFlags", "InternalIndex", "ClassPrivate", "NamePrivate", "OuterPrivate"],
-    "UStruct": ["SuperStruct", "Children", "ChildProperties", "PropertiesSize"],
+    "UStruct": ["SuperStruct", "Children", "ChildProperties", "PropertiesSize", "Script"],
+    "UFunction": ["FunctionFlags", "ParmsSize"],
     "UField": ["Next"],
     "FField": ["ClassPrivate", "Next", "NamePrivate"],
     "FFieldClass": ["Name"],
@@ -55,6 +126,18 @@ MEMBERS = {
     "FObjectPropertyBase": ["PropertyClass"],
     "FStructProperty": ["Struct"],
     "FArrayProperty": ["Inner"],
+    "UDataTable": ["RowStruct", "RowMap"],
+    "FDataTableRowHandle": ["DataTable", "RowName"],
+    "DataTableMap": ["Pairs"],
+    "DataTableSet": ["Elements"],
+    "DataTableSparse": ["Data", "AllocationFlags"],
+    "DataTableBits": ["AllocatorInstance", "NumBits", "MaxBits"],
+    "DataTableBitAllocator": ["InlineData", "SecondaryData"],
+    "DataTableElement": ["Value"],
+    "DataTablePair": ["Key", "Value"],
+    "ComboAttackMap": ["Pairs"],
+    "ComboAttackElement": ["Value"],
+    "ComboAttackPair": ["Key", "Value"],
     "FBoolProperty": ["FieldSize", "ByteOffset", "ByteMask", "FieldMask"],
     "FUObjectArray": ["ObjObjects"],
     "FChunkedFixedUObjectArray": ["Objects", "MaxElements", "NumElements", "MaxChunks", "NumChunks"],
@@ -65,14 +148,38 @@ MEMBERS = {
     "FNameEntryAllocator": ["CurrentBlock", "Blocks"],
     "FNameEntry": ["Header", "AnsiName", "WideName"],
     # Engine
-    "UWorld": ["PersistentLevel", "OwningGameInstance", "Levels"],
+    "UWorld": ["PersistentLevel", "OwningGameInstance", "Levels", "TimeSeconds"],
     "ULevel": ["Actors", "OwningWorld", "WorldSettings"],
     "AWorldSettings": ["PauserPlayerState"],
     "UGameInstance": ["LocalPlayers"],
     "UPlayer": ["PlayerController"],
     "AActor": ["RootComponent"],
-    "APawn": ["Controller"],
-    "ACharacter": ["CharacterMovement", "Mesh"],
+    # P8 approved M1/M2: read-only qualification and swept-hit result layouts.
+    "UActorComponent": ["OwnerPrivate"],
+    "AAIController": ["BrainComponent"],
+    "USCAIComponent": ["m_CachedBehaviorTreeComponent"],
+    "UAIFightingComponent": ["m_bIsOutOfIdle", "m_bForceActionHandlerTick"],
+    "FFidgetPlayerHandler": ["m_ComponentOwner", "m_GameInstance", "m_LaunchFidgetTimerHandle"],
+    "UASMComponent": ["m_ActionStateManager"],
+    "SCActionStateManager": ["m_currentState", "m_PreState", "m_PostState"],
+    "ActionStateManager": ["m_Owner"],
+    "SCActionState": ["m_actionProcesses", "m_owner"],
+    "SCActionProcess": ["m_Owner"],
+    "APFidget": ["m_MovementComponent", "m_fidgetPlayerHandler"],
+    "USCBehaviorTreeComponent": ["m_OwnerAiComponent"],
+    "UAIBehaviorTreeComponent": ["m_CharacterOwner"],
+    "ABaseCharacter": ["m_OrderComponent"],
+    "UOrderComponent": ["m_OrderManager"],
+    "OrderManager": ["m_OrderList", "m_DelayedOrderCommand", "m_DelayedOrderCommandDuringPrediction"],
+    "UFightingMovementComponent": ["m_bIsRushing", "m_LocalResyncRequest", "m_LocalTimedoutResyncRequest", "m_ResyncRequestOnReplica", "m_fInitialHeight"],
+    "USkeletalMeshComponent": ["AnimScriptInstance", "ParallelAnimationEvaluationTask", "ParallelBlendPhysicsCompletionTask"],
+    "UAnimInstance": ["MontageInstances", "RootMotionMontageInstance", "RootMotionBlendQueue", "ExtractedRootMotion"],
+    "FRootMotionMovementParams": ["bHasRootMotion"],
+    "FRootMotionSourceGroup": ["RootMotionSources", "PendingAddRootMotionSources"],
+    "FHitResult": ["Time", "Location", "Normal", "ImpactNormal"],
+    "APawn": ["Controller", "ControlInputVector", "LastControlInputVector"],
+    "ACharacter": ["CharacterMovement", "Mesh", "CapsuleComponent", "BasedMovement"],
+    "FBasedMovementInfo": ["MovementBase", "BoneName", "Location", "Rotation", "bRelativeRotation"],
     "AController": ["Pawn", "IgnoreMoveInput", "IgnoreLookInput"],
     "APlayerController": ["PlayerCameraManager", "AcknowledgedPawn"],
     "APlayerCameraManager": ["CameraCachePrivate", "LastFrameCameraCachePrivate", "ViewTarget"],
@@ -101,26 +208,83 @@ MEMBERS = {
     "UStaticMeshComponent": ["StaticMesh"],
     "UStaticMesh": ["BodySetup"],
     "UInstancedStaticMeshComponent": ["PerInstanceSMData"],
-    "UMovementComponent": ["Velocity"],
-    "UCharacterMovementComponent": ["MovementMode", "WalkableFloorAngle", "WalkableFloorZ", "MaxStepHeight"],
+    "UMovementComponent": ["Velocity", "UpdatedComponent", "UpdatedPrimitive"],
+    "UCharacterMovementComponent": ["CharacterOwner", "MovementMode", "WalkableFloorAngle", "WalkableFloorZ", "MaxStepHeight", "RootMotionParams", "CurrentRootMotion", "PendingLaunchVelocity", "OldBaseLocation", "OldBaseQuat", "Acceleration"],
     "UCapsuleComponent": ["CapsuleHalfHeight", "CapsuleRadius"],
     "UEngine": ["GameViewport"],
     # Sifu
-    "AFightingCharacter": ["m_HealthComponent", "m_eFaction"],
-    "UHealthComponent": ["m_fHealth", "m_fMaxHealth"],
+    "ASCCharacter": ["m_bIsPooled", "m_bPooledActorActive"],
+    "AFightingCharacter": ["m_HealthComponent", "m_eFaction", "m_HitComponent", "m_DefenseComponent",
+                           "m_AttackComponent", "m_HitCapsule", "m_AvoidCapsule", "m_AbilityComponent",
+                           "m_bHasJustBeenHitted", "m_HittedDescription", "m_AIComponent", "m_ASMComponent"],
+    "UHealthComponent": ["m_fHealth", "m_fMaxHealth", "m_bCanBeDamaged", "m_bCanDieByDamage",
+                         "m_bForceDeathOnApplyDamage"],
+    "UCharacterHealthComponent": ["m_fMaxHealthMultiplier", "m_bIsDown", "m_eDownState"],
+    "UDefenseComponent": ["m_GuardDB", "m_DefaultGuardDB"],
+    "USCGameSettings": ["m_DefaultHitbox"],
+    "UGuardDB": ["m_DefaultHitImpact", "m_DefaultGuardImpact", "m_DefaultDeflectImpact", "m_ParryWindow"],
+    "FFloatRange": ["LowerBound", "UpperBound"],
+    "FloatRangeBound": ["Type", "Value"],
+    "GuardStack": ["m_Stack"],
+    "GuardStackValue": ["m_Value", "m_ValueGetter"],
+    "GuardValueGetter": ["Callable"],
+    "FDamageInfos": ["m_fDamage", "m_fHealthBeforeDamage", "m_Instigator", "m_uiApplyDamageBehavior"],
+    "FHitRequest": ["m_AttackRequest", "m_Instigator", "m_HitBox", "m_uiApplyDamageBehavior", "m_vDamageDir",
+                    "m_AttackProperties", "m_bCanBeDefended"],
+    "FAttackRequest": ["m_AttackDB", "m_Combo", "m_AttackName"],
+    "UAttackDB": ["m_Attack"],
+    "UCombo": ["m_Attacks"],
+    "FComboAttack": ["m_Animation", "m_fAnimFrameRate"],
+    "UAnimSequenceBase": ["Notifies"],
+    "FAnimNotifyEvent": ["Notify", "TriggerTimeOffset"],
+    "FAnimLinkableElement": ["LinkMethod", "LinkValue"],
+    "UCurveFloat": ["FloatCurve"],
+    "FRichCurve": ["Keys"],
+    "FRichCurveKey": ["Time"],
+    "FFrameRange": ["m_Anim"],
+    "FGameplayTagContainer": ["GameplayTags", "ParentTags"],
+    "FGameplayTag": ["TagName"],
+    "FHitBox": ["m_HitRow", "m_CachedRow", "m_bCachedRowSetup", "m_FrameRange"],
+    "FHitboxDataRow": ["m_bCanBeLethal", "m_bCanBreakStructure", "m_OnHitImpact", "m_OnGuardImpact",
+                       "m_OnDeflectImpact", "m_eHitType", "m_eAttackPower", "m_bParriable"],
+    "FHitImpact": ["m_eGuardType", "m_bUseDamage", "m_fDamage", "m_fStructureDamage"],
+    "FHitDescription": ["m_Request", "m_Result", "m_ImpactResult"],
+    "FImpactResult": ["m_bIsValid", "m_fDamage", "m_bLethal", "m_HitImpact"],
+    "UAbilitySystemComponent": ["SpawnedAttributes"],
+    "UCharacterStatAttributeSet": ["GameDifficulty"],
+    "FGameplayAttributeData": ["BaseValue", "CurrentValue"],
 }
 
-SIZES = ["FUObjectItem", "UObjectBase", "FName", "FNameEntryAllocator", "FTransform", "FKConvexElem", "FKBoxElem", "FKSphereElem",
-         "FKSphylElem", "FKTaperedCapsuleElem", "FInstancedStaticMeshInstanceData"]
+SIZES = ["InternationalizationStore", "FCulture", "FUObjectItem", "UObjectBase", "FName", "FNameEntryAllocator", "FTransform", "FKConvexElem", "FKBoxElem", "FKSphereElem",
+         "FKSphylElem", "FKTaperedCapsuleElem", "FInstancedStaticMeshInstanceData", "FDamageInfos",
+         "FHitRequest", "FHitBox", "FHitboxDataRow", "FHitImpact", "FHitDescription", "FImpactResult", "GuardStackValue", "DataTableElement", "FGameplayTag", "FAnimNotifyEvent", "FRichCurveKey", "ComboAttackElement", "FHitResult"]
 
 # type -> bitfield members whose bit position/width are emitted.
 BITFIELDS = {
+    "UCharacterMovementComponent": ["bForceNextFloorCheck"],
+    "UBehaviorTreeComponent": ["bIsRunning", "bIsPaused"],
     "FNameEntryHeader": ["bIsWide", "Len"],
     "APlayerController": ["bShowMouseCursor", "bCinematicMode"],
-    "AActor": ["bHidden"],
+    "AActor": ["bHidden", "bActorEnableCollision"],
+    "FBodyInstanceCore": ["bSimulatePhysics"],
+    "FHitResult": ["bBlockingHit", "bStartPenetrating"],
     "ULevel": ["bIsVisible"],
     "USceneComponent": ["bVisible", "bHiddenInGame"],
     "FBodyInstance": ["bOverrideWalkableSlopeOnInstance"],
+}
+
+ENUMS = {
+    "EAnimLinkMethod::Type": ["Absolute"],
+    "ERangeBoundTypes::Type": ["Exclusive", "Inclusive", "Open"],
+    "ESlateVisibility": ["Visible", "Collapsed", "Hidden", "HitTestInvisible", "SelfHitTestInvisible"],
+    "EColorSpaceAndEOTF": ["EUnknown", "ERec709_sRGB", "ERec709_Linear", "ERec2020_PQ"],
+    "EFactionsEnums": ["TMP_Neutral", "Count"],
+    "EGuardType": ["None", "Guard", "Deflect", "Count"],
+    "EImpactType": ["Hit"],
+    "EAttackPowers": ["Light", "Medium", "Strong"],
+    "EHeight": ["Mid"],
+    "EQuadrantTypes": ["FrontLeft"],
+    "ESCCardinalPoints": ["North"],
 }
 
 # --- dbghelp ---------------------------------------------------------------------------
@@ -137,6 +301,7 @@ TI_GET_LENGTH = 2
 TI_GET_TYPEID = 4
 TI_FINDCHILDREN = 7
 TI_GET_OFFSET = 10
+TI_GET_VALUE = 11
 TI_GET_CHILDRENCOUNT = 13
 TI_GET_BITPOSITION = 14
 TI_GET_VIRTUALBASEOFFSET = 29  # for a virtual function: its byte offset in the vftable
@@ -198,6 +363,30 @@ class Pdb:
         if not self.dbg.SymFromNameW(self.process, name, C.byref(info)):
             raise LookupError(f"symbol '{name}' not found")
         return info.Address - self.base
+
+    def unique_rva(self, mask: str, suffix: str) -> int:
+        # MSVC local-static public symbols are enumerable but not always resolvable by their
+        # undecorated name through SymFromName. Require one distinct matching address.
+        matches = set()
+        def collect(info, size, context):
+            symbol = info.contents
+            if symbol.Name.endswith(suffix): matches.add(symbol.Address - self.base)
+            return True
+        self.dbg.SymEnumSymbolsW.argtypes = [C.c_void_p, C.c_uint64, W.LPCWSTR, ENUM_CALLBACK, C.c_void_p]
+        self.dbg.SymEnumSymbolsW(self.process, self.base, mask, ENUM_CALLBACK(collect), None)
+        if len(matches) != 1: raise LookupError(f"expected one '{mask}' ending '{suffix}', found {len(matches)}")
+        return matches.pop()
+
+    def sized_rva(self, mask: str, size: int) -> int:
+        matches = set()
+        def collect(info, _size, context):
+            symbol = info.contents
+            if symbol.Size == size: matches.add(symbol.Address - self.base)
+            return True
+        self.dbg.SymEnumSymbolsW.argtypes = [C.c_void_p, C.c_uint64, W.LPCWSTR, ENUM_CALLBACK, C.c_void_p]
+        self.dbg.SymEnumSymbolsW(self.process, self.base, mask, ENUM_CALLBACK(collect), None)
+        if len(matches) != 1: raise LookupError(f"expected one '{mask}' of PDB size {size}, found {len(matches)}")
+        return matches.pop()
 
     def type_id(self, name: str) -> int:
         if name in self._type_cache:
@@ -297,6 +486,21 @@ class Pdb:
             raise LookupError(f"virtual '{type_name}::{method}': expected one slot, found {sorted(slots)}")
         return slots.pop()
 
+    def enum_value(self, type_name: str, member: str) -> int:
+        for child in self._children(self.type_id(type_name)):
+            if self._name(child) != member:
+                continue
+            variant = (C.c_ubyte * 24)()
+            if self.dbg.SymGetTypeInfo(self.process, self.base, child, TI_GET_VALUE, C.byref(variant)):
+                # dbghelp chooses the VARIANT integer width independently of the enum's width.
+                kind = int.from_bytes(bytes(variant[:2]), "little")
+                integer_types = {2: (2, True), 3: (4, True), 16: (1, True), 17: (1, False),
+                                 18: (2, False), 19: (4, False), 20: (8, True), 21: (8, False)}
+                if kind in integer_types:
+                    size, signed = integer_types[kind]
+                    return int.from_bytes(bytes(variant[8:8 + size]), "little", signed=signed)
+        raise LookupError(f"enum constant '{type_name}::{member}' not found as an integer")
+
 
 class ExeImage:
     """Raw PE file contents, for reading initialized data (vftables) at an RVA."""
@@ -334,7 +538,7 @@ def read_pe_identity(exe: Path):
     return stamp, size_of_image
 
 
-def emit(stamp, size_of_image, rvas, members, sizes, bits, functions, slots, hooks) -> str:
+def emit(stamp, size_of_image, rvas, members, sizes, bits, functions, slots, hooks, enums) -> str:
     out = [
         "// Generated by tools/pdbgen/pdbgen.py from the local Sifu PDB. Do not edit.",
         "// Regenerate whenever Sifu-Win64-Shipping.exe changes; the build guard rejects",
@@ -390,7 +594,12 @@ def emit(stamp, size_of_image, rvas, members, sizes, bits, functions, slots, hoo
     for name, (owner, introducer, method, impl, vftable, slot, original) in hooks.items():
         out.append(f"// {owner} vftable, {introducer}::{method} slot -> {impl}")
         out.append(f'inline constexpr Target {name}{{"{name}", 0x{vftable:X}, 0x{slot:X}, 0x{original:X}}};')
-    out += ["}  // namespace hook", "", "}  // namespace sifucraft::gen", ""]
+    out += ["}  // namespace hook", "", "namespace value {"]
+    for type_name, values in enums.items():
+        out.append(f"namespace {type_name} {{")
+        out += [f"inline constexpr std::int32_t {name} = {value};" for name, value in values.items()]
+        out.append("}")
+    out += ["}  // namespace value", "", "}  // namespace sifucraft::gen", ""]
     return "\n".join(out)
 
 
@@ -410,10 +619,11 @@ def main() -> int:
     pdb = Pdb(args.game_dir, exe)
     errors = []
     rvas, members, sizes, bits, functions, slots, hooks = {}, {}, {}, {}, {}, {}, {}
+    enums = {}
     try:
         for name, symbol in FUNCTIONS.items():
             try:
-                functions[name] = pdb.rva(symbol)
+                functions[name] = pdb.sized_rva(symbol, 34) if name == "FKey_Copy" else pdb.rva(symbol)
             except LookupError as e:
                 errors.append(str(e))
         for type_name, methods in CALL_SLOTS.items():
@@ -423,6 +633,14 @@ def main() -> int:
                     slots[type_name][method] = pdb.virtual_slot(type_name, method)
                 except LookupError as e:
                     errors.append(str(e))
+        for owner, introducer, method, impl in CALL_VERIFY:
+            try:
+                table = pdb.rva(f"{owner}::`vftable'")
+                slot = slots[introducer][method]
+                if image.read_va_as_rva(table + slot) != pdb.rva(impl):
+                    errors.append(f"call {owner}::{method}: unexpected implementation")
+            except LookupError as e:
+                errors.append(f"call {owner}::{method}: {e}")
         for name, (owner, introducer, method, impl) in HOOKS.items():
             try:
                 vftable = pdb.rva(f"{owner}::`vftable'")
@@ -438,19 +656,22 @@ def main() -> int:
                 errors.append(f"hook {name}: {e}")
         for name in SYMBOLS:
             try:
-                rvas[name] = pdb.rva(name)
+                if name in SIZED_SYMBOLS:
+                    rvas[name] = pdb.sized_rva(*SIZED_SYMBOLS[name])
+                else:
+                    rvas[name] = pdb.unique_rva(*SYMBOL_MATCHES[name]) if name in SYMBOL_MATCHES else pdb.rva(name)
             except LookupError as e:
                 errors.append(str(e))
         for type_name, fields in MEMBERS.items():
             members[type_name] = {}
             for field in fields:
                 try:
-                    members[type_name][field] = pdb.member_offset(type_name, field)
+                    members[type_name][field] = pdb.member_offset(TYPE_ALIASES.get(type_name, type_name), field)
                 except LookupError as e:
                     errors.append(str(e))
         for type_name in SIZES:
             try:
-                sizes[type_name] = pdb.size_of(type_name)
+                sizes[type_name] = pdb.size_of(TYPE_ALIASES.get(type_name, type_name))
             except LookupError as e:
                 errors.append(str(e))
         for type_name, fields in BITFIELDS.items():
@@ -458,6 +679,13 @@ def main() -> int:
             for field in fields:
                 try:
                     bits[type_name][field] = pdb.bitfield(type_name, field)
+                except LookupError as e:
+                    errors.append(str(e))
+        for type_name, names in ENUMS.items():
+            enums[type_name] = {}
+            for name in names:
+                try:
+                    enums[type_name][name] = pdb.enum_value(type_name, name)
                 except LookupError as e:
                     errors.append(str(e))
     finally:
@@ -469,7 +697,7 @@ def main() -> int:
         return 1
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(emit(stamp, size_of_image, rvas, members, sizes, bits, functions, slots, hooks),
+    args.out.write_text(emit(stamp, size_of_image, rvas, members, sizes, bits, functions, slots, hooks, enums),
                         encoding="utf-8", newline="\n")
     print(f"wrote {args.out} (stamp 0x{stamp:08X}, size 0x{size_of_image:08X}, "
           f"{len(rvas)} symbols, {sum(len(f) for f in members.values())} members, "

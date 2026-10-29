@@ -3,6 +3,7 @@ package dev.sifucraft.collision;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
+import java.util.function.Supplier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
@@ -25,11 +26,19 @@ public final class SifuCollision {
     private static final double FACE_NUDGE = 1.0E-4; // off a cell face, into the block in front of it
 
     private static volatile Active active;
+    private static final ThreadLocal<Active> query = new ThreadLocal<>();
 
     private SifuCollision() {}
 
     public static Active active() {
         return active;
+    }
+
+    /** Movement queries can pin one immutable geometry view without replacing the live world. */
+    public static Active queryView() { var scoped=query.get();return scoped==null?active:scoped; }
+    public static <T> T withQueryView(Active scene,Supplier<T> action) {
+        java.util.Objects.requireNonNull(scene);var previous=query.get();query.set(scene);
+        try{return action.get();}finally{if(previous==null)query.remove();else query.set(previous);}
     }
 
     public static void set(Active value) {
@@ -39,13 +48,34 @@ public final class SifuCollision {
     /** One grid in one place, with the Minecraft shape of each of its blocks built on first use. */
     public static final class Active {
         private final CollisionGrid grid;
+        private final CollisionGrid baseGrid;
+        private final CollisionGrid doors;
+        private final CollisionGrid moving;
         private final MapPlacement placement;
+        private final long sourceSession;
+        private final int sourceWorld;
         private final Map<long[], VoxelShape> shapes = new ConcurrentHashMap<>(); // keyed by the grid's own arrays
+        private final Map<Long,Boolean> fluidCells=new ConcurrentHashMap<>();
+        private final Map<Long,VoxelShape> uncertain=new ConcurrentHashMap<>();
 
         public Active(CollisionGrid grid, MapPlacement placement) {
-            this.grid = grid;
-            this.placement = placement;
+            this(grid, placement, null);
         }
+        public Active(CollisionGrid grid, MapPlacement placement, CollisionGrid doors) {
+            this(grid,placement,doors,0,0);
+        }
+        public Active(CollisionGrid grid, MapPlacement placement, CollisionGrid doors, long session, int world) {
+            this.baseGrid=grid;
+            this.grid=doors!=null&&doors.hasCoverage()?doors:grid;
+            this.placement = placement;
+            this.doors = doors;
+            this.moving=this.grid==doors?null:doors;
+            sourceSession=session;sourceWorld=world;
+        }
+        public boolean matchesScope(long session,int world) { return sourceSession==session&&sourceWorld==world; }
+        public boolean sameScope(Active other) { return matchesScope(other.sourceSession,other.sourceWorld)&&placement.equals(other.placement); }
+        public CollisionGrid doors() { return doors; }
+        public CollisionGrid baseGrid(){return baseGrid;}
 
         public CollisionGrid grid() {
             return grid;
@@ -53,6 +83,54 @@ public final class SifuCollision {
 
         public MapPlacement placement() {
             return placement;
+        }
+
+        /** Native geometry local to one Minecraft block; support queries never create blocks. */
+        public VoxelShape shapeAt(BlockPos pos) {
+            var solid=solidShapeAt(pos);
+            var unknown=unknownShape(pos);return unknown.isEmpty()?solid:solid.isEmpty()?unknown:Shapes.or(solid,unknown);
+        }
+        /** Proven occupancy only: unknown space is a movement barrier, never evidence of support. */
+        public VoxelShape solidShapeAt(BlockPos pos) {
+            int x=pos.getX()-placement.originX(), y=pos.getZ()-placement.originZ(), z=pos.getY()-placement.originY();
+            long[] fixed=grid.block(x,y,z), moving=this.moving==null?null:this.moving.block(x,y,z);
+            var a=fixed==null?Shapes.empty():shapes.computeIfAbsent(fixed,SifuCollision::shapeOf);
+            var b=moving==null?Shapes.empty():shapes.computeIfAbsent(moving,SifuCollision::shapeOf);
+            return a.isEmpty()?b:b.isEmpty()?a:Shapes.or(a,b);
+        }
+        public boolean knownBlock(BlockPos pos){return !grid.hasCoverage()||grid.knownBlock(pos.getX()-placement.originX(),pos.getZ()-placement.originZ(),pos.getY()-placement.originY());}
+        public boolean queriedBlock(BlockPos pos){return grid.queriedBlock(pos.getX()-placement.originX(),pos.getZ()-placement.originZ(),pos.getY()-placement.originY());}
+        private VoxelShape unknownShape(BlockPos pos){
+            if(!grid.hasCoverage()||knownBlock(pos))return Shapes.empty();
+            return uncertain.computeIfAbsent(pos.asLong(),ignored->{
+                long[] layers=new long[8];int x=(pos.getX()-placement.originX())*8,y=(pos.getZ()-placement.originZ())*8,z=(pos.getY()-placement.originY())*8;
+                for(int dz=0;dz<8;dz++)for(int dy=0;dy<8;dy++)for(int dx=0;dx<8;dx++)if(!grid.known(x+dx,y+dy,z+dz))layers[dz]|=1L<<(dx+8*dy);
+                return SifuCollision.shapeOf(layers);
+            });
+        }
+
+        /** A vanilla fluid cell must have one connected empty region. A thin
+         * internal wall must never become a liquid shortcut through two pockets. */
+        public boolean fluidCell(BlockPos pos){
+            if(!knownBlock(pos))return false;
+            int x=pos.getX()-placement.originX(),y=pos.getZ()-placement.originZ(),z=pos.getY()-placement.originY();
+            long[] a=grid.block(x,y,z),b=moving==null?null:moving.block(x,y,z);
+            if(a==null&&b==null)return true;
+            return fluidCells.computeIfAbsent(pos.asLong(),ignored->{
+                long[] solid=new long[8];int empty=512,start=-1;
+                for(int layer=0;layer<8;layer++){solid[layer]=(a==null?0:a[layer])|(b==null?0:b[layer]);empty-=Long.bitCount(solid[layer]);
+                    if(start<0&&solid[layer]!=-1L)start=layer*64+Long.numberOfTrailingZeros(~solid[layer]);}
+                if(empty==0)return false;if(empty==512)return true;
+                boolean[] seen=new boolean[512];int[] queue=new int[512];int head=0,tail=1;queue[0]=start;seen[start]=true;
+                while(head<tail){int at=queue[head++],cx=at&7,cy=at>>>6,cz=(at>>>3)&7;
+                    for(int axis=0;axis<3;axis++)for(int sign=-1;sign<=1;sign+=2){
+                        int coordinate=axis==0?cx:axis==1?cy:cz,nextCoordinate=coordinate+sign;if(nextCoordinate<0||nextCoordinate>7)continue;
+                        int next=at+sign*(axis==0?1:axis==1?64:8);
+                        if(!seen[next]&&(solid[next>>>6]&(1L<<(next&63)))==0){seen[next]=true;queue[tail++]=next;}
+                    }
+                }
+                return tail==empty;
+            });
         }
 
         /** Calls {@code sink} with every Minecraft block position whose Sifu shape may touch {@code box}. */
@@ -66,8 +144,10 @@ public final class SifuCollision {
                     for (int x = x0; x <= x1; x++) {
                         // Minecraft (x, y, z) block = Unreal block (x, z, y) shifted by the map's origin.
                         long[] layers = grid.block(x - placement.originX(), z - placement.originZ(), y - placement.originY());
-                        if (layers == null) continue;
-                        sink.accept(pos.set(x, y, z), shapes.computeIfAbsent(layers, SifuCollision::shapeOf).move(x, y, z));
+                        if (layers != null) sink.accept(pos.set(x, y, z), shapes.computeIfAbsent(layers, SifuCollision::shapeOf).move(x, y, z));
+                        var unknown=unknownShape(pos.set(x,y,z));if(!unknown.isEmpty())sink.accept(pos,unknown.move(x,y,z));
+                        long[] moving = this.moving == null ? null : this.moving.block(x - placement.originX(), z - placement.originZ(), y - placement.originY());
+                        if (moving != null) sink.accept(pos.set(x, y, z), shapes.computeIfAbsent(moving, SifuCollision::shapeOf).move(x, y, z));
                     }
                 }
             }
@@ -82,8 +162,8 @@ public final class SifuCollision {
         /** Minecraft-space cell (x, y, z) of the 1/8 grid (cell = floor(coordinate * 8)). */
         private boolean solidCell(int x, int y, int z) {
             int perBlock = CollisionGrid.CELLS_PER_BLOCK;
-            return grid.solid(x - placement.originX() * perBlock, z - placement.originZ() * perBlock,
-                    y - placement.originY() * perBlock);
+            int gx = x - placement.originX() * perBlock, gy = z - placement.originZ() * perBlock, gz = y - placement.originY() * perBlock;
+            return grid.solid(gx, gy, gz) || moving != null && moving.solid(gx, gy, gz)||grid.hasCoverage()&&!grid.known(gx,gy,gz);
         }
 
         /**
@@ -155,7 +235,7 @@ public final class SifuCollision {
                     double outZ = Math.max(0, Math.max(box.minZ - mcZ, mcZ - box.maxZ));
                     if (outX * outX + outZ * outZ > reach * reach) continue;
                     for (int z = z0; z <= z1; z++) {
-                        if (!grid.solid(x, y, z)) continue;
+                        if (!grid.solid(x, y, z) && (moving == null || !moving.solid(x, y, z))&&(!grid.hasCoverage()||grid.known(x,y,z))) continue;
                         sumX += mcX - centreX;
                         sumZ += mcZ - centreZ;
                     }

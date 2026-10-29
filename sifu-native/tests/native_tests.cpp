@@ -9,17 +9,43 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <fstream>
 
 #include "collision/shape_file.h"
+#include "collision/builder.h"
+#include "collision/owned_scene.h"
+#include "combat/activation_tracker.h"
+#include "combat/damage_ledger.h"
+#include "combat/hit_sample.h"
+#include "combat/attack_glow.h"
+#include "combat/light_impact.h"
+#include "combat/shield_timing.h"
+#include "combat/shield_ledger.h"
+#include "combat/impulse_ledger.h"
+#include "combat/launch_params.h"
 #include "collision/voxels.h"
+#include "collision/export.h"
+#include "collision/region_cache.h"
+#include "collision/change_watch.h"
+#include "collision/refresh_queue.h"
 #include "collision/walk_check.h"
 #include "core/build_guard.h"
+#include "core/log.h"
 #include "core/safe_memory.h"
 #include "generated/sifu_build.g.h"
 #include "hooks/vtable_hook.h"
 #include "input/input_router.h"
+#include "input/ownership_intent.h"
+#include "input/displacement_guard.h"
+#include "interaction/door_motion.h"
+#include "hooks/streaming_lease.h"
+#include "interaction/intent.h"
+#include "input/anchor_request.h"
 #include "input/key_map.h"
+#include "probe/combat_sample.h"
 #include "ue/transform.h"
+#include "ue/data_table.h"
+#include "ue/language.h"
 
 namespace {
 
@@ -28,6 +54,116 @@ int g_failures = 0;
 void Expect(bool condition, const char* what) {
     std::printf("%s  %s\n", condition ? "ok  " : "FAIL", what);
     if (!condition) ++g_failures;
+}
+
+struct ImpactArguments {
+    void* component = nullptr;
+    std::uint8_t type = 0xFF, quadrant = 0xFF, cardinal = 0xFF, height = 0xFF;
+    float freeze = -1, stun = -1, damage = -1, extra = -1;
+    bool first = true, second = true;
+    void* instigator = reinterpret_cast<void*>(1);
+    sifucraft::ue::FVector location{}, direction{};
+    unsigned calls = 0;
+} g_impact;
+
+void CaptureImpact(void* component, std::uint8_t type, std::uint8_t quadrant, std::uint8_t cardinal,
+                   std::uint8_t height, float freeze, float stun, const sifucraft::ue::FVector* location,
+                   float damage, float extra, bool first, bool second, void* instigator,
+                   const sifucraft::ue::FVector* direction) {
+    g_impact = {component, type, quadrant, cardinal, height, freeze, stun, damage, extra,
+                first, second, instigator, *location, *direction, g_impact.calls + 1};
+}
+
+void TestLightImpactCall() {
+    using namespace sifucraft;
+    // Volatile pointer forces the same indirect x64 call as the generated in-game RVA.
+    combat::LaunchImpactFn volatile entry = &CaptureImpact;
+    int component = 0;
+    const ue::FVector location{12.5f, -91.25f, 103.75f};
+    combat::LaunchLightImpact(entry, &component, location, 18.125f);
+    Expect(g_impact.calls == 1 && g_impact.component == &component &&
+           g_impact.type == gen::value::EImpactType::Hit &&
+           g_impact.quadrant == gen::value::EQuadrantTypes::FrontLeft &&
+           g_impact.cardinal == gen::value::ESCCardinalPoints::North &&
+           g_impact.height == gen::value::EHeight::Mid,
+           "light impact x64 call keeps this and all byte-sized enum arguments");
+    Expect(g_impact.freeze == 0 && g_impact.stun == 0.15f && g_impact.damage == 18.125f &&
+           g_impact.extra == 0 && !g_impact.first && !g_impact.second && !g_impact.instigator &&
+           g_impact.location.x == location.x && g_impact.location.y == location.y && g_impact.location.z == location.z &&
+           g_impact.direction.x == 0 && g_impact.direction.y == 0 && g_impact.direction.z == 0,
+           "light impact x64 stack preserves float, vector, bool and null-instigator arguments");
+    Expect(combat::ImpactDamage(18, 60, true) == 18 && combat::ImpactDamage(27, 6, true) == 6 &&
+           combat::ImpactDamage(27, 6, false) == 27,
+           "light impact preserves ordinary, lethal and cannot-die wrapper damage semantics");
+}
+
+void TestGridPublication() {
+    using namespace sifucraft::collision;
+    BuildRequest request; request.generation=3;request.map="map";request.file_tag="-doors";
+    PublishedContent content;
+    auto first=std::make_shared<VoxelGrid>();first->Set(-9,3,2);first->Set(17,-2,4);
+    Expect(!content.Matches(request,*first),"first grid needs publication, including after an unconfirmed write failure");
+    content.Confirm(request,first);
+    VoxelGrid reordered;reordered.Set(17,-2,4);reordered.Set(-9,3,2);
+    Expect(content.Matches(request,reordered),"identical voxel cells in different extraction order retain the published generation");
+    VoxelGrid changed;changed.Set(17,-2,4);changed.Set(-9,3,3);
+    Expect(!content.Matches(request,changed),"same cell/block counts with a moved door still require publication");
+    Expect(!content.Matches(request,VoxelGrid{}),"removing all dynamic collision publishes an empty replacement");
+    request.generation++;
+    Expect(!content.Matches(request,reordered),"same geometry in another Native world gets a new publication");
+    request.generation--;request.map="other";
+    Expect(!content.Matches(request,reordered),"same geometry in another map is not suppressed");
+    request.map="map";request.file_tag="";
+    Expect(!content.Matches(request,reordered),"static and dynamic grids keep separate publications");
+    request.file_tag="-doors";request.coverage=Coverage{{{{-8,0,0},{16,8,8}}},{}};
+    Expect(!content.Matches(request,reordered),"adding a coverage certificate republishes identical solid voxels");
+    content.Confirm(request,first);request.coverage->unknown.push_back({{0,0,0},{1,1,1}});
+    Expect(!content.Matches(request,reordered),"unknown holes invalidate the published generation independently of occupancy");
+}
+
+void TestCoverageFile(const char* fixture){
+    using namespace sifucraft::collision;
+    Coverage c{{{{-8,0,0},{16,8,8}}},{{{0,0,0},{1,1,1}}}};
+    VoxelGrid clipped;clipped.Clip({{-8,0,0},{8,8,8}});clipped.SetRow(-100,100,0,0);clipped.Set(8,0,0);clipped.Set(0,8,0);
+    Expect(clipped.CellCount()==16&&clipped.Get(-8,0,0)&&clipped.Get(7,0,0)&&!clipped.Get(8,0,0),"voxel writes and runs stay inside the certified finite region");
+    VoxelGrid replacement,merged;replacement.Set(0,0,0);merged.Set(-9,0,0);merged.Set(1,0,0);merged.ReplaceRegion(replacement,{{-8,0,0},{8,8,8}});
+    Expect(merged.CellCount()==2&&merged.Get(-9,0,0)&&merged.Get(0,0,0)&&!merged.Get(1,0,0),"new known air clears stale solid geometry without erasing another region");
+    RegionCache cache;auto first=std::make_shared<VoxelGrid>();first->Set(1,1,1);first->Set(6,1,1);
+    {
+        struct Entry {std::uintptr_t key;};ChangeWatch<Entry,2> watch;
+        std::unordered_map<std::uintptr_t,std::uint64_t> signatures{{1,11},{2,22},{3,33}};
+        auto key=[](const Entry& entry){return entry.key;};auto read=[&](const Entry& entry){return signatures.at(entry.key);};
+        Expect(watch.Observe(std::vector<Entry>{{1},{2}},key,read)&&!watch.Changed(read,1),"bounded coverage identity watch starts with real signatures");
+        signatures[2]=23;Expect(watch.Changed(read,1),"bounded round-robin watch detects a component change without rescanning the entire world");
+        Expect(!watch.Observe(std::vector<Entry>{{3}},key,read),"watch saturation cannot silently certify unobserved geometry");
+        watch.Reset();Expect(watch.Observe(std::vector<Entry>{{3}},key,read),"new world/epoch releases old watch identities");signatures[3]=0;
+        Expect(watch.Changed(read),"removed or recycled component invalidates a prior certificate");
+        RefreshQueue refresh;refresh.Done({0,0,0},1);Expect(!refresh.Due(5000)&&refresh.Due(5001).value()==std::array<float,3>{0,0,0},"periodic spatial refresh observes the full five-second interval");
+        refresh.Done({8,0,0},2);refresh.Done({0,0,0},10);Expect(refresh.Due(5010).value()==std::array<float,3>{8,0,0},"oldest region refresh cannot be starved by requerying the local region");
+        refresh.Reset();for(int i=0;i<65;i++)refresh.Done({float(i),0,0},i+1);
+        Expect(refresh.Due(10000).value()==std::array<float,3>{1,0,0},"refresh history is bounded to the same 64 finite regions");refresh.Reset();Expect(!refresh.Due(10000),"epoch reset retains no stale region query");
+        RegionCache canonical;auto empty=std::make_shared<VoxelGrid>();const CellRegion left{{0,0,0},{8,8,8}},right{{16,0,0},{24,8,8}};
+        canonical.Put(1,"map",1,left,empty,Coverage{{left},{}});auto before=canonical.Put(1,"map",1,right,empty,Coverage{{right},{}});
+        auto after=canonical.Put(1,"map",1,left,empty,Coverage{{left},{}});
+        Expect(before.coverage==after.coverage&&*before.grid==*after.grid,"unchanged periodic refresh does not churn coverage files just by rotating cache order");
+    }
+    auto a=cache.Put(2,"map",1,{{0,0,0},{8,8,8}},first,Coverage{{{{0,0,0},{8,8,8}}},{{{0,0,0},{8,8,8}}}});
+    auto fresh=std::make_shared<VoxelGrid>();fresh->Set(9,1,1);
+    auto b=cache.Put(2,"map",1,{{4,0,0},{12,8,8}},fresh,Coverage{{{{4,0,0},{12,8,8}}},{}});
+    Expect(b.grid->Get(1,1,1)&&!b.grid->Get(6,1,1)&&b.grid->Get(9,1,1)&&!b.coverage.Known(1,1,1)&&b.coverage.Known(6,1,1),"overlapping newer observations remove stale solids and repair only their part of an old unknown hole");
+    b=cache.Put(3,"map",1,{{4,0,0},{12,8,8}},fresh,Coverage{{{{4,0,0},{12,8,8}}},{}});
+    Expect(!b.grid->Get(1,1,1)&&!b.coverage.Known(1,1,1),"a new world cannot retain a previous world's geometry certificate");
+    Expect(c.valid()&&c.Known(-8,0,0)&&c.Known(4,4,4)&&!c.Known(0,0,0)&&!c.Known(-9,0,0)&&!c.Known(16,4,4),"finite known empty region, negative coordinates, unknown hole and exclusive boundary");
+    wchar_t directory[MAX_PATH];GetTempPathW(MAX_PATH,directory);auto path=std::wstring(directory)+L"sifucraft_coverage_test.scvx";
+    VoxelGrid grid;grid.Set(-1,7,0);Expect(WriteVoxelFile(path,grid,"CoverageFixture",{0,0,0},&c),"write coverage-bearing SCVXv2");
+    std::vector<std::uint8_t> actual;
+    if(auto file=_wfopen(path.c_str(),L"rb")){std::fseek(file,0,SEEK_END);actual.resize(std::ftell(file));std::rewind(file);std::fread(actual.data(),1,actual.size(),file);std::fclose(file);}
+    if(fixture){
+        std::ifstream file(fixture);std::vector<std::uint8_t> expected;std::string word;
+        while(file>>word)expected.push_back(static_cast<std::uint8_t>(std::stoul(word,nullptr,16)));
+        Expect(!expected.empty()&&expected==actual,"native SCVXv2 writer matches independent shared golden bytes");
+    }
+    c.known[0].max[0]=c.known[0].min[0];Expect(!WriteVoxelFile(path,grid,"CoverageFixture",{0,0,0},&c),"invalid coverage cannot be exported");DeleteFileW(path.c_str());
 }
 
 void TestGuardedReads() {
@@ -63,6 +199,38 @@ void TestGuardedReads() {
 
     VirtualFree(reserved, 0, MEM_RELEASE);
     VirtualFree(guarded, 0, MEM_RELEASE);
+}
+
+void TestBoundedLogs() {
+    wchar_t temporary[MAX_PATH]{}; GetTempPathW(MAX_PATH, temporary);
+    const auto path = std::wstring(temporary) + L"sifucraft-log-test-" + std::to_wstring(GetCurrentProcessId()) + L".txt";
+    auto read = [](const std::wstring& name) {
+        std::string result; HANDLE file = CreateFileW(name.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return result;
+        const DWORD size = GetFileSize(file, nullptr); result.resize(size);
+        DWORD count = 0; ReadFile(file, result.data(), size, &count, nullptr); result.resize(count); CloseHandle(file); return result;
+    };
+    {
+        sifucraft::TextFile file;
+        Expect(file.Open(path, 256, 2), "open a bounded log");
+        for (char c : {'A', 'B', 'C', 'D'}) file.Write(std::string(256, c));
+        Expect(read(path) == std::string(256, 'D') && read(path + L".1") == std::string(256, 'C') &&
+            read(path + L".2") == std::string(256, 'B'), "rotation keeps the newest bounded parts in order");
+        HANDLE reader = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        Expect(reader != INVALID_HANDLE_VALUE, "hold a reader that denies log renaming");
+        file.Write(std::string(256, 'E'));
+        Expect(read(path) == std::string(256, 'D'), "failed rotation preserves evidence and cannot grow beyond the cap");
+        CloseHandle(reader);
+    }
+    {
+        sifucraft::TextFile file; file.Open(path, 256, 2); file.Write(std::string(1024, 'F'));
+        Expect(read(path).size() == 256, "one oversized message also obeys the file limit");
+        file.TryWrite("exit");
+        Expect(read(path) == "exit", "final nonblocking writer also rotates a full log");
+    }
+    DeleteFileW(path.c_str()); DeleteFileW((path + L".1").c_str()); DeleteFileW((path + L".2").c_str());
 }
 
 void TestBuildGuard() {
@@ -175,7 +343,7 @@ void TestInputRouter() {
            "forwarded W carries the held shift modifier");
     Expect(drained.events[2].type == sifucraft::protocol::EventType::MouseButton && drained.events[2].code == 1,
            "mouse button forwarded as a button event");
-    Expect(!router.OnKey(MapKey("Escape"), "Escape", 1), "escape always stays with sifu");
+    Expect(!router.OnKey(MapKey("Escape"), "Escape", 1), "escape without a mirrored container stays with sifu");
     Expect(router.OnKey(MapKey("F8"), "F8", 1) && router.TakeToggleRequest() && !router.TakeToggleRequest(),
            "F8 is consumed and requests one toggle");
     Expect(router.OnAxis(KeyKind::MouseX, 3.0f) && router.OnAxis(KeyKind::MouseY, 2.0f), "mouse axes go to minecraft");
@@ -190,6 +358,57 @@ void TestInputRouter() {
     for (const auto& e : drained.events) releases += e.action == 0;
     Expect(drained.events.size() == 3 && releases == 3, "handing back to sifu releases everything minecraft held");
     Expect(!router.OnKey(w, "W", 0) && !router.OnAxis(KeyKind::MouseX, 1.0f), "afterwards input goes to sifu");
+}
+
+void TestInventoryRouting() {
+    using namespace sifucraft;
+    using protocol::InputOwner;
+    using protocol::EventType;
+    input::InputRouter router;
+    input::InputRouter::Drained events;
+    router.SetOwner(InputOwner::Minecraft);
+    router.SetGuiState(true, false, 0);
+    Expect(router.OnKey(input::MapKey("E"), "E", 1), "E opens the mirrored inventory");
+    router.Drain(&events);
+    const auto opening = events.events.front().gui_revision;
+    Expect(opening && events.events.size() == 2 && events.events.back().type == EventType::GuiMouseMotion,
+           "inventory press precedes an ordered cursor baseline");
+    router.SetGuiState(true, false, 0); // a snapshot from before the opening press
+    router.OnAxis(input::KeyKind::MouseX, 31);
+    router.OnKey(input::MapKey("LeftMouseButton"), "LeftMouseButton", 1);
+    events = {}; router.Drain(&events);
+    Expect(events.events.size() == 2 && events.events[0].type == EventType::GuiMouseMotion &&
+           events.events[0].mouse_x == 31 && events.events[1].type == EventType::MouseButton,
+           "GUI motion is ordered before the click at that position");
+    Expect(router.OnKey(input::MapKey("Escape"), "Escape", 1), "fast E then Escape closes MC before its snapshot acknowledges opening");
+    events = {}; router.Drain(&events);
+    const auto closing = events.events.front().gui_revision;
+    Expect(closing && closing != opening, "close carries its own acknowledgement token");
+    router.SetGuiState(true, true, opening); // an older open echo must not reopen the prediction
+    Expect(router.OnKey(input::MapKey("Escape"), "Escape", 0), "Escape release returns to the same handler as its press");
+    Expect(!router.OnKey(input::MapKey("Escape"), "Escape", 1), "a second Escape reaches Sifu despite an old open echo");
+    router.OnKey(input::MapKey("Escape"), "Escape", 0);
+    router.SetGuiState(true, false, closing);
+    router.OnKey(input::MapKey("E"), "E", 0);
+    router.OnKey(input::MapKey("E"), "E", 1);
+    router.SetOwner(InputOwner::Sifu);
+    router.SetOwner(InputOwner::Minecraft);
+    Expect(!router.OnKey(input::MapKey("Escape"), "Escape", 1), "F8 handoff clears stale GUI predictions");
+    router.OnKey(input::MapKey("Escape"), "Escape", 0);
+    router.SetGuiState(true, true, 0);
+    router.SetGuiState(false, true, 0);
+    Expect(!router.OnKey(input::MapKey("Escape"), "Escape", 1), "expired overlay cannot intercept Escape for invisible UI");
+    router.OnKey(input::MapKey("Escape"), "Escape", 0);
+    router.SetGuiState(true, true, 0, true);
+    events = {}; router.Drain(&events);
+    events = {};
+    router.OnKey(input::MapKey("E"), "E", 1);
+    router.OnAxis(input::KeyKind::MouseX, 1);
+    router.Drain(&events);
+    Expect(events.events.size() == 2 && events.events.front().gui_revision == 0 &&
+           events.events.back().type == EventType::GuiMouseMotion, "typing E in a focused search box preserves GUI routing and cursor motion");
+    router.OnKey(input::MapKey("E"), "E", 0);
+    Expect(router.OnKey(input::MapKey("Escape"), "Escape", 1), "Escape still closes a focused search inventory");
 }
 
 BOOL CALLBACK CountDevice(GUID*, const wchar_t*, const wchar_t*, void* context) {
@@ -315,6 +534,11 @@ void TestVoxels() {
         return grid;
     };
     ShapeSet block;
+    {
+        ShapeSet rejected;rejected.convexes.push_back({{{0,0,0},{1,0,0}}});rejected.capsules.push_back({{0,0,0},{200001,0,0},10});
+        VoxelGrid none;VoxelStats rejected_stats;Voxelize(rejected,&none,&rejected_stats);
+        Expect(rejected_stats.rejected.size()==2&&!rejected_stats.rejected_bounds,"unvoxelizable hull/capsule retain finite unknown bounds");
+    }
     block.convexes.push_back({cube});
     const VoxelGrid block_grid = voxelize(block);
     Expect(block_grid.CellCount() == 512 && block_grid.blocks().size() == 1, "a 1 m cube fills exactly one block");
@@ -548,18 +772,520 @@ void TestCollisionFiles() {
     DeleteFileW(csv.c_str());
 }
 
+void TestCombatSamples() {
+    using namespace sifucraft;
+    namespace off = gen::off;
+    std::vector<std::uint8_t> component(off::UCharacterHealthComponent::m_eDownState + 1);
+    const auto put = [](auto& buffer, std::uint32_t offset, auto value) {
+        std::memcpy(buffer.data() + offset, &value, sizeof(value));
+    };
+    put(component, off::UHealthComponent::m_fHealth, 180.0f);
+    put(component, off::UHealthComponent::m_fMaxHealth, 120.0f);
+    for (int d = 0; d < 3; ++d) {
+        put(component, off::UCharacterHealthComponent::m_fMaxHealthMultiplier + d * sizeof(float), 1.0f + d * 0.5f);
+    }
+    component[off::UHealthComponent::m_bCanBeDamaged] = 1;
+    component[off::UHealthComponent::m_bCanDieByDamage] = 1;
+    const auto address = reinterpret_cast<std::uintptr_t>(component.data());
+    const auto before = component;
+    probe::HealthSample health;
+    Expect(probe::ReadHealthSample(address, &health) && health.health == 180.0f && health.can_die &&
+               probe::EffectiveMaxHealth(health, 1) == 180.0f && probe::EffectiveMaxHealth(health, 2) == 240.0f,
+           "combat sample reads PDB health layout and applies the selected difficulty multiplier");
+    Expect(std::isnan(probe::EffectiveMaxHealth(health, -1)) && probe::EffectiveMaxHealth(health, 3) == 120.0f,
+           "combat sample keeps unknown difficulty unknown and matches the game's out-of-range fallback");
+    Expect(component == before, "combat sampling never changes source memory");
+    put(component, off::UHealthComponent::m_fHealth, NAN);
+    Expect(!probe::ReadHealthSample(address, &health), "combat sample rejects non-finite health");
+    put(component, off::UHealthComponent::m_fHealth, 180.0f);
+    put(component, off::UCharacterHealthComponent::m_fMaxHealthMultiplier, 0.0f);
+    Expect(!probe::ReadHealthSample(address, &health), "combat sample rejects uninitialized health multipliers");
+    Expect(!probe::ReadHealthSample(0, &health) && !probe::ReadHealthSample(0x20, &health),
+           "combat sample refuses absent and unreadable health components");
+
+    std::vector<std::uint8_t> description(gen::size::FHitDescription);
+    const auto hit_address = reinterpret_cast<std::uintptr_t>(description.data());
+    const auto box = off::FHitDescription::m_Request + off::FHitRequest::m_HitBox;
+    const auto row = box + off::FHitBox::m_CachedRow;
+    const auto impact = row + off::FHitboxDataRow::m_OnHitImpact;
+    const auto result = off::FHitDescription::m_ImpactResult;
+    probe::HitSample hit;
+    Expect(!probe::ReadHitSample(hit_address, &hit), "combat sample ignores an empty last-hit description");
+    description[result + off::FImpactResult::m_bIsValid] = 1;
+    put(description, result + off::FImpactResult::m_fDamage, 18.0f);
+    put(description, impact + off::FHitImpact::m_fDamage, 12.0f);
+    description[impact + off::FHitImpact::m_bUseDamage] = 1;
+    Expect(!probe::ReadHitSample(hit_address, &hit), "combat sample refuses hitbox damage before its row is cached");
+    description[box + off::FHitBox::m_bCachedRowSetup] = 1;
+    Expect(probe::ReadHitSample(hit_address, &hit) && hit.use_damage && hit.base_damage == 12 && hit.final_damage == 18,
+           "combat sample distinguishes cached base damage from Sifu's resolved damage");
+    description[impact + off::FHitImpact::m_bUseDamage] = 0;
+    put(description, impact + off::FHitImpact::m_fDamage, NAN);
+    Expect(probe::ReadHitSample(hit_address, &hit) && !hit.use_damage && std::isnan(hit.base_damage),
+           "combat sample flags default damage instead of trusting an unused cached value");
+    description[impact + off::FHitImpact::m_bUseDamage] = 1;
+    Expect(!probe::ReadHitSample(hit_address, &hit), "combat sample refuses a non-finite explicit damage value");
+    put(description, impact + off::FHitImpact::m_fDamage, 12.0f);
+    put(description, result + off::FImpactResult::m_fDamage, -1.0f);
+    Expect(!probe::ReadHitSample(hit_address, &hit), "combat sample refuses negative resolved damage");
+    Expect(!probe::ReadHitSample(0, &hit) && !probe::ReadHitSample(0x20, &hit),
+           "combat sample refuses absent and unreadable hit descriptions");
+}
+
+void TestEnemyIdentity() {
+    sifucraft::combat::ActivationTracker tracker;
+    Expect(tracker.Observe(10, 0, true) == 0 && tracker.Observe(10, 1, false) == 0,
+           "enemy identity refuses uninitialized serials and inactive pooled actors");
+    const auto first = tracker.Observe(10, 1, true);
+    Expect(first != 0 && tracker.Observe(10, 1, true) == first,
+           "an active enemy keeps its identity across samples and range changes");
+    tracker.Observe(10, 1, false);
+    const auto second = tracker.Observe(10, 1, true);
+    Expect(second != 0 && second != first, "reactivating a pooled actor changes its spawn identity");
+    const auto replaced = tracker.Observe(10, 2, true);
+    Expect(replaced != 0 && replaced != second, "a reused UObject internal index changes its spawn identity");
+    tracker.Forget(10);
+    const auto returned = tracker.Observe(10, 2, true);
+    Expect(returned != replaced, "a removed and rediscovered object cannot reuse an expired activation");
+    tracker.Reset();
+    Expect(tracker.Observe(10, 2, true) != returned, "world reset does not reuse an old activation identity");
+}
+
+void TestLiveHitSamples() {
+    using namespace sifucraft;
+    namespace off = gen::off;
+    std::vector<std::uint8_t> request(gen::size::FHitRequest, 0);
+    const auto address = reinterpret_cast<std::uintptr_t>(request.data());
+    const auto box = address + off::FHitRequest::m_HitBox;
+    const auto impact = box + off::FHitBox::m_CachedRow + off::FHitboxDataRow::m_OnHitImpact;
+    const auto put = [](std::uintptr_t at, const auto& value) { std::memcpy(reinterpret_cast<void*>(at), &value, sizeof(value)); };
+    combat::HitRequestSample hit;
+    put(impact + off::FHitImpact::m_bUseDamage, std::uint8_t{1});
+    put(impact + off::FHitImpact::m_fDamage, 30.0f);
+    Expect(!combat::ReadCachedHitRequest(address, &hit), "live hit parser refuses an uninitialized inline row cache");
+    put(box + off::FHitBox::m_bCachedRowSetup, std::uint8_t{1});
+    float damage = NAN;
+    Expect(combat::ReadCachedHitRequest(address, &hit) && combat::ResolveHitDamage(hit, NAN, &damage) && damage == 30,
+           "live hit parser reads explicit request damage without needing a default");
+    put(impact + off::FHitImpact::m_bUseDamage, std::uint8_t{0});
+    put(impact + off::FHitImpact::m_fDamage, float{NAN});
+    Expect(combat::ReadCachedHitRequest(address, &hit) && !combat::ResolveHitDamage(hit, NAN, &damage) &&
+           combat::ResolveHitDamage(hit, 15, &damage) && damage == 15,
+           "default hit damage never treats an unused raw field as zero or as the effective damage");
+    Expect(combat::ResolveHitDamage(hit, 0, &damage) && damage == 0,
+           "a verified zero default is distinct from an unresolved default");
+    put(impact + off::FHitImpact::m_bUseDamage, std::uint8_t{1});
+    Expect(!combat::ReadCachedHitRequest(address, &hit), "live hit parser refuses non-finite explicit damage");
+    put(impact + off::FHitImpact::m_fDamage, 15.0f);
+    put(box + off::FHitBox::m_bCachedRowSetup, std::uint8_t{0});
+    Expect(combat::ReadHitRequest(address, box + off::FHitBox::m_CachedRow, &hit) && hit.cached == 0 && hit.raw_damage == 15,
+           "live hit parser accepts a separately resolved data-table row for an uncached request");
+
+    std::vector<std::uint8_t> attack(off::FComboAttack::m_fAnimFrameRate + 4), animation(off::UAnimSequenceBase::Notifies + 16);
+    std::vector<std::uint8_t> curve(off::UCurveFloat::FloatCurve + off::FRichCurve::Keys + 16);
+    std::vector<std::uint8_t> events(gen::size::FAnimNotifyEvent), keys(3 * gen::size::FRichCurveKey);
+    const auto aa = reinterpret_cast<std::uintptr_t>(attack.data()), an = reinterpret_cast<std::uintptr_t>(animation.data());
+    const auto ca = reinterpret_cast<std::uintptr_t>(curve.data()), ea = reinterpret_cast<std::uintptr_t>(events.data());
+    const auto ka = reinterpret_cast<std::uintptr_t>(keys.data());
+    put(aa + off::FComboAttack::m_fAnimFrameRate, 60.0f);
+    put(ca + off::UCurveFloat::FloatCurve + off::FRichCurve::Keys, mem::RawArray{ka, 3, 3});
+    put(ka + off::FRichCurveKey::Time, 0.0f);
+    put(ka + gen::size::FRichCurveKey + off::FRichCurveKey::Time, 0.8f);
+    put(ka + 2 * gen::size::FRichCurveKey + off::FRichCurveKey::Time, 1.5f);
+    const auto range = box + off::FHitBox::m_FrameRange + off::FFrameRange::m_Anim;
+    const auto set_range = [&](float start, float end) {
+        put(range + off::FFloatRange::LowerBound + off::FloatRangeBound::Type, std::uint8_t{gen::value::ERangeBoundTypes::Type::Inclusive});
+        put(range + off::FFloatRange::UpperBound + off::FloatRangeBound::Type, std::uint8_t{gen::value::ERangeBoundTypes::Type::Inclusive});
+        put(range + off::FFloatRange::LowerBound + off::FloatRangeBound::Value, start);
+        put(range + off::FFloatRange::UpperBound + off::FloatRangeBound::Value, end);
+    };
+    set_range(30, 33); // Live Grunt_Blunt_DownSmash hit window.
+    const auto resolve = [ca](std::uintptr_t notify) { return notify == 42 ? ca : 0; };
+    Expect(!combat::AttackHasGlow(address, aa, an, resolve), "ordinary weapon Strong has no glow and never disables the shield");
+    put(an + off::UAnimSequenceBase::Notifies, mem::RawArray{ea, 1, 1});
+    put(ea + off::FAnimNotifyEvent::Notify, std::uintptr_t{42});
+    put(ea + off::FAnimLinkableElement::LinkMethod, std::uint8_t{gen::value::EAnimLinkMethod::Type::Absolute});
+    put(ea + off::FAnimLinkableElement::LinkValue, 0.0192489065f);
+    Expect(combat::AttackHasGlow(address, aa, an, resolve), "tagless weapon DownSmash is classified by its real orange glow notify and curve lifetime");
+    put(ea + off::FAnimNotifyEvent::Notify, std::uintptr_t{43});
+    Expect(!combat::AttackHasGlow(address, aa, an, resolve), "unrelated animation effects cannot enable shield disabling");
+    put(ea + off::FAnimNotifyEvent::Notify, std::uintptr_t{42});
+    put(ea + off::FAnimLinkableElement::LinkValue, 0.8f);
+    set_range(10, 12);
+    Expect(!combat::AttackHasGlow(address, aa, an, resolve), "an earlier ordinary strike is not classified by a later glow in the same animation");
+    set_range(54, 58);
+    Expect(combat::AttackHasGlow(address, aa, an, resolve), "the later glowing strike is classified within its own hit window");
+    set_range(180, 184);
+    Expect(!combat::AttackHasGlow(address, aa, an, resolve), "an expired glow does not classify a later ordinary strike");
+    set_range(30, 33);
+    put(ea + off::FAnimLinkableElement::LinkValue, float{NAN});
+    Expect(!combat::AttackHasGlow(address, aa, an, resolve), "invalid glow timing cannot enable shield disabling");
+    put(ka + 2 * gen::size::FRichCurveKey + off::FRichCurveKey::Time, -1.0f);
+    Expect(!std::isfinite(combat::GlowDuration(ca)), "malformed curve timing is refused");
+
+    std::vector<std::uint8_t> defense(off::UDefenseComponent::m_GuardDB + sizeof(mem::RawArray), 0);
+    std::vector<std::uint8_t> nodes(2 * gen::size::GuardStackValue, 0);
+    const auto defense_at = reinterpret_cast<std::uintptr_t>(defense.data());
+    const auto nodes_at = reinterpret_cast<std::uintptr_t>(nodes.data());
+    Expect(combat::StaticGuardValue(defense_at) == 0, "empty GuardDB stack remains unresolved");
+    put(defense_at + off::UDefenseComponent::m_GuardDB, mem::RawArray{nodes_at, 2, 2});
+    const auto top = nodes_at + gen::size::GuardStackValue;
+    Expect(combat::StaticGuardValue(defense_at) == top + off::GuardStackValue::m_Value,
+           "GuardDB reader chooses the current override, rather than the default or first entry");
+    put(top + off::GuardStackValue::m_ValueGetter + off::GuardValueGetter::Callable, std::uintptr_t{1});
+    Expect(combat::StaticGuardValue(defense_at) == 0, "dynamic GuardDB getter is not invoked or guessed from stale cached data");
+}
+
+void TestDataTableRows() {
+    using namespace sifucraft;
+    namespace off = gen::off;
+    std::vector<std::uint8_t> table(off::UDataTable::RowMap + 128, 0);
+    std::vector<std::uint8_t> slots(130 * gen::size::DataTableElement, 0);
+    std::uint32_t heap_bits[5] = {};
+    const auto at = reinterpret_cast<std::uintptr_t>(table.data());
+    const auto data = reinterpret_cast<std::uintptr_t>(slots.data());
+    const auto sparse = at + off::UDataTable::RowMap + off::DataTableMap::Pairs + off::DataTableSet::Elements;
+    const auto bits = sparse + off::DataTableSparse::AllocationFlags;
+    const auto allocator = bits + off::DataTableBits::AllocatorInstance;
+    const auto put = [](std::uintptr_t address, const auto& value) { std::memcpy(reinterpret_cast<void*>(address), &value, sizeof(value)); };
+    const auto entry = [&](int i, ue::FName name, std::uintptr_t row) {
+        const auto pair = data + i * gen::size::DataTableElement + off::DataTableElement::Value;
+        put(pair + off::DataTablePair::Key, name); put(pair + off::DataTablePair::Value, row);
+    };
+    put(sparse + off::DataTableSparse::Data, mem::RawArray{data, 2, 130});
+    put(bits + off::DataTableBits::NumBits, 2); put(bits + off::DataTableBits::MaxBits, 128);
+    entry(0, {42, 0}, 123); entry(1, {42, 1}, 456);
+    put(allocator + off::DataTableBitAllocator::InlineData, std::uint32_t{2});
+    Expect(ue::DataTableRow(at, {42, 0}) == 0 && ue::DataTableRow(at, {42, 1}) == 456,
+           "row-map lookup skips free sparse entries and compares both FName fields");
+    put(sparse + off::DataTableSparse::Data, mem::RawArray{data, 130, 130});
+    put(bits + off::DataTableBits::NumBits, 130); put(bits + off::DataTableBits::MaxBits, 160);
+    put(allocator + off::DataTableBitAllocator::SecondaryData, reinterpret_cast<std::uintptr_t>(heap_bits));
+    heap_bits[4] = 2; entry(129, {99, 0}, 789);
+    Expect(ue::DataTableRow(at, {99, 0}) == 789, "row-map lookup reads heap allocation flags beyond the inline capacity");
+    put(bits + off::DataTableBits::NumBits, 129);
+    Expect(ue::DataTableRow(at, {99, 0}) == 0, "row-map lookup refuses inconsistent sparse array and bit counts");
+}
+
+void TestLanguage() {
+    using namespace sifucraft;
+    namespace off = gen::off;
+    std::vector<std::uint8_t> store(gen::size::InternationalizationStore, 0);
+    std::vector<std::uint8_t> culture(gen::size::FCulture, 0);
+    wchar_t name[] = L"zh-Hans";
+    const auto at = reinterpret_cast<std::uintptr_t>(store.data());
+    const auto base = at - gen::rva::InternationalizationStore;
+    const auto instance = at + off::InternationalizationStore::Data;
+    const auto culture_at = reinterpret_cast<std::uintptr_t>(culture.data());
+    const auto put = [](std::uintptr_t address, const auto& value) { std::memcpy(reinterpret_cast<void*>(address), &value, sizeof(value)); };
+    put(at + off::InternationalizationStore::Ptr, instance);
+    put(instance + off::FInternationalization::CurrentLanguage, culture_at);
+    const auto cached = culture_at + off::FCulture::CachedName;
+    put(cached, mem::RawArray{reinterpret_cast<std::uintptr_t>(name), 8, 8});
+    Expect(ue::ReadLanguage(base).empty(), "language refuses an uninitialized internationalization singleton");
+    put(instance + off::FInternationalization::bIsInitialized, std::uint8_t{1});
+    Expect(ue::ReadLanguage(base) == "zh-Hans", "language reads the current UI culture through generated offsets");
+    name[2] = L' ';
+    Expect(ue::ReadLanguage(base).empty(), "language refuses malformed culture text");
+    name[2] = L'-'; name[7] = L'x';
+    Expect(ue::ReadLanguage(base).empty(), "language requires a terminated culture name");
+    name[7] = 0;
+    put(cached, mem::RawArray{0x20, 8, 8});
+    Expect(ue::ReadLanguage(base).empty(), "language refuses an unreadable culture string");
+    put(cached, mem::RawArray{reinterpret_cast<std::uintptr_t>(name), 21, 21});
+    Expect(ue::ReadLanguage(base).empty(), "language bounds the culture string before copying it");
+    put(at + off::InternationalizationStore::Ptr, instance + 8);
+    Expect(ue::ReadLanguage(base).empty(), "language validates the singleton's inline-storage pointer");
+}
+
+void TestShieldTimingAndLedger() {
+    using namespace sifucraft;
+    namespace off = gen::off;
+    std::vector<std::uint8_t> db(off::UGuardDB::m_ParryWindow + 16, 0);
+    const auto at = reinterpret_cast<std::uintptr_t>(db.data());
+    struct Bound { std::uint8_t type, padding[3]; float value; };
+    Bound range[2]{{1, {}, 0}, {1, {}, 10}};
+    std::memcpy(db.data() + off::UGuardDB::m_ParryWindow, range, sizeof(range));
+    Expect(combat::InParryWindow(at, 0) && combat::InParryWindow(at, 0.1) && !combat::InParryWindow(at, 0.18),
+           "shield timing uses Sifu's 0..10 logic-frame range, independently of render rate");
+    Expect(!combat::InParryWindow(at, NAN) && !combat::InParryWindow(at, -0.01) && !combat::InParryWindow(at, 1),
+           "shield timing refuses missing clocks and prolonged holding");
+    range[0].type = 0;
+    std::memcpy(db.data() + off::UGuardDB::m_ParryWindow, range, sizeof(range));
+    Expect(!combat::InParryWindow(at, 0) && combat::InParryWindow(at, 0.001), "shield timing respects exclusive range bounds");
+    range[1].type = 2;
+    std::memcpy(db.data() + off::UGuardDB::m_ParryWindow, range, sizeof(range));
+    Expect(!combat::InParryWindow(at, 0.1), "shield timing refuses unbounded or unknown window metadata");
+
+    input::InputRouter router;
+    router.SetOwner(protocol::InputOwner::Minecraft);
+    router.SetUseBinding(0x10003);
+    const input::MappedKey right{input::KeyKind::MouseButton, 3};
+    router.OnKey(right, "RightMouseButton", 1, 10);
+    Expect(std::abs(router.UseAge(10.1) - 0.1) < 0.0001, "shield press is timestamped on Sifu's input/game clock");
+    router.OnKey(right, "RightMouseButton", 1, 10.2);
+    Expect(std::abs(router.UseAge(10.3) - 0.3) < 0.0001, "repeated press notifications cannot renew perfect timing");
+    router.OnKey(right, "RightMouseButton", 0, 10.3);
+    Expect(!std::isfinite(router.UseAge(10.4)), "releasing use closes the timing window");
+    router.OnKey(right, "RightMouseButton", 1, 11);
+    router.SetGuiState(true, true, 0);
+    Expect(!std::isfinite(router.UseAge(11.05)), "inventory input cannot count as a shield raise");
+    router.SetOwner(protocol::InputOwner::Sifu);
+    Expect(!std::isfinite(router.UseAge(11.1)), "ownership loss invalidates shield timing");
+
+    combat::ShieldLedger ledger;
+    protocol::PlayerHitPayload hit{42, 3, 54, protocol::kHitCanDefend | protocol::kHitParriable | protocol::kHitPerfectWindow, 7, 9, 1, 0};
+    protocol::PlayerBlockedPayload reply{100, 42, 3, 7, 9, 6, protocol::kBlockedPerfect};
+    Expect(!ledger.Consume(55, reply, 1100), "shield feedback must reference an actually published native hit");
+    ledger.Record(100, 55, hit, 1000);
+    auto bad = reply; ++bad.spawn;
+    Expect(!ledger.Consume(55, bad, 1100) && !ledger.Consume(56, reply, 1100), "shield receipt rejects another activation or peer");
+    bad = reply; ++bad.world_generation;
+    Expect(!ledger.Consume(55, bad, 1100), "shield receipt rejects stale world scope");
+    bad = reply; bad.blocked_damage = NAN;
+    Expect(!ledger.Consume(55, bad, 1100), "shield receipt rejects nonfinite blocked damage");
+    Expect(ledger.Consume(55, reply, 1100) && !ledger.Consume(55, reply, 1101), "one native hit can produce at most one shield feedback even under a new reply ID");
+    ledger.Record(101, 55, hit, 1000); reply.origin_hit_id = 101;
+    Expect(!ledger.Consume(55, reply, 3001), "shield receipt cannot revive an expired original hit");
+    ledger.Reset();
+    Expect(!ledger.Consume(55, reply, 1100), "scope invalidation clears previous shield credentials");
+    hit.flags &= ~protocol::kHitPerfectWindow;
+    ledger.Record(102, 55, hit, 1000); reply.origin_hit_id = 102;
+    Expect(!ledger.Consume(55, reply, 1100), "ordinary timing cannot be upgraded to perfect by a client receipt");
+    reply.flags = 0;
+    Expect(ledger.Consume(55, reply, 1100), "ordinary blocks can be acknowledged without scheduling a native impact");
+}
+
+void TestMaceImpulses() {
+    using namespace sifucraft;
+    combat::ImpulseLedger ledger;
+    protocol::EnemyDamagePayload hit{101, 1, 21, .15f, 0, 3, 7, 0};
+    protocol::EnemyImpulsePayload push{100, 102, 1, 3, 7, 1, -2};
+    Expect(!ledger.Consume(10, push, {}, 200), "range impulse needs an applied origin");
+    ledger.Record(100, 10, hit, {}, 100);
+    Expect(!ledger.Consume(10, push, {}, 200), "ordinary damage cannot authorize range motion");
+    hit.flags = protocol::kDamageSmash; ledger.Record(100, 10, hit, {}, 100);
+    Expect(!ledger.Consume(11, push, {}, 200), "range impulse rejects another session");
+    auto bad = push; bad.world_generation++;
+    Expect(!ledger.Consume(10, bad, {}, 200), "range impulse rejects another world");
+    bad = push; bad.anchor_epoch++;
+    Expect(!ledger.Consume(10, bad, {}, 200), "range impulse rejects another anchor epoch");
+    bad = push; bad.mc_x = NAN;
+    Expect(!ledger.Consume(10, bad, {}, 200), "range impulse rejects NaN");
+    bad = push; bad.mc_z = 17;
+    Expect(!ledger.Consume(10, bad, {}, 200), "range impulse rejects unbounded motion");
+    Expect(!ledger.Consume(10, push, {}, 99) && !ledger.Consume(10, push, {}, 2101), "origin has a bounded forward-time lifetime");
+    Expect(!ledger.Consume(10, push, {401, 0, 0}, 200), "range impulse rejects distant targets");
+    combat::ImpulseLedger::Origin origin{};
+    Expect(ledger.Consume(10, push, {400, 0, 0}, 200, &origin) && origin.created == 100, "finite range boundary consumes the original credential");
+    Expect(!ledger.Consume(10, push, {}, 200), "a new transport ID cannot replay the same origin-target pair");
+    push.enemy_id++;
+    Expect(ledger.Consume(10, push, {}, 200), "one smash can push several distinct targets once");
+    ledger.Reset(); push.enemy_id++;
+    Expect(!ledger.Consume(10, push, {}, 200), "ownership, map and stage reset discard range credentials");
+    for (unsigned id = 1; id <= 300; ++id) ledger.Record(id, 10, hit, {}, 100);
+    push.origin_damage_id = 1;
+    Expect(!ledger.Consume(10, push, {}, 200), "bounded credential eviction cannot resurrect old motion");
+    protocol::Vec3 velocity{}; push.origin_damage_id = 300;
+    Expect(combat::ImpulseVelocity(push, {100, 0, 300}, &velocity) &&
+           std::abs(std::hypot(velocity.x, velocity.y) - 600) < .01 && velocity.z == 0,
+           "horizontal units map to Sifu with a 600cm/s vector cap and no added Z");
+    Expect(!combat::ImpulseVelocity(push, {NAN, 0, 0}, &velocity), "non-finite live velocity never reaches a game call");
+    combat::LaunchParams shape{16, 0, 12, 13, 1, 1};
+    std::uint8_t buffer[18]; std::memset(buffer, 0xAA, sizeof(buffer));
+    Expect(shape.Encode(std::span(buffer + 1, 16), {123, -456, 0}) && buffer[0] == 0xAA && buffer[17] == 0xAA &&
+           buffer[13] == 1 && buffer[14] == 0, "reflected launch params preserve guards and set XY true / Z false");
+    shape.z = 12; shape.xy_mask = 2; shape.z_mask = 4;
+    Expect(shape.Encode(std::span(buffer + 1, 16), {}) && buffer[13] == 2, "packed bool parameters honor distinct reflected masks");
+    shape.z_mask = 2;
+    Expect(!shape.valid(), "overlapping reflected bool masks reject the call");
+    shape.z = 4;
+    Expect(!shape.valid(), "reflected bools cannot overwrite the velocity vector");
+}
+void TestScriptHandoverIntent() {
+    using namespace sifucraft;
+    input::OwnershipIntent intent;
+    using protocol::InputOwner;
+    Expect(intent.Desired(false) == InputOwner::Minecraft, "safe startup requests Minecraft");
+    Expect(intent.Desired(true) == InputOwner::Sifu, "scripts and menus keep the real player");
+    intent.RequestSwitch(InputOwner::Minecraft, true); // cutscene entered before the router sampled it
+    Expect(intent.enabled() && intent.Desired(true) == InputOwner::Sifu,
+           "F8 on the first cinematic frame does not disable Minecraft or bypass the cinematic");
+    for (int i = 0; i < 5; ++i) intent.RequestSwitch(InputOwner::Sifu, true);
+    Expect(intent.Desired(true) == InputOwner::Sifu && intent.Desired(false) == InputOwner::Minecraft,
+           "repeated F8 during a blocked handover resumes Minecraft when the guard clears");
+    intent.RequestSwitch(InputOwner::Minecraft, false);
+    Expect(!intent.enabled() && intent.Desired(false) == InputOwner::Sifu, "F8 under actual MC control yields manually");
+    Expect(intent.Desired(true) == InputOwner::Sifu && intent.Desired(false) == InputOwner::Sifu,
+           "a manual yield is not undone just because a later cutscene ends");
+    intent.RequestSwitch(InputOwner::Sifu, false);
+    Expect(intent.Desired(false) == InputOwner::Minecraft, "F8 requests MC again after a manual yield");
+}
+void TestDoorViewHandover() {
+    using namespace sifucraft;
+    using input::DisplacementGuard;
+    using Change = DisplacementGuard::Change;
+    const interaction::MotionScope scope{10, 2, 3, 100, 5, 200, 6};
+    interaction::DoorMotionWindow door;
+    Expect(interaction::IsDoorClass("BP_2WaysInterractiveLockableDoor_C") &&
+           interaction::IsDoorClass("BP_Door_C") && !interaction::IsDoorClass("BP_OutdoorLamp_C") &&
+           !interaction::IsDoorClass("BP_Pickup_C"), "only door classes explain door animation motion");
+    Expect(!door.Observe(scope, 100, 1.1f), "no door motion exception without a dispatched use");
+    door.Arm(scope, 100, true);
+    DisplacementGuard guard;
+    guard.Reset({}, 100);
+    std::uint32_t consecutive = 0;
+    // Replay the 1.0-1.2 cm per-frame corrections observed before the real handover bug.
+    for (std::uint64_t now = 104; now < 4100; now += 4) {
+        const bool keep = door.Observe(scope, now, 1.1f);
+        consecutive = keep ? 0 : consecutive + 1;
+        guard.Update(true, true, true, {}, consecutive, now);
+    }
+    Expect(!guard.driving() && consecutive == 0, "own door root motion keeps MC pose and camera throughout the animation");
+    door.UpdateScope(scope, true); // MC inventory can stay open; ownership remains MC.
+    Expect(door.Observe(scope, 9999, 1.2f), "same-scope GUI does not cancel the door window");
+    Expect(!door.Observe(scope, 10100, 1.2f), "door exception expires at ten seconds without sliding extension");
+    Expect(guard.Update(true, true, true, {}, 3, 10104) == Change::Yield,
+           "ordinary displacement guard resumes after the bounded window");
+    Expect(guard.Update(false, false, true, {2, 0, 0}, 0, 11104) == Change::None && guard.driving(),
+           "continued native movement reproduces the old automatic recovery wait");
+    Expect(guard.ManualRecovery(11105) && !guard.driving(), "F8 immediately clears a displacement-only wait");
+    input::OwnershipIntent intent;
+    intent.RequestSwitch(protocol::InputOwner::Sifu, true);
+    Expect(intent.Desired(false) == protocol::InputOwner::Minecraft && intent.Desired(true) == protocol::InputOwner::Sifu,
+           "F8 recovery requests MC without bypassing real cinematic, pause or input guards");
+    Expect(guard.Update(true, true, true, {}, 0, 11106) == Change::None, "no stale displacement latch after F8");
+    Expect(guard.Update(true, true, true, {}, 3, 12000) == Change::Yield &&
+           guard.Update(false, false, true, {}, 0, 14000) == Change::Recovered,
+           "non-door script motion still yields and automatically recovers when quiet");
+    for (int field = 0; field < 6; ++field) {
+        auto changed = scope;
+        switch (field) {
+            case 0: ++changed.session; break; case 1: ++changed.world; break; case 2: ++changed.epoch; break;
+            case 3: ++changed.pawn_serial; break; case 4: ++changed.controller_serial; break; case 5: ++changed.pawn; break;
+        }
+        door.Arm(scope, 100, true);
+        Expect(!door.Observe(changed, 104, 1.1f) && !door.Observe(scope, 108, 1.1f),
+               "door view exception cannot survive a scope or object-lifetime change");
+    }
+    door.Arm(scope, 100, true); door.UpdateScope(scope, false); door.UpdateScope(scope, true);
+    Expect(!door.Observe(scope, 104, 1.1f), "F8, menu and disconnect clear rather than suspend a door exception");
+    door.Arm(scope, 100, true);
+    Expect(!door.Observe(scope, 104, 51) && !door.Observe(scope, 108, 1.1f), "large native snaps revoke the exception");
+    door.Arm(scope, 100, true);
+    Expect(!door.Observe(scope, 104, NAN), "invalid motion cannot suppress the native script guard");
+    door.Arm(scope, 100, true); door.Arm(scope, 104, false);
+    Expect(!door.Observe(scope, 108, 1.1f), "a new non-door use cannot inherit door motion permission");
+    auto invalid = scope; invalid.pawn_serial = 0; door.Arm(invalid, 100, true);
+    Expect(!door.Observe(invalid, 104, 1.1f), "door motion needs valid current actor identities");
+    guard.Reset({}, 15000);
+    Expect(!guard.driving() && !guard.ManualRecovery(15001), "new pawn scope and ordinary F8 have no old fallback state");
+}
 }  // namespace
 
 int main(int argc, char** argv) {
+    TestCoverageFile(argc>2?argv[2]:nullptr);
+    {
+        using namespace sifucraft::collision;
+        OwnedSceneActors registry;registry.Add(100,7,0,50);
+        Expect(registry.Contains(100,7,0,50)&&registry.Contains(100,7,19,50),"derived scene exclusion adopts a lazy serial for the same unique name/index");
+        Expect(!registry.Contains(100,7,20,50)&&!registry.Contains(100,8,19,50)&&!registry.Contains(100,7,19,51),"reused pointer/index/name cannot hide a foreign scene actor");
+        registry.Remove(100);Expect(!registry.Contains(100,7,19,50),"removed derived collision is no longer an original-scene exclusion");
+    }
+    TestBoundedLogs();
+    TestInventoryRouting();
+    {
+        using namespace sifucraft;
+        const auto request = protocol::kMcReady | protocol::kMcRequestAnchor;
+        std::uint32_t epoch = 7;
+        Expect(input::WantsAnchor(request, 7, epoch), "scoped respawn request asks for a new anchor");
+        epoch = input::NextEpoch(epoch);
+        Expect(!input::WantsAnchor(request, 7, epoch), "repeated snapshot cannot acknowledge respawn twice");
+        Expect(!input::WantsAnchor(request | protocol::kMcDead, epoch, epoch) &&
+               !input::WantsAnchor(request | protocol::kMcHasPose, epoch, epoch), "dead or old-pose snapshots cannot complete a respawn");
+        Expect(input::NextEpoch(0xffffffffu) == 1, "anchor wrap skips the invalid zero epoch");
+        Expect(input::SameScope(42, 42, 3, 3) && !input::SameScope(41, 42, 3, 3) && !input::SameScope(42, 42, 2, 3),
+               "matching epoch never makes an old Sifu lifetime or world a valid pose/request");
+    }
+    {
+        using namespace sifucraft;
+        combat::DamageLedger ledger;
+        ledger.SetSession(10);
+        protocol::DamageResultPayload result{1, 42, 9, 0, 54, 6, 3}, cached{};
+        using Claim = combat::DamageLedger::Claim;
+        Expect(ledger.Begin(10, 1, &cached) == Claim::Fresh && ledger.Begin(10, 1, &cached) == Claim::Pending,
+               "damage ledger applies a command once while pending");
+        ledger.Complete(10, 1, result);
+        Expect(ledger.Begin(10, 1, &cached) == Claim::Cached && cached.sifu_damage == 54 && cached.health_after == 6,
+               "damage ledger replays the result, not the damage");
+        for (std::uint64_t id = 2; id < 300; ++id) ledger.Begin(10, id, &cached);
+        Expect(ledger.Begin(10, 1, &cached) == Claim::TooOld && ledger.Begin(10, 0, &cached) == Claim::TooOld,
+               "eviction and reordered old IDs never permit damage replay");
+        Expect(ledger.Begin(11, 1, &cached) == Claim::WrongSession, "damage ledger refuses a foreign session");
+        ledger.SetSession(11);
+        Expect(ledger.Begin(11, 1, &cached) == Claim::Fresh && ledger.Begin(10, 300, &cached) == Claim::WrongSession,
+               "a new session may restart IDs without accepting old-session damage");
+        protocol::EnemyDamagePayload valid{42, 9, 6, 0.25f, 0, 3, 1, 0};
+        Expect(combat::ValidDamage(valid), "combat accepts a finite scoped damage payload");
+        auto bad = valid; bad.mc_damage = NAN;
+        Expect(!combat::ValidDamage(bad), "combat refuses non-finite damage");
+        bad = valid; bad.anchor_epoch = 0;
+        Expect(!combat::ValidDamage(bad), "combat refuses an unanchored damage payload");
+        bad = valid; bad.flags = 16;
+        Expect(!combat::ValidDamage(bad), "combat refuses unknown damage flags");
+    }
     TestGuardedReads();
+    TestLanguage();
+    TestShieldTimingAndLedger();
+    TestLightImpactCall();
+    TestMaceImpulses();
+    TestScriptHandoverIntent();
+    TestDoorViewHandover();
+    {
+        sifucraft::interaction::Requests ledger;
+        Expect(ledger.Claim(10, 1) && !ledger.Claim(10, 1) && !ledger.Claim(10, 0), "native use gesture cannot replay a request");
+        Expect(ledger.Claim(10, 4) && !ledger.Claim(10, 2) && ledger.Claim(11, 1), "native use IDs are ordered per peer lifetime");
+        sifucraft::protocol::InteractionSnapshot target{};
+        target.minimum = {100, -50, 0}; target.maximum = {120, 50, 200}; target.range_cm = 150;
+        Expect(sifucraft::interaction::InRange({0, 0, 162}, target), "native use distance is measured to the target bounds");
+        Expect(!sifucraft::interaction::InRange({-100, 0, 162}, target) &&
+            !sifucraft::interaction::InRange({NAN, 0, 162}, target), "far and invalid native use positions are refused");
+        target.maximum.x = 0;
+        Expect(!sifucraft::interaction::InRange({0, 0, 162}, target), "inverted candidate bounds cannot authorize an input");
+    }
+    {
+        using sifucraft::hooks::StreamingLease;
+        StreamingLease lease;
+        Expect(!lease.Update(false, true) && !lease.held(), "ground movement keeps streaming enabled");
+        Expect(lease.Update(true, true) == false && lease.held(), "takeoff freezes streaming before the pawn moves");
+        Expect(!lease.Update(true, false), "airborne frames and sky platforms do not repeat the call");
+        Expect(lease.Update(false, false) == true && !lease.held(), "landing/F8/script/lost scope restores enabled streaming");
+        Expect(!lease.Update(false, true), "restored ground frames do not repeat the call");
+        Expect(!lease.Update(true, false) && lease.held() && !lease.Update(false, false),
+            "a pre-existing disabled state remains disabled on release");
+        lease.Update(true, true); lease.Discard();
+        Expect(!lease.Update(false, false), "a different world/manager does not receive a stale restore");
+        sifucraft::collision::VoxelGrid floor;
+        floor.Set(0, 0, -1);
+        Expect(sifucraft::collision::HasFloorSupport(floor, {6, 6, 0}), "original scene floor permits landing restore");
+        Expect(sifucraft::collision::HasFloorSupport(floor, {30, 6, 0}), "capsule edge support permits landing restore");
+        Expect(!sifucraft::collision::HasFloorSupport(floor, {6, 6, 100}) &&
+            !sifucraft::collision::HasFloorSupport(floor, {6, 6, 2000}), "a sky platform above the floor keeps the scene loaded");
+        Expect(!sifucraft::collision::HasFloorSupport(floor, {NAN, 6, 0}), "invalid support coordinates are refused");
+    }
     TestBuildGuard();
     TestVtableHook();
     TestKeyMap();
     TestInputRouter();
     TestWorldTransform();
     TestAffine();
+    TestGridPublication();
     TestVoxels();
     TestCollisionFiles();
+    TestCombatSamples();
+    TestLiveHitSamples();
+    TestDataTableRows();
+    TestEnemyIdentity();
     if (argc > 1) TestProxy(argv[1]);
     std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED", g_failures, g_failures == 1 ? "" : "s");
     return g_failures ? 1 : 0;

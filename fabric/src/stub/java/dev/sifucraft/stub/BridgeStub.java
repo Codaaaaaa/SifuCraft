@@ -2,6 +2,8 @@ package dev.sifucraft.stub;
 
 import dev.sifucraft.bridge.McBridge;
 import dev.sifucraft.bridge.Protocol;
+import dev.sifucraft.bridge.DamageResult;
+import dev.sifucraft.bridge.SharedMapping;
 import dev.sifucraft.bridge.SifuFrame;
 import dev.sifucraft.collision.CollisionLoader;
 import java.time.LocalDateTime;
@@ -28,6 +30,13 @@ public final class BridgeStub {
     private long framesObserved;
     private long lastFrameSeen;
     private long frameGaps;
+    private long lastEnemyFrame;
+    private long enemyFrames;
+    private int maxEnemies;
+    private final java.util.Map<Long, Integer> expectedDamage = new java.util.HashMap<>();
+    private boolean damageTest;
+    private int damageStep, damageResults, damageFailures;
+    private byte[] firstDamageEvent;
     private double firstLiveHeapMb = -1;
     private double maxLiveHeapMb;
 
@@ -35,15 +44,19 @@ public final class BridgeStub {
         long durationSeconds = 0;
         long pingMs = 1000;
         long printMs = 1000;
+        boolean damageTest = false;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--duration" -> durationSeconds = Long.parseLong(args[++i]);
                 case "--ping-ms" -> pingMs = Long.parseLong(args[++i]);
                 case "--print-ms" -> printMs = Long.parseLong(args[++i]);
+                case "--damage-test" -> damageTest = true;
                 default -> throw new IllegalArgumentException("unknown argument " + args[i]);
             }
         }
-        System.exit(new BridgeStub().run(durationSeconds, pingMs, printMs));
+        BridgeStub stub = new BridgeStub();
+        stub.damageTest = damageTest;
+        System.exit(stub.run(durationSeconds, pingMs, printMs));
     }
 
     private static void log(String message) {
@@ -52,6 +65,15 @@ public final class BridgeStub {
 
     private int run(long durationSeconds, long pingMs, long printMs) throws InterruptedException {
         McBridge bridge = new McBridge(new McBridge.Listener() {
+            @Override public void onDamageResult(DamageResult result) {
+                Integer expected = expectedDamage.remove(result.eventId());
+                if (expected == null || result.result() != expected || result.enemyId() != 101 || result.worldGeneration() == 0) {
+                    damageFailures++;
+                }
+                if (result.result() == Protocol.DAMAGE_APPLIED && result.sifuDamage() != Protocol.ENEMY_SIFU_HP_PER_MC_HP) damageFailures++;
+                damageResults++;
+                log("[damage-test] result " + result);
+            }
             @Override
             public void log(String message) {
                 BridgeStub.log("[bridge] " + message);
@@ -79,6 +101,7 @@ public final class BridgeStub {
             bridge.setLoadedCollision(collision.loadedGeneration());
             bridge.tick(now);
             observe(bridge);
+            if (damageTest) damageTest(bridge);
             if (now >= nextPing) {
                 bridge.sendPing(now);
                 nextPing += pingMs;
@@ -98,10 +121,13 @@ public final class BridgeStub {
         collision.close();
         bridge.close();
         log("[final] " + describe(bridge));
+        log(String.format("[enemies] frames=%d max_count=%d invalid=%d", enemyFrames, maxEnemies, bridge.stats().enemyTablesInvalid));
+        if (damageTest) log(String.format("[damage-test] replies=%d failures=%d pending=%d", damageResults, damageFailures, expectedDamage.size()));
 
         McBridge.Stats s = bridge.stats();
         boolean pass = s.connects >= 1 && s.snapshotsTorn == 0 && s.pingsLost == 0 && s.pongsUnexpected == 0
-                && s.eventsDroppedFull == 0 && s.eventsDuplicate == 0 && rttCount > 0 && gridOk;
+                && s.eventsDroppedFull == 0 && s.eventsDuplicate == 0 && s.enemyTablesInvalid == 0 && rttCount > 0 && gridOk
+                && (!damageTest || (damageResults == 5 && damageFailures == 0 && expectedDamage.isEmpty()));
         log("[result] " + (pass ? "PASS" : "FAIL") + String.format(
                 " (connects=%d torn=%d lost=%d unexpected=%d dropped=%d dup=%d pongs=%d grid=%s)", s.connects,
                 s.snapshotsTorn, s.pingsLost, s.pongsUnexpected, s.eventsDroppedFull, s.eventsDuplicate, rttCount,
@@ -109,7 +135,52 @@ public final class BridgeStub {
         return pass ? 0 : 1;
     }
 
+    private void damageTest(McBridge bridge) {
+        SifuFrame f = bridge.latest();
+        if (f == null || !f.worldPath().startsWith("/SifuCraft/Test/") || damageStep >= 7) return;
+        if (damageStep >= 5) {
+            if (firstDamageEvent != null) replay(firstDamageEvent);
+            damageStep++;
+            return;
+        }
+        int[] outcomes = {Protocol.DAMAGE_APPLIED, Protocol.DAMAGE_STALE, Protocol.DAMAGE_STALE,
+                Protocol.DAMAGE_INVALID, Protocol.DAMAGE_NOT_OWNED};
+        long id = bridge.sendEnemyDamage(101, damageStep == 1 ? 999 : 1, damageStep == 3 ? Float.NaN : 1, 0.25f, 0,
+                f.worldGeneration() + (damageStep == 2 ? 1 : 0), f.anchorEpoch() + (damageStep == 4 ? 1 : 0));
+        if (id == 0) return;
+        expectedDamage.put(id, outcomes[damageStep]);
+        if (damageStep == 0) {
+            try (SharedMapping map = SharedMapping.open(Protocol.MAPPING_NAME, Protocol.MAPPING_SIZE)) {
+                var ring = map.segment().asSlice(Protocol.MC_TO_SIFU_RING_OFFSET, Protocol.Ring.SIZE);
+                long write = ring.get(java.lang.foreign.ValueLayout.JAVA_LONG, Protocol.Ring.WRITE_INDEX);
+                firstDamageEvent = ring.asSlice(Protocol.Ring.SLOTS + ((write - 1) % Protocol.RING_CAPACITY) * Protocol.Event.SIZE,
+                        Protocol.Event.SIZE).toArray(java.lang.foreign.ValueLayout.JAVA_BYTE);
+            }
+            replay(firstDamageEvent); // same ID again while the original is in flight
+        }
+        damageStep++;
+    }
+
+    private static void replay(byte[] event) {
+        try (SharedMapping map = SharedMapping.open(Protocol.MAPPING_NAME, Protocol.MAPPING_SIZE)) {
+            var ring = map.segment().asSlice(Protocol.MC_TO_SIFU_RING_OFFSET, Protocol.Ring.SIZE);
+            var longs = java.lang.foreign.ValueLayout.JAVA_LONG.varHandle();
+            long write = ring.get(java.lang.foreign.ValueLayout.JAVA_LONG, Protocol.Ring.WRITE_INDEX);
+            long read = (long) longs.getAcquire(ring, (long) Protocol.Ring.READ_INDEX);
+            if (write - read >= Protocol.RING_CAPACITY) return;
+            ring.asSlice(Protocol.Ring.SLOTS + (write % Protocol.RING_CAPACITY) * Protocol.Event.SIZE, Protocol.Event.SIZE)
+                    .copyFrom(java.lang.foreign.MemorySegment.ofArray(event));
+            longs.setRelease(ring, (long) Protocol.Ring.WRITE_INDEX, write + 1);
+        }
+    }
+
     private void observe(McBridge bridge) {
+        var enemies = bridge.enemies();
+        if (enemies != null && enemies.frame() != lastEnemyFrame) {
+            lastEnemyFrame = enemies.frame();
+            enemyFrames++;
+            maxEnemies = Math.max(maxEnemies, enemies.entries().size());
+        }
         SifuFrame frame = bridge.latest();
         if (frame == null || frame.frame() == lastFrameSeen) return;
         if (lastFrameSeen != 0 && frame.frame() > lastFrameSeen + 2) frameGaps++;

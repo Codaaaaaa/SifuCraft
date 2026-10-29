@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
+#include <optional>
+#include "collision/coverage.h"
 
 #include "collision/shapes.h"
 
@@ -23,7 +25,12 @@ class VoxelGrid {
 public:
     struct Block {
         std::uint64_t layers[kCellsPerBlock]{};
+        bool operator==(const Block&) const = default;
     };
+
+    bool operator==(const VoxelGrid&) const = default;
+    void Clip(CellRegion region){clip_=region;}
+    void ReplaceRegion(const VoxelGrid& source,const CellRegion& region);
 
     // Global cell coordinates (cell = floor(position / kCellCm)).
     void Set(int x, int y, int z);
@@ -42,11 +49,14 @@ public:
 
 private:
     std::unordered_map<std::int64_t, Block> blocks_;
+    std::optional<CellRegion> clip_;
 };
 
 // The top (cm) of the highest solid cell in the column under (x, y), searched from a metre above
 // `feet_z` to three metres below it; NAN if there is none.
 float FloorUnder(const VoxelGrid& grid, float x, float y, float feet_z);
+// Nearby original-scene support only, not a floor many metres below a Minecraft sky platform.
+bool HasFloorSupport(const VoxelGrid& grid, const FVector& feet);
 
 // A plane n.p + d = 0; inside is n.p + d <= 0.
 struct Plane {
@@ -78,6 +88,8 @@ struct VoxelOptions {
 };
 
 struct VoxelStats {
+    std::vector<UnknownBounds> rejected;
+    bool rejected_bounds=false;
     std::uint64_t cells = 0;
     std::size_t blocks = 0;
     int convexes = 0, capsules = 0, triangles = 0;

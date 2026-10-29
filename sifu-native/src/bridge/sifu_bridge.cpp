@@ -55,6 +55,9 @@ bool SifuBridge::Start() {
     peer_snapshot_ = At<McSnapshot>(base, kMcSnapshotOffset);
     manifest_ = At<CollisionManifest>(base, kCollisionManifestOffset);
     block_table_ = At<BlockTable>(base, kBlockTableOffset);
+    enemy_table_ = At<EnemyTable>(base, kEnemyTableOffset);
+    interaction_ = At<InteractionSnapshot>(base, kInteractionOffset);
+    doors_ = At<CollisionManifest>(base, kDoorManifestOffset);
     outgoing_ = At<EventRing>(base, kSifuToMcRingOffset);
     incoming_ = At<EventRing>(base, kMcToSifuRingOffset);
 
@@ -78,6 +81,9 @@ bool SifuBridge::Start() {
     Atomic(self_->state).store(static_cast<std::uint32_t>(EndpointState::Running), std::memory_order_relaxed);
     Atomic(self_->magic).store(kMagic, std::memory_order_release);
     PublishCollision({});  // nothing yet: a previous Sifu session's grid is gone
+    PublishEnemies(0, {});
+    PublishInteraction({});
+    PublishDoors({});
 
     SC_LOG("[bridge] shared memory %s: %ls (%u bytes) protocol v%u layout=%016llX session=%016llX",
            mapping_.created() ? "created" : "opened", kMappingName, kMappingSize, kVersion,
@@ -105,10 +111,16 @@ void SifuBridge::Tick(const PlayerFrame& frame, std::uint64_t now_ms) {
     }
 }
 
-bool SifuBridge::SendInput(EventType type, std::int32_t code, std::int32_t action, std::int32_t modifiers) {
+bool SifuBridge::SendInput(EventType type, std::int32_t code, std::int32_t action, std::int32_t modifiers, std::uint32_t gui_revision) {
     if (!self_ || !peer_connected_) return false;
-    const InputPayload payload{code, action, modifiers, 0};
+    const InputPayload payload{code, action, modifiers, gui_revision};
     if (!Send(type, &payload, sizeof(payload))) return false;
+    ++stats_.input_events;
+    return true;
+}
+bool SifuBridge::SendGuiMotion(double x, double y, double scroll) {
+    const GuiMousePayload payload{x, y, scroll};
+    if (!self_ || !peer_connected_ || !Send(EventType::GuiMouseMotion, &payload, sizeof(payload))) return false;
     ++stats_.input_events;
     return true;
 }
@@ -219,6 +231,22 @@ void SifuBridge::PumpEvents() {
                 Send(EventType::Pong, &ping, sizeof(ping));
                 break;
             }
+            case EventType::EnemyDamage:
+                if (peer_connected_ && event.size == sizeof(EnemyDamagePayload)) damage_events_.push_back(event);
+                else ++stats_.events_unknown;
+                break;
+            case EventType::PlayerBlocked:
+                if (peer_connected_ && event.size == sizeof(PlayerBlockedPayload)) damage_events_.push_back(event);
+                else ++stats_.events_unknown;
+                break;
+            case EventType::EnemyImpulse:
+                if (peer_connected_ && event.size == sizeof(EnemyImpulsePayload)) damage_events_.push_back(event);
+                else ++stats_.events_unknown;
+                break;
+            case EventType::NativeInteract:
+                if (peer_connected_ && event.size == sizeof(InteractPayload)) damage_events_.push_back(event);
+                else ++stats_.events_unknown;
+                break;
             default:
                 ++stats_.events_unknown;
                 break;
@@ -226,6 +254,22 @@ void SifuBridge::PumpEvents() {
     }
     Atomic(ring.acked_id).store(last_id, std::memory_order_relaxed);
     Atomic(ring.read_index).store(read, std::memory_order_release);
+}
+
+void SifuBridge::DrainEnemyDamage(std::vector<Event>* events) {
+    events->clear();
+    events->swap(damage_events_);
+}
+
+bool SifuBridge::SendDamageResult(const DamageResultPayload& result) {
+    return self_ && peer_connected_ && Send(EventType::DamageResult, &result, sizeof(result));
+}
+
+bool SifuBridge::SendPlayerHit(const PlayerHitPayload& hit, std::uint64_t* published_id) {
+    const auto id = next_event_id_;
+    if (!self_ || !peer_connected_ || !Send(EventType::PlayerHit, &hit, sizeof(hit))) return false;
+    if (published_id) *published_id = id;
+    return true;
 }
 
 bool SifuBridge::Send(EventType type, const void* payload, std::uint32_t size) {
@@ -278,6 +322,8 @@ void SifuBridge::Publish(const PlayerFrame& frame) {
     s.input_owner = static_cast<std::uint32_t>(frame.input_owner);
     s.capsule_half_height = frame.capsule_half_height;
     s.anchor_epoch = frame.anchor_epoch;
+    std::memset(s.language, 0, sizeof(s.language));
+    std::memcpy(s.language, frame.language.data(), std::min(frame.language.size(), sizeof(s.language) - 1));
     CompilerBarrier();
     seq.store(start + 2, std::memory_order_release);
 }
@@ -300,6 +346,21 @@ void SifuBridge::PublishCollision(const CollisionInfo& info) {
     };
     copy(m.map, sizeof(m.map), info.map);
     copy(m.path, sizeof(m.path), info.path);
+    CompilerBarrier();
+    seq.store(start + 2, std::memory_order_release);
+}
+
+void SifuBridge::PublishEnemies(std::uint32_t world_generation, const std::vector<EnemyEntry>& entries) {
+    if (!enemy_table_) return;
+    EnemyTable& table = *enemy_table_;
+    auto seq = Atomic(table.seq);
+    const std::uint64_t start = seq.load(std::memory_order_relaxed) & ~1ull;
+    seq.store(start + 1, std::memory_order_relaxed);
+    CompilerBarrier();
+    table.frame = frame_;
+    table.world_generation = world_generation;
+    table.count = static_cast<std::uint32_t>(std::min<std::size_t>(entries.size(), kMaxEnemies));
+    std::copy_n(entries.begin(), table.count, table.entries);
     CompilerBarrier();
     seq.store(start + 2, std::memory_order_release);
 }
@@ -328,8 +389,35 @@ void SifuBridge::ReadPeerSnapshot() {
         peer_state_.camera_fov = copy.camera_fov;
         peer_state_.anchor_epoch = copy.anchor_epoch;
         peer_state_.collision_generation = copy.collision_generation;
+        peer_state_.sifu_session = copy.sifu_session;
+        peer_state_.world_generation = copy.world_generation;
+        peer_state_.gui_input_ack = copy.gui_input_ack;
+        peer_state_.use_binding = copy.use_binding;
         return;
     }
+}
+
+void SifuBridge::PublishInteraction(const InteractionSnapshot& value) {
+    if (!interaction_) return;
+    auto seq = Atomic(interaction_->seq);
+    const auto start = seq.load(std::memory_order_relaxed) & ~1ull;
+    seq.store(start + 1, std::memory_order_relaxed); CompilerBarrier();
+    std::memcpy(reinterpret_cast<std::uint8_t*>(interaction_) + 8, reinterpret_cast<const std::uint8_t*>(&value) + 8, sizeof(value) - 8);
+    CompilerBarrier(); seq.store(start + 2, std::memory_order_release);
+}
+void SifuBridge::PublishDoors(const CollisionInfo& info) {
+    if (!doors_) return;
+    auto seq = Atomic(doors_->seq); const auto start = seq.load() & ~1ull;
+    seq.store(start + 1, std::memory_order_relaxed); CompilerBarrier();
+    doors_->generation = info.generation; doors_->world_generation = info.world_generation;
+    doors_->block_count = info.block_count; doors_->cell_count = info.cell_count;
+    std::memset(doors_->map, 0, sizeof(doors_->map)); std::memset(doors_->path, 0, sizeof(doors_->path));
+    std::memcpy(doors_->map, info.map.data(), std::min(info.map.size(), sizeof(doors_->map) - 1));
+    std::memcpy(doors_->path, info.path.data(), std::min(info.path.size(), sizeof(doors_->path) - 1));
+    CompilerBarrier(); seq.store(start + 2, std::memory_order_release);
+}
+bool SifuBridge::SendInteractionResult(const InteractResultPayload& result) {
+    return Send(EventType::NativeInteractResult, &result, sizeof(result));
 }
 
 void SifuBridge::ReadBlocks() {

@@ -20,7 +20,17 @@ public record SifuFrame(
         double scroll,
         int inputOwner,
         float capsuleHalfHeight,
-        int anchorEpoch) {
+        int anchorEpoch,
+        String language) {
+
+    public SifuFrame(long frame, long unixMicros, int worldGeneration, int flags, Vec3 playerLocation,
+                     Vec3 playerRotation, Vec3 playerVelocity, Vec3 cameraLocation, Vec3 cameraRotation,
+                     float cameraFov, float health, float maxHealth, String worldPath, double mouseDx, double mouseDy,
+                     double scroll, int inputOwner, float capsuleHalfHeight, int anchorEpoch) {
+        this(frame, unixMicros, worldGeneration, flags, playerLocation, playerRotation, playerVelocity, cameraLocation,
+                cameraRotation, cameraFov, health, maxHealth, worldPath, mouseDx, mouseDy, scroll, inputOwner,
+                capsuleHalfHeight, anchorEpoch, "");
+    }
 
     /** x/y/z, or pitch/yaw/roll for rotations. */
     public record Vec3(float x, float y, float z) {

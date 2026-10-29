@@ -2,6 +2,7 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <algorithm>
 
 namespace sifucraft {
 
@@ -29,25 +30,57 @@ TextFile::~TextFile() {
     if (handle_ != INVALID_HANDLE_VALUE) CloseHandle(handle_);
 }
 
-bool TextFile::Open(const std::wstring& path) {
+bool TextFile::Open(const std::wstring& path, std::uint64_t max_bytes, unsigned archives) {
+    if (handle_ != INVALID_HANDLE_VALUE) CloseHandle(handle_);
+    path_ = path; bytes_ = retry_at_ = 0;
+    max_bytes_ = std::clamp<std::uint64_t>(max_bytes, 256, MAXDWORD);
+    archives_ = std::clamp(archives, 1u, 8u);
     handle_ = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
                           FILE_ATTRIBUTE_NORMAL, nullptr);
     return handle_ != INVALID_HANDLE_VALUE;
 }
 
-void TextFile::Write(std::string_view text) {
-    if (handle_ == INVALID_HANDLE_VALUE || text.empty()) return;
-    AcquireSRWLockExclusive(&lock_);
+bool TextFile::Rotate() {
+    const auto now = GetTickCount64();
+    if (now < retry_at_) return false;
+    for (unsigned n = archives_; n > 1; --n) {
+        const auto old_path = path_ + L"." + std::to_wstring(n - 1);
+        const auto new_path = path_ + L"." + std::to_wstring(n);
+        if (!MoveFileExW(old_path.c_str(), new_path.c_str(), MOVEFILE_REPLACE_EXISTING) && GetLastError() != ERROR_FILE_NOT_FOUND) {
+            retry_at_ = now + 5000; return false;
+        }
+    }
+    CloseHandle(handle_); handle_ = INVALID_HANDLE_VALUE;
+    const bool moved = MoveFileExW(path_.c_str(), (path_ + L".1").c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
+    // A reader may deny rename. Keep the existing contents, retry later, and never grow
+    // past the cap in the meantime; a failed rotation must not truncate the evidence.
+    handle_ = CreateFileW(path_.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle_ == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER end{};
+    if (!SetFilePointerEx(handle_, {}, &end, FILE_END)) return false;
+    bytes_ = static_cast<std::uint64_t>(end.QuadPart);
+    retry_at_ = moved ? 0 : now + 5000;
+    return moved;
+}
+
+void TextFile::WriteLocked(std::string_view text) {
+    text = text.substr(0, static_cast<std::size_t>(max_bytes_));
+    if (bytes_ + text.size() > max_bytes_ && !Rotate()) return;
     DWORD written = 0;
-    WriteFile(handle_, text.data(), static_cast<DWORD>(text.size()), &written, nullptr);
+    if (handle_ != INVALID_HANDLE_VALUE && WriteFile(handle_, text.data(), static_cast<DWORD>(text.size()), &written, nullptr)) bytes_ += written;
+}
+
+void TextFile::Write(std::string_view text) {
+    if (text.empty()) return;
+    AcquireSRWLockExclusive(&lock_);
+    if (handle_ != INVALID_HANDLE_VALUE) WriteLocked(text);
     ReleaseSRWLockExclusive(&lock_);
 }
 
 void TextFile::TryWrite(std::string_view text) {
-    if (handle_ == INVALID_HANDLE_VALUE || text.empty()) return;
+    if (text.empty()) return;
     if (!TryAcquireSRWLockExclusive(&lock_)) return;
-    DWORD written = 0;
-    WriteFile(handle_, text.data(), static_cast<DWORD>(text.size()), &written, nullptr);
+    if (handle_ != INVALID_HANDLE_VALUE) WriteLocked(text);
     ReleaseSRWLockExclusive(&lock_);
 }
 

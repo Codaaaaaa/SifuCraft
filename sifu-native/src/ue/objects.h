@@ -20,6 +20,15 @@ std::uintptr_t ObjectAt(std::int32_t index, std::int32_t* internal_flags = nullp
 // The object a TWeakObjectPtr / FWeakObjectPtr at `weak` refers to, or 0 if it is stale or unset.
 std::uintptr_t ResolveWeak(std::uintptr_t weak);
 
+struct ObjectIdentity {
+    std::int32_t index = -1;
+    std::int32_t serial = 0;
+    bool valid() const { return index >= 0 && serial > 0; }
+    bool operator==(const ObjectIdentity&) const = default;
+};
+// GUObjectArray serial distinguishes a new object that reuses the same address/internal index.
+ObjectIdentity IdentityOf(std::uintptr_t object);
+
 std::uintptr_t ClassOf(std::uintptr_t object);
 std::uintptr_t OuterOf(std::uintptr_t object);
 std::uintptr_t SuperOf(std::uintptr_t ustruct);
@@ -33,6 +42,9 @@ std::string PathName(std::uintptr_t object);
 
 // False for CDOs/archetypes and objects that are pending kill or unreachable.
 bool IsLive(std::uintptr_t object);
+// Read-only metadata/assets may legitimately be CDOs or archetypes. Still verifies the object
+// array entry and excludes pending-kill/unreachable objects; never use for actor activation.
+bool IsRegistered(std::uintptr_t object);
 
 bool IsChildOf(std::uintptr_t ustruct, std::uintptr_t base);
 bool IsA(std::uintptr_t object, std::uintptr_t ustruct);

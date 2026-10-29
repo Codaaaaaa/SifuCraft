@@ -23,6 +23,14 @@ final class UnrealSpace {
     boolean anchoredTo(SifuFrame sifu) {
         return anchored && worldGeneration == sifu.worldGeneration() && anchorEpoch == sifu.anchorEpoch();
     }
+    boolean sameWorld(SifuFrame sifu){return anchored&&worldGeneration==sifu.worldGeneration();}
+    boolean canRetainBoat(SifuFrame sifu,MapPlacement wanted,net.minecraft.world.phys.Vec3 seat){
+        if(!sameWorld(sifu)||!sifu.hasPawn()||!sifu.minecraftOwnsInput()||!java.util.Objects.equals(placement,wanted)||seat==null||
+            !Double.isFinite(seat.x)||!Double.isFinite(seat.y)||!Double.isFinite(seat.z)||!wanted.containsX((int)Math.floor(seat.x))||
+            !Float.isFinite(sifu.capsuleHalfHeight())||sifu.capsuleHalfHeight()<=0)return false;
+        var p=sifu.playerLocation();double dx=wanted.mcX(p.x())-seat.x,dz=wanted.mcZ(p.y())-seat.z,dy=wanted.mcY(p.z()-sifu.capsuleHalfHeight())-seat.y;
+        return Double.isFinite(dx)&&Double.isFinite(dy)&&Double.isFinite(dz)&&dx*dx+dz*dz<=1.5*1.5&&Math.abs(dy)<=1;
+    }
 
     int anchorEpoch() {
         return anchored ? anchorEpoch : 0;

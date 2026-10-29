@@ -37,6 +37,8 @@ public final class McBridge implements AutoCloseable {
 
         /** SDL scancode, action 1 press / 0 release / -1 repeat, SDL keymod bits. */
         default void onKey(int scancode, int action, int modifiers) {}
+        default void onKey(int scancode, int action, int modifiers, int guiRevision) { onKey(scancode, action, modifiers); }
+        default void onGuiMotion(double x, double y, double scroll) {}
 
         /** SDL mouse button, action 1 press / 0 release. */
         default void onMouseButton(int button, int action, int modifiers) {}
@@ -46,6 +48,9 @@ public final class McBridge implements AutoCloseable {
 
         /** The Sifu peer connected, or went away for {@code reason} (e.g. "peer closing"). */
         default void onPeerConnection(boolean connected, String reason) {}
+        default void onDamageResult(DamageResult result) {}
+        default void onPlayerHit(long sourceSession, long eventId, PlayerHit hit) {}
+        default void onNativeInteraction(NativeInteraction.Result result) {}
     }
 
     /** Counters; read them from the bridge thread. */
@@ -68,6 +73,8 @@ public final class McBridge implements AutoCloseable {
         public long snapshotsRead;
         public long snapshotRetries;
         public long snapshotsTorn;
+        public long enemyTablesRead;
+        public long enemyTablesInvalid;
     }
 
     private static final int SEQLOCK_ATTEMPTS = 4;
@@ -87,6 +94,17 @@ public final class McBridge implements AutoCloseable {
     private MemorySegment mcSnapshot;
     private MemorySegment manifest;
     private MemorySegment blockTable;
+    private MemorySegment enemyTable;
+    private MemorySegment interactionSnapshot, doorManifest;
+    private NativeInteraction interaction;
+    private CollisionManifest doors = CollisionManifest.NONE;
+    private long interactionSeq, doorSeq;
+    public NativeInteraction interaction() { return interaction; }
+    public CollisionManifest doors() { return doors; }
+    public boolean sendNativeInteraction(NativeInteraction candidate) {
+        return mapping != null && peerConnected && candidate != null && candidate.session() == peerSession &&
+                send(Protocol.EVENT_NATIVE_INTERACT, MemorySegment.ofArray(candidate.request()));
+    }
     private MemorySegment outgoing;
     private MemorySegment incoming;
     private Thread heartbeatThread;
@@ -95,6 +113,8 @@ public final class McBridge implements AutoCloseable {
     private long frame;
     private long nextEventId = 1;
     private long nextNonce = 1;
+    private int useBinding;
+    public void setUseBinding(int binding) { useBinding = binding; }
 
     private boolean peerConnected;
     private boolean peerIncompatible;
@@ -112,6 +132,13 @@ public final class McBridge implements AutoCloseable {
     private long manifestSeq;
     private int loadedCollision;
     private int blockGeneration;
+    private EnemyFrame enemies;
+    private long enemySeq;
+    private final Object observationLock=new Object();
+    private record ObservationSource(MemorySegment status,MemorySegment table){}
+    private ObservationSource observationSource;
+    private long observationSequence,observationSession;
+    private volatile EnemyFrame worldEnemies;
 
     public McBridge(Listener listener) {
         this.listener = listener;
@@ -127,6 +154,9 @@ public final class McBridge implements AutoCloseable {
         mcSnapshot = base.asSlice(Protocol.MC_SNAPSHOT_OFFSET, McSnap.SIZE);
         manifest = base.asSlice(Protocol.COLLISION_MANIFEST_OFFSET, Protocol.Manifest.SIZE);
         blockTable = base.asSlice(Protocol.BLOCK_TABLE_OFFSET, Protocol.Blocks.SIZE);
+        enemyTable = base.asSlice(Protocol.ENEMY_TABLE_OFFSET, Protocol.Enemies.SIZE);
+        interactionSnapshot = base.asSlice(Protocol.INTERACTION_OFFSET, Protocol.INTERACTION_SIZE);
+        doorManifest = base.asSlice(Protocol.DOOR_MANIFEST_OFFSET, Protocol.Manifest.SIZE);
         outgoing = base.asSlice(Protocol.MC_TO_SIFU_RING_OFFSET, Ring.SIZE);
         incoming = base.asSlice(Protocol.SIFU_TO_MC_RING_OFFSET, Ring.SIZE);
 
@@ -150,6 +180,7 @@ public final class McBridge implements AutoCloseable {
         INT.setRelease(status, (long) Status.MAGIC, Protocol.MAGIC);
         self = status;
 
+        synchronized(observationLock){observationSource=new ObservationSource(peer,enemyTable);}
         heartbeatThread = Thread.ofPlatform().daemon().name("sifucraft-heartbeat").start(this::heartbeatLoop);
         listener.log(String.format("shared memory %s: %s (%d bytes) protocol v%d layout=%016X session=%016X",
                 mapping.created() ? "created" : "opened", Protocol.MAPPING_NAME, Protocol.MAPPING_SIZE,
@@ -185,6 +216,9 @@ public final class McBridge implements AutoCloseable {
         if (peerConnected) {
             readSifuSnapshot();
             readManifest();
+            readEnemies(nowMs);
+            readInteraction(nowMs);
+            readDoors();
         }
         publish(state);
     }
@@ -202,6 +236,25 @@ public final class McBridge implements AutoCloseable {
         pendingPings.put(nonce, nowMs);
         stats.pingsSent++;
         return true;
+    }
+
+    /** Bridge thread only; zero means not published, so this request may be tried later. */
+    public long sendEnemyDamage(int enemyId, int spawn, float damage, float stun, int flags, int world, int epoch) {
+        if (mapping == null || !peerConnected) return 0;
+        byte[] bytes = new byte[Protocol.EnemyDamage.SIZE];
+        var b = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        b.putInt(enemyId).putInt(spawn).putFloat(damage).putFloat(stun).putInt(flags).putInt(world).putInt(epoch).putInt(0);
+        long id = nextEventId;
+        return send(Protocol.EVENT_ENEMY_DAMAGE, MemorySegment.ofArray(bytes)) ? id : 0;
+    }
+
+    /** Tells Sifu we are going away. Safe to call from a shutdown hook. */
+    public boolean sendPlayerBlocked(PlayerBlocked blocked) {
+        return mapping != null && peerConnected && send(Protocol.EVENT_PLAYER_BLOCKED, MemorySegment.ofArray(blocked.encode()));
+    }
+
+    public boolean sendEnemyImpulse(EnemyImpulse impulse) {
+        return mapping != null && peerConnected && send(Protocol.EVENT_ENEMY_IMPULSE, MemorySegment.ofArray(impulse.encode()));
     }
 
     /** Tells Sifu we are going away. Safe to call from a shutdown hook. */
@@ -222,10 +275,14 @@ public final class McBridge implements AutoCloseable {
                 Thread.currentThread().interrupt();
             }
         }
-        if (mapping != null) mapping.close();
-        mapping = null;
+        synchronized(observationLock){
+            observationSource=null;worldEnemies=null;observationSequence=observationSession=0;
+            if (mapping != null) mapping.close();
+            mapping = null;
+        }
         peerConnected = false;
         latest = null;
+        enemies = null;
     }
 
     public boolean peerConnected() {
@@ -239,6 +296,7 @@ public final class McBridge implements AutoCloseable {
     public long session() {
         return session;
     }
+    public long peerSession() { return peerSession; }
 
     /** The grid Sifu currently publishes; {@link CollisionManifest#NONE} while none or no Sifu. */
     public CollisionManifest collisionManifest() {
@@ -284,6 +342,30 @@ public final class McBridge implements AutoCloseable {
     /** Newest consistent Sifu snapshot, or null before the first one (or after a disconnect). */
     public SifuFrame latest() {
         return latest;
+    }
+
+    public EnemyFrame enemies() { return enemies; }
+    public EnemyFrame worldEnemies(){return worldEnemies;}
+    /** Dedicated world IPC worker: read-only seqlock sampling, no input/event/UI callbacks. */
+    public void sampleWorldObservations(){
+        synchronized(observationLock){
+            var source=observationSource;if(source==null)return;
+            var status=source.status;var table=source.table;
+            if((int)INT.getAcquire(status,(long)Status.MAGIC)!=Protocol.MAGIC||status.get(JAVA_INT,Status.VERSION)!=Protocol.VERSION||
+                getLongAcquire(status,Status.LAYOUT_HASH)!=Protocol.LAYOUT_HASH||(int)INT.getAcquire(status,(long)Status.STATE)!=Protocol.STATE_RUNNING){worldEnemies=null;return;}
+            long session=getLongAcquire(status,Status.SESSION);if(session==0){worldEnemies=null;return;}
+            for(int attempt=0;attempt<SEQLOCK_ATTEMPTS;attempt++){
+                long before=getLongAcquire(table,Protocol.Enemies.SEQ);
+                if(before==0)return;
+                if((before&1)!=0)continue;
+                if(before==observationSequence&&session==observationSession)return; // never manufacture a fresh observation timestamp
+                byte[] bytes=table.toArray(JAVA_BYTE);VarHandle.loadLoadFence();
+                if(getLongAcquire(table,Protocol.Enemies.SEQ)!=before||getLongAcquire(status,Status.SESSION)!=session)continue;
+                try{worldEnemies=EnemyFrame.decode(session,MemorySegment.ofArray(bytes),System.currentTimeMillis());}
+                catch(IllegalArgumentException e){worldEnemies=null;}
+                observationSequence=before;observationSession=session;return;
+            }
+        }
     }
 
     public Stats stats() {
@@ -355,6 +437,9 @@ public final class McBridge implements AutoCloseable {
         latest = null;
         collision = CollisionManifest.NONE;
         manifestSeq = 0;
+        enemies = null;
+        enemySeq = 0;
+        interaction = null; interactionSeq = 0; doors = CollisionManifest.NONE; doorSeq = 0;
         // Events are addressed to one peer session; answers to them can no longer arrive.
         stats.pingsAbandoned += pendingPings.size();
         pendingPings.clear();
@@ -402,17 +487,53 @@ public final class McBridge implements AutoCloseable {
                     }
                 }
                 case Protocol.EVENT_KEY, Protocol.EVENT_MOUSE_BUTTON -> {
+                    if (incoming.get(JAVA_INT, slot + Event.PAYLOAD_SIZE) != InputPayload.SIZE) { stats.eventsUnknown++; break; }
                     int code = incoming.get(JAVA_INT, payload + InputPayload.CODE);
                     int action = incoming.get(JAVA_INT, payload + InputPayload.ACTION);
                     int modifiers = incoming.get(JAVA_INT, payload + InputPayload.MODIFIERS);
                     stats.inputEvents++;
                     if (type == Protocol.EVENT_KEY) {
-                        listener.onKey(code, action, modifiers);
+                        listener.onKey(code, action, modifiers, incoming.get(JAVA_INT, payload + InputPayload.GUI_REVISION));
                     } else {
                         listener.onMouseButton(code, action, modifiers);
                     }
                 }
+                case Protocol.EVENT_GUI_MOUSE_MOTION -> {
+                    if (incoming.get(JAVA_INT, slot + Event.PAYLOAD_SIZE) != Protocol.GUI_MOUSE_SIZE) { stats.eventsUnknown++; break; }
+                    double x = incoming.get(JAVA_DOUBLE, payload), y = incoming.get(JAVA_DOUBLE, payload + 8),
+                            scroll = incoming.get(JAVA_DOUBLE, payload + 16);
+                    if (Double.isFinite(x) && Double.isFinite(y) && Double.isFinite(scroll)) { stats.inputEvents++; listener.onGuiMotion(x, y, scroll); }
+                    else stats.eventsUnknown++;
+                }
                 case Protocol.EVENT_OWNER_CHANGED -> listener.onOwnerChanged(incoming.get(JAVA_INT, payload));
+                case Protocol.EVENT_NATIVE_INTERACT_RESULT -> {
+                    if (incoming.get(JAVA_INT, slot + Event.PAYLOAD_SIZE) != 32) { stats.eventsUnknown++; break; }
+                    listener.onNativeInteraction(NativeInteraction.Result.decode(incoming.asSlice(payload, 32).toArray(JAVA_BYTE)));
+                }
+                case Protocol.EVENT_PLAYER_HIT -> {
+                    if (incoming.get(JAVA_INT, slot + Event.PAYLOAD_SIZE) != Protocol.PlayerHit.SIZE) {
+                        stats.eventsUnknown++;
+                        break;
+                    }
+                    try {
+                        byte[] bytes = incoming.asSlice(payload, Protocol.PlayerHit.SIZE).toArray(JAVA_BYTE);
+                        listener.onPlayerHit(source, id, PlayerHit.decode(bytes));
+                    } catch (IllegalArgumentException invalid) { stats.eventsUnknown++; }
+                }
+                case Protocol.EVENT_DAMAGE_RESULT -> {
+                    if (incoming.get(JAVA_INT, slot + Event.PAYLOAD_SIZE) != Protocol.DamageResult.SIZE) {
+                        stats.eventsUnknown++;
+                        break;
+                    }
+                    listener.onDamageResult(new DamageResult(
+                            incoming.get(JAVA_LONG, payload + Protocol.DamageResult.EVENT_ID),
+                            incoming.get(JAVA_INT, payload + Protocol.DamageResult.ENEMY_ID),
+                            incoming.get(JAVA_INT, payload + Protocol.DamageResult.SPAWN),
+                            incoming.get(JAVA_INT, payload + Protocol.DamageResult.RESULT),
+                            incoming.get(JAVA_FLOAT, payload + Protocol.DamageResult.SIFU_DAMAGE),
+                            incoming.get(JAVA_FLOAT, payload + Protocol.DamageResult.HEALTH_AFTER),
+                            incoming.get(JAVA_INT, payload + Protocol.DamageResult.WORLD_GENERATION)));
+                }
                 default -> stats.eventsUnknown++;
             }
         }
@@ -479,7 +600,7 @@ public final class McBridge implements AutoCloseable {
                     s.get(JAVA_DOUBLE, SifuSnap.SCROLL),
                     s.get(JAVA_INT, SifuSnap.INPUT_OWNER),
                     s.get(JAVA_FLOAT, SifuSnap.CAPSULE_HALF_HEIGHT),
-                    s.get(JAVA_INT, SifuSnap.ANCHOR_EPOCH));
+                    s.get(JAVA_INT, SifuSnap.ANCHOR_EPOCH), utf8z(s, SifuSnap.LANGUAGE, SifuSnap.LANGUAGE_SIZE));
             VarHandle.loadLoadFence();
             if ((long) LONG.getAcquire(s, (long) SifuSnap.SEQ) != before) {
                 stats.snapshotRetries++;
@@ -518,6 +639,51 @@ public final class McBridge implements AutoCloseable {
         }
     }
 
+    private void readInteraction(long nowMs) {
+        for (int attempt = 0; attempt < SEQLOCK_ATTEMPTS; attempt++) {
+            long before = getLongAcquire(interactionSnapshot, 0);
+            if (before == 0 || before == interactionSeq) return;
+            if ((before & 1) != 0) continue;
+            byte[] bytes = interactionSnapshot.toArray(JAVA_BYTE); VarHandle.loadLoadFence();
+            if (getLongAcquire(interactionSnapshot, 0) != before) continue;
+            interactionSeq = before;
+            try { interaction = NativeInteraction.decode(peerSession, bytes, nowMs); }
+            catch (IllegalArgumentException invalid) { interaction = null; }
+            return;
+        }
+    }
+    private void readDoors() {
+        var m = doorManifest;
+        for (int attempt = 0; attempt < SEQLOCK_ATTEMPTS; attempt++) {
+            long before = getLongAcquire(m, 0);
+            if (before == 0 || before == doorSeq) return;
+            if ((before & 1) != 0) continue;
+            var copy = new CollisionManifest(m.get(JAVA_INT, 8), m.get(JAVA_INT, 12), m.get(JAVA_INT, 16),
+                    m.get(JAVA_LONG, 24), utf8z(m, 32, 64), utf8z(m, 96, 384));
+            VarHandle.loadLoadFence(); if (getLongAcquire(m, 0) != before) continue;
+            doorSeq = before; doors = copy; return;
+        }
+    }
+    private void readEnemies(long nowMs) {
+        for (int attempt = 0; attempt < SEQLOCK_ATTEMPTS; attempt++) {
+            long before = getLongAcquire(enemyTable, Protocol.Enemies.SEQ);
+            if (before == 0 || before == enemySeq) return;
+            if ((before & 1) != 0) continue;
+            byte[] bytes = enemyTable.toArray(JAVA_BYTE);
+            VarHandle.loadLoadFence();
+            if (getLongAcquire(enemyTable, Protocol.Enemies.SEQ) != before) continue;
+            enemySeq = before;
+            try {
+                enemies = EnemyFrame.decode(peerSession, MemorySegment.ofArray(bytes), nowMs);
+                stats.enemyTablesRead++;
+            } catch (IllegalArgumentException e) {
+                enemies = null;
+                if (++stats.enemyTablesInvalid <= 5) listener.log("invalid enemy table: " + e.getMessage());
+            }
+            return;
+        }
+    }
+
     private void publish(McState state) {
         MemorySegment s = mcSnapshot;
         // Round down to even: a previous writer may have died mid-update and left the sequence odd.
@@ -537,6 +703,10 @@ public final class McBridge implements AutoCloseable {
         s.set(JAVA_FLOAT, McSnap.CAMERA_FOV, state.cameraFov());
         s.set(JAVA_INT, McSnap.ANCHOR_EPOCH, state.anchorEpoch());
         s.set(JAVA_INT, McSnap.COLLISION_GENERATION, loadedCollision);
+        s.set(JAVA_LONG, McSnap.SIFU_SESSION, state.sifuSession());
+        s.set(JAVA_INT, McSnap.WORLD_GENERATION, state.worldGeneration());
+        s.set(JAVA_INT, McSnap.GUI_INPUT_ACK, state.guiInputAck());
+        s.set(JAVA_INT, McSnap.USE_BINDING, useBinding);
         LONG.setRelease(s, (long) McSnap.SEQ, start + 2);
     }
 

@@ -1,13 +1,14 @@
 #pragma once
 
 #include <windows.h>
+#include <cstdint>
 
 #include <string>
 #include <string_view>
 
 namespace sifucraft {
 
-// Append-only text file; every write goes straight to the OS so a crash loses nothing.
+// Bounded text file; completed writes go straight to the OS and older parts rotate.
 class TextFile {
 public:
     TextFile() = default;
@@ -15,7 +16,7 @@ public:
     TextFile& operator=(const TextFile&) = delete;
     ~TextFile();
 
-    bool Open(const std::wstring& path);
+    bool Open(const std::wstring& path, std::uint64_t max_bytes = 16 * 1024 * 1024, unsigned archives = 3);
     bool IsOpen() const { return handle_ != INVALID_HANDLE_VALUE; }
     void Write(std::string_view text);
     // Never blocks: drops the text if another thread holds the lock (used during process exit,
@@ -24,8 +25,13 @@ public:
     void Printf(const char* format, ...) __attribute__((format(gnu_printf, 2, 3)));
 
 private:
+    void WriteLocked(std::string_view text);
+    bool Rotate();
     HANDLE handle_ = INVALID_HANDLE_VALUE;
     SRWLOCK lock_ = SRWLOCK_INIT;
+    std::wstring path_;
+    std::uint64_t bytes_ = 0, max_bytes_ = 0, retry_at_ = 0;
+    unsigned archives_ = 0;
 };
 
 namespace log {

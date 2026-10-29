@@ -1,6 +1,6 @@
 package dev.sifucraft.blocks;
 
-import java.io.BufferedWriter;
+import dev.sifucraft.storage.AtomicFiles;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -31,6 +31,7 @@ public final class PlacedBlocks {
     private static final AtomicInteger VERSION = new AtomicInteger();
     private static volatile Path file;
     private static volatile boolean dirty;
+    private static long nextSaveNs;
     private static Consumer<String> log = message -> {};
 
     private PlacedBlocks() {}
@@ -42,6 +43,7 @@ public final class PlacedBlocks {
     public static void open(Path worldRoot, Consumer<String> logger) {
         log = logger;
         BLOCKS.clear();
+        dirty = false; nextSaveNs = 0;
         file = worldRoot.resolve(FILE_NAME);
         if (Files.exists(file)) {
             try {
@@ -63,8 +65,9 @@ public final class PlacedBlocks {
 
     /** Saves and forgets the world (server stop). */
     public static void close() {
-        saveIfDirty();
+        save(true);
         file = null;
+        dirty = false; nextSaveNs = 0;
         BLOCKS.clear();
         VERSION.incrementAndGet();
     }
@@ -80,18 +83,26 @@ public final class PlacedBlocks {
         }
     }
 
-    /** Server thread, once per tick: writes the file after changes. */
+    /** Server thread; coalesce edits for at most one second, and retry failed writes. */
     public static void saveIfDirty() {
+        save(false);
+    }
+
+    private static void save(boolean force) {
         Path target = file;
-        if (!dirty || target == null) return;
-        dirty = false;
-        try (BufferedWriter out = Files.newBufferedWriter(target, StandardCharsets.UTF_8)) {
-            for (Map.Entry<Long, BlockState> block : BLOCKS.entrySet()) {
-                long key = block.getKey();
-                out.write(BlockPos.getX(key) + " " + BlockPos.getY(key) + " " + BlockPos.getZ(key) + " "
-                        + Block.getId(block.getValue()));
-                out.newLine();
-            }
+        long now = System.nanoTime();
+        if (!dirty || target == null || !force && now < nextSaveNs) return;
+        nextSaveNs = now + 1_000_000_000L;
+        try {
+            AtomicFiles.write(target, out -> {
+                for (Map.Entry<Long, BlockState> block : BLOCKS.entrySet()) {
+                    long key = block.getKey();
+                    out.write(BlockPos.getX(key) + " " + BlockPos.getY(key) + " " + BlockPos.getZ(key) + " "
+                            + Block.getId(block.getValue()));
+                    out.newLine();
+                }
+            });
+            dirty = false;
         } catch (IOException e) {
             log.accept("could not write " + target + ": " + e);
         }

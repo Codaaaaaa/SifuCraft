@@ -4,6 +4,7 @@
 #include <string>
 
 #include "bridge/sifu_bridge.h"
+#include "bridge/shape_reader.h"
 
 // P4: the blocks Minecraft has placed in the map Sifu shows, as actors in Sifu's world. Each block
 // is an AStaticMeshActor holding the engine's 1 m cube, colliding like level geometry (object type
@@ -19,7 +20,13 @@
 namespace sifucraft::blocks {
 
 // Runtime thread: the blocks of `table` when it is for `map`, none otherwise.
-void Update(std::uintptr_t world, const std::string& map, const bridge::BlockList& table);
+void Update(std::uintptr_t world, const std::string& map, const bridge::BlockList& table,
+            const shape_data::Frame* shapes = nullptr);
+bool ShapesReady();
+bool ShapesSettled(); // exact latest desired revision, with no partially applied box queue
+std::uint64_t ShapesAppliedRevision();
+// Game thread only: version of a currently owned collision component, never a foreign UObject.
+std::uint64_t OwnedBaseVersion(std::uintptr_t component);
 
 // Game thread (engine tick, stage 6).
 void ApplyOnGameThread(std::uintptr_t image_base);

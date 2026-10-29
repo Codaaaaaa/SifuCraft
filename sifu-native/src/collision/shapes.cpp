@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
-#include <unordered_map>
+#include <cctype>
 
 #include "collision/components.h"
 #include "collision/physx_mesh.h"
+#include "collision/owned_scene.h"
+#include "core/log.h"
 #include "core/safe_memory.h"
 #include "generated/sifu_build.g.h"
 #include "ue/objects.h"
@@ -194,6 +196,52 @@ std::vector<Affine> WorldTransforms(std::uintptr_t component, std::uintptr_t ins
 
 }  // namespace
 
+bool DynamicSceneComponent(std::uintptr_t component) {
+    const auto owner = ue::OuterOf(component);
+    if (!ue::IsLive(owner)) return false;
+    const auto character = ue::FindClass("Character");
+    const auto id=ue::IdentityOf(owner);const auto name=ue::NameOf(owner);
+    const bool derived=owned_scene_actors.Contains(owner,id.index,id.serial,(std::uint64_t(name.number)<<32)|name.comparison_index);
+    if(derived||(character&&ue::IsA(owner,character)))return false;
+    if(!IsFixed(component))return true;
+    std::string text = ue::ClassName(owner) + " " + ue::ObjectName(component);
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text.find("door")!=std::string::npos;
+}
+std::vector<std::uintptr_t> DynamicSceneComponents(std::uintptr_t world) {
+    const auto primitive = ue::FindClass("PrimitiveComponent");
+    std::vector<std::uintptr_t> out;
+    for (int i = 0, count = ue::ObjectCount(); i < count; ++i) {
+        const auto component = ue::ObjectAt(i);
+        if (ue::IsLive(component) && ue::IsA(component, primitive) && VisibleLevelOf(component, world) && DynamicSceneComponent(component))
+            out.push_back(component);
+    }
+    return out;
+}
+ShapeSet ExtractComponents(const std::vector<std::uintptr_t>& components, const Responses& pawn, float walkable_z) {
+    ShapeSet out; out.pawn_walkable_z = walkable_z; Extractor extractor(&out);
+    const auto instanced = ue::FindClass("InstancedStaticMeshComponent");
+    auto unknown=[&](std::uintptr_t component){
+        FVector center{},extent{};
+        if(!mem::Read(component+off::USceneComponent::Bounds+off::FBoxSphereBounds::Origin,&center)||
+           !mem::Read(component+off::USceneComponent::Bounds+off::FBoxSphereBounds::BoxExtent,&extent)||
+           !std::isfinite(center.x)||!std::isfinite(center.y)||!std::isfinite(center.z)||
+           !std::isfinite(extent.x)||!std::isfinite(extent.y)||!std::isfinite(extent.z)||extent.x<0||extent.y<0||extent.z<0||
+           std::fabs(center.x)+extent.x>10000000||std::fabs(center.y)+extent.y>10000000||std::fabs(center.z)+extent.z>10000000){out.unknown_bounds=true;return;}
+        out.unknown.push_back({{center.x-extent.x,center.y-extent.y,center.z-extent.z},{center.x+extent.x,center.y+extent.y,center.z+extent.z}});
+    };
+    for (const auto component : components) {
+        if (!ue::IsLive(component)){out.unknown_bounds=true;continue;}
+        if(!Blocks(component,pawn))continue;
+        const auto setup = BodySetupOf(component);
+        if (!setup) {++out.no_body_setup;unknown(component);continue;}
+        const auto before=out.convexes.size()+out.capsules.size()+out.triangles.size();const auto unreadable=out.unreadable_meshes,capped=out.capped;
+        auto transforms = WorldTransforms(component, instanced, &out);
+        if (!transforms.empty()) extractor.AddComponent(setup, transforms, WalkableFloorZOn(component, walkable_z));
+        if(out.convexes.size()+out.capsules.size()+out.triangles.size()==before||out.unreadable_meshes!=unreadable||out.capped!=capped)unknown(component);
+    }
+    return out;
+}
 ShapeSet ExtractShapes(std::uintptr_t world, const Responses& pawn_responses, float pawn_walkable_z) {
     ShapeSet out;
     out.pawn_walkable_z = pawn_walkable_z;
@@ -206,8 +254,12 @@ ShapeSet ExtractShapes(std::uintptr_t world, const Responses& pawn_responses, fl
         const std::uintptr_t component = ue::ObjectAt(i);
         if (!component || !ue::IsA(component, primitive_class) || !ue::IsLive(component)) continue;
         if (!VisibleLevelOf(component, world) || !Blocks(component, pawn_responses)) continue;
+        const auto owner=ue::OuterOf(component);const auto id=ue::IdentityOf(owner);const auto name=ue::NameOf(owner);
+        if(owned_scene_actors.Contains(owner,id.index,id.serial,(std::uint64_t(name.number)<<32)|name.comparison_index))continue;
+        if (DynamicSceneComponent(component)) continue;
         if (!IsFixed(component)) {
             ++out.skipped_movable;
+            static unsigned audit=0;if(audit++<24)SC_LOG("[collision] excluded movable character owner=%s component=%s",ue::ClassName(owner).c_str(),ue::ClassName(component).c_str());
             continue;
         }
         const std::uintptr_t setup = BodySetupOf(component);

@@ -7,14 +7,24 @@
 #include <unordered_map>
 
 #include "blocks/block_mirror.h"
+#include "combat/damage.h"
+#include "combat/base_sync.h"
+#include "combat/motion_probe.h"
+#include "combat/world_motion_service.h"
+#include "combat/npc_debug.h"
+#include "combat/shield_timing.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "generated/sifu_build.g.h"
 #include "hooks/camera_fade.h"
+#include "hooks/streaming_guard.h"
+#include "interaction/native_interaction.h"
 #include "hooks/vtable_hook.h"
 #include "input/input_router.h"
 #include "input/key_map.h"
 #include "probe/probe.h"
+#include "render/overlay.h"
+#include "ui/player_hud.h"
 #include "ue/function_call.h"
 #include "ue/names.h"
 #include "ue/objects.h"
@@ -96,6 +106,10 @@ void CallSetHidden(std::uintptr_t pawn, bool hidden) {
 }
 
 void CallSetTransform(std::uintptr_t pawn, const ue::FVector& location, float yaw) {
+    const auto root=mem::ReadPtr(pawn+gen::off::AActor::RootComponent);
+    const auto root_id=ue::IdentityOf(root),pawn_id=ue::IdentityOf(pawn);
+    ue::FVector before{},after{};
+    const bool translate=root_id.valid()&&pawn_id.valid()&&ue::ReadWorldLocation(root,&before);
     const PoseCalls& c = g_pose_calls;
     g_params.assign(static_cast<std::size_t>(c.set_transform.params_size()), 0);
     std::memcpy(&g_params[c.new_location], &location, sizeof(location));
@@ -104,6 +118,8 @@ void CallSetTransform(std::uintptr_t pawn, const ue::FVector& location, float ya
     g_params[c.sweep] = 0;
     g_params[c.teleport] = 1;
     c.set_transform.Invoke(pawn, g_params.data());
+    if(translate&&ue::IdentityOf(root)==root_id&&ue::IdentityOf(pawn)==pawn_id&&ue::ReadWorldLocation(root,&after))
+        world_motion::base_sync::TranslatePlayerPose(pawn,before.z,after.z);
 }
 
 // The local pawn resolved on the game thread itself: garbage collection runs on this thread too,
@@ -142,6 +158,7 @@ void ApplyPose() {
         CallSetHidden(pawn, true);
         g_hidden_pawn = pawn;
         g_have_last_write = false;
+        g_consecutive_displacements.store(0, std::memory_order_relaxed);
     } else if (!probe::ActorHidden(pawn)) {
         CallSetHidden(pawn, true);
         g_pose_stats.pawn_rehides.fetch_add(1, std::memory_order_relaxed);
@@ -165,6 +182,7 @@ void ApplyPose() {
     const std::uintptr_t root = mem::ReadPtr(pawn + gen::off::AActor::RootComponent);
     if (ue::AttachParentOf(root)) {
         g_have_last_write = false;
+        g_consecutive_displacements.store(0, std::memory_order_relaxed);
         g_pose_stats.attached_skips.fetch_add(1, std::memory_order_relaxed);
         return;
     }
@@ -173,7 +191,7 @@ void ApplyPose() {
     if (g_have_last_write && ue::ReadWorldLocation(root, &current)) {
         const float dx = current.x - g_last_write.x, dy = current.y - g_last_write.y, dz = current.z - g_last_write.z;
         const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (distance <= kDisplacementToleranceCm) {
+        if (distance <= kDisplacementToleranceCm || interaction::PreserveDoorView(pawn, distance)) {
             g_consecutive_displacements.store(0, std::memory_order_relaxed);
         } else {
             g_consecutive_displacements.fetch_add(1, std::memory_order_relaxed);
@@ -229,7 +247,7 @@ void ResolvePoseCalls() {
 // ---- H5: UFightingMovementComponent::TickComponent ------------------------------------------
 // Only the local player's component is skipped, and only while Minecraft owns the pose: Sifu
 // then computes no movement, gravity or root motion for the player. Every other character
-// (enemies) ticks normally.
+// (enemies) ticks normally, except one explicitly armed P8 M1/M2 diagnostic lease.
 
 using TickComponentFn = void (*)(void* component, float delta_time, int tick_type, void* tick_function);
 
@@ -238,10 +256,17 @@ VtableHook g_movement_tick;
 void MovementTickHook(void* component, float delta_time, int tick_type, void* tick_function) {
     if (g_stage >= 5 && g_pose_active.load(std::memory_order_relaxed) &&
         reinterpret_cast<std::uintptr_t>(component) == g_movement.load(std::memory_order_relaxed)) {
+        world_motion::PoseOwnedMovement(reinterpret_cast<std::uintptr_t>(component));
         g_pose_stats.movement_ticks_skipped.fetch_add(1, std::memory_order_relaxed);
         return;
     }
+    const auto address = reinterpret_cast<std::uintptr_t>(component);
+    if (world_motion::Skip(address,combat::motion::Part::Movement)) return;
+    if (combat::motion::SkipMovement(address)) return;
+    world_motion::BeforeOriginalMovement(address);
     g_movement_tick.original<TickComponentFn>()(component, delta_time, tick_type, tick_function);
+    combat::motion::AfterOriginalMovement(address);
+    world_motion::AfterOriginal(address,combat::motion::Part::Movement);
 }
 
 // ---- H1: UGameEngine::Tick ------------------------------------------------------------------
@@ -278,9 +303,19 @@ void EngineTickHook(void* engine, float delta_seconds, bool idle_mode) {
     }
     g_frames.ticks.fetch_add(1, std::memory_order_relaxed);
     g_frames.window_ticks.fetch_add(1, std::memory_order_relaxed);
+    streaming_guard::ApplyOnGameThread(g_image_base, g_stage);
+    if (g_stage >= 8) InteractionKeyReady();
+    interaction::BeforeTick(g_image_base, g_stage);
     if (g_stage >= 5) ApplyPose();
     if (g_stage >= 6) blocks::ApplyOnGameThread(g_image_base);
+    if (g_stage >= 7) combat::damage::ApplyOnGameThread(g_image_base);
+    if (g_stage >= 10) combat::motion::ApplyOnGameThread(g_image_base);
+    if (g_stage >= 10) world_motion::ApplyOnGameThread(g_image_base);
+    if (g_stage >= 10) npc_debug::ApplyOnGameThread(g_image_base);
     g_engine_tick.original<EngineTickFn>()(engine, delta_seconds, idle_mode);
+    interaction::AfterTick(g_image_base, g_stage);
+    if (g_stage >= 8) ui::ApplyHudOnGameThread(g_image_base,
+        input::Router().owner() == protocol::InputOwner::Minecraft && PoseActive(), render::LastPresentation());
 }
 
 std::uintptr_t Engine() { return mem::ReadPtr(g_image_base + gen::rva::GEngine); }
@@ -398,7 +433,7 @@ bool InputKeyHook(void* controller, FKeyRaw* key, int event, float amount_depres
         int action = 0;
         const bool has_action = input::MapAction(event, &action);
         const bool to_minecraft =
-            g_stage >= 3 && has_action && !gamepad && input::Router().OnKey(info.mapped, *info.name, action);
+            g_stage >= 3 && has_action && !gamepad && input::Router().OnKey(info.mapped, *info.name, action, combat::GameSeconds(g_image_base));
         if (g_logged_key_events < kMaxLoggedKeyEvents) {
             ++g_logged_key_events;
             SC_LOG("[input] key %-18s %-11s -> %s %d action=%s%s -> %s", info.name->c_str(), input::EventName(event),
@@ -565,6 +600,12 @@ void InstallPlayerHooks() {
 std::uint32_t ConsecutiveDisplacements() { return g_consecutive_displacements.load(std::memory_order_relaxed); }
 
 bool PoseHooksReady() { return g_pose_calls_ready.load() && g_movement_tick.installed() && g_engine_tick.installed(); }
+bool PoseActive() { return g_pose_active.load(std::memory_order_relaxed); }
+bool MovementHookOwns(std::uintptr_t component) {
+    const auto table = mem::ReadPtr(component);
+    return g_movement_tick.installed() && table == g_image_base + gen::hook::MovementTick.vftable &&
+        mem::ReadPtr(table + gen::hook::MovementTick.slot) == reinterpret_cast<std::uintptr_t>(&MovementTickHook);
+}
 
 void SetPoseOverride(const PoseOverride& pose, const std::vector<std::uintptr_t>& impostors) {
     AcquireSRWLockExclusive(&g_pose_lock);
@@ -575,6 +616,37 @@ void SetPoseOverride(const PoseOverride& pose, const std::vector<std::uintptr_t>
 }
 
 bool InputHooksInstalled() { return g_input_key.installed() && g_input_axis.installed(); }
+bool InteractionKeyReady() {
+    static bool ready = false, failed = false;
+    if (ready || failed) return ready;
+    FKeyRaw source{};
+    if (!g_input_key.installed() || !mem::Read(g_image_base + gen::rva::InteractionKey, &source) || ue::NameToString(source.name) != "Q") return false;
+    const auto refs = reinterpret_cast<std::uintptr_t>(source.reference_controller);
+    const auto before = refs ? mem::ReadOr<std::int32_t>(refs + 8, -1) : 0;
+    if (refs && before < 1) { failed = true; return false; }
+    using Copy = void* (*)(void*, const void*);
+    FKeyRaw copy{};
+    reinterpret_cast<Copy>(g_image_base + gen::fn::FKey_Copy)(&copy, reinterpret_cast<const void*>(g_image_base + gen::rva::InteractionKey));
+    const bool same = std::memcmp(&copy, &source, sizeof(copy)) == 0;
+    const auto during = refs ? mem::ReadOr<std::int32_t>(refs + 8, -1) : 0;
+    DestroyKey(&copy);
+    const auto after = refs ? mem::ReadOr<std::int32_t>(refs + 8, -1) : 0;
+    ready = same && after == before && (!refs || during == before + 1);
+    failed = !ready;
+    SC_LOG("[interaction] FKey copy/destruction selfcheck %s refs=%d/%d/%d (no gameplay input)", ready ? "PASS" : "REFUSED", before, during, after);
+    return ready;
+}
+bool SendInteractionKey(std::uintptr_t controller, bool down) {
+    if (!InteractionKeyReady() || controller != g_controller.load() || !ue::IsLive(controller)) return false;
+    FKeyRaw source{};
+    if (!mem::Read(g_image_base + gen::rva::InteractionKey, &source) || ue::NameToString(source.name) != "Q") return false;
+    using Copy = void* (*)(void*, const void*);
+    FKeyRaw key{};
+    reinterpret_cast<Copy>(g_image_base + gen::fn::FKey_Copy)(&key,
+        reinterpret_cast<const void*>(g_image_base + gen::rva::InteractionKey));
+    g_input_key.original<InputKeyFn>()(reinterpret_cast<void*>(controller), &key, down ? 0 : 1, down ? 1.0f : 0.0f, false);
+    return true; // dispatched, not a claim that the interaction succeeded
+}
 
 void SetCameraOverride(const CameraOverride& view) {
     AcquireSRWLockExclusive(&g_camera_lock);

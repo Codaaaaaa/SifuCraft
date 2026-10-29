@@ -35,6 +35,7 @@ int ProjectDefaultShapeComplexity();
 
 // Loaded levels that are visible, i.e. whose collision is in the physics scene.
 int VisibleLevelCount(std::uintptr_t world);
+std::uint64_t VisibleLevelSignature(std::uintptr_t world);
 bool LevelVisible(std::uintptr_t level);
 
 // The visible level of `world` that owns `component` through its actor, or 0.

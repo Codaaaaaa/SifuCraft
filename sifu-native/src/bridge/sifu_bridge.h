@@ -28,6 +28,7 @@ struct PlayerFrame {
     double scroll = 0.0;
     float capsule_half_height = 0.0f;
     std::uint32_t anchor_epoch = 0;
+    std::string language;
 };
 
 // Newest consistent copy of the Minecraft snapshot.
@@ -45,6 +46,10 @@ struct McState {
     float camera_fov = 0.0f;
     std::uint32_t anchor_epoch = 0;  // the SifuSnapshot.anchor_epoch these fields are anchored to
     std::uint32_t collision_generation = 0;  // the CollisionManifest.generation Minecraft has loaded
+    std::uint64_t sifu_session = 0;
+    std::uint32_t world_generation = 0;
+    std::uint32_t gui_input_ack = 0;
+    std::uint32_t use_binding = 0;
 };
 
 // The voxel grid Sifu currently publishes (protocol::CollisionManifest).
@@ -89,10 +94,19 @@ public:
     void MarkClosing();
 
     // Input routed to Minecraft (type Key or MouseButton). Dropped while no peer is connected.
-    bool SendInput(protocol::EventType type, std::int32_t code, std::int32_t action, std::int32_t modifiers);
+    bool SendInput(protocol::EventType type, std::int32_t code, std::int32_t action, std::int32_t modifiers, std::uint32_t gui_revision = 0);
+    bool SendGuiMotion(double x, double y, double scroll);
     bool SendOwnerChanged(protocol::InputOwner owner);
     // Publishes the manifest of the current collision grid; call when it changes.
     void PublishCollision(const CollisionInfo& info);
+    // Replaces the whole nearby-enemy table (Sifu owns enemy state). Runtime thread only.
+    void PublishEnemies(std::uint32_t world_generation, const std::vector<protocol::EnemyEntry>& entries);
+    void PublishInteraction(const protocol::InteractionSnapshot& snapshot);
+    void PublishDoors(const CollisionInfo& info);
+    bool SendInteractionResult(const protocol::InteractResultPayload& result);
+    void DrainEnemyDamage(std::vector<protocol::Event>* events);
+    bool SendDamageResult(const protocol::DamageResultPayload& result);
+    bool SendPlayerHit(const protocol::PlayerHitPayload& hit, std::uint64_t* published_id = nullptr);
     const McState& peer_state() const { return peer_state_; }
     // The latest consistent block table; kept while Minecraft is away (its world keeps the blocks).
     const BlockList& blocks() const { return blocks_; }
@@ -100,8 +114,9 @@ public:
     bool started() const { return self_ != nullptr; }
     bool peer_connected() const { return peer_connected_; }
     std::uint32_t peer_pid() const { return peer_pid_; }
+    std::uint64_t peer_session() const { return peer_session_; }
     std::uint64_t session() const { return session_; }
-    std::uint64_t frame() const { return frame_; }
+    std::uint64_t frame() const { return frame_; } // runtime publication sequence, also used by enemy tables
     const BridgeStats& stats() const { return stats_; }
 
     // One-line summary for the log.
@@ -124,6 +139,9 @@ private:
     protocol::McSnapshot* peer_snapshot_ = nullptr;
     protocol::CollisionManifest* manifest_ = nullptr;
     protocol::BlockTable* block_table_ = nullptr;
+    protocol::EnemyTable* enemy_table_ = nullptr;
+    protocol::InteractionSnapshot* interaction_ = nullptr;
+    protocol::CollisionManifest* doors_ = nullptr;
     protocol::EventRing* outgoing_ = nullptr;
     protocol::EventRing* incoming_ = nullptr;
 
@@ -146,6 +164,7 @@ private:
     std::uint64_t block_seq_ = 0;
     BlockList blocks_;
     BridgeStats stats_;
+    std::vector<protocol::Event> damage_events_;
 };
 
 }  // namespace sifucraft::bridge

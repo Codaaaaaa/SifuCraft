@@ -17,7 +17,12 @@
 .gradle/
 /fabric/build/
 /fabric/run/
+/fabric/logs/
+/fabric/bin/
 *.class
+
+# Exported Minecraft texture cache (regenerated locally, not source assets)
+/textures/
 
 # Python
 __pycache__/

@@ -1,4 +1,5 @@
 #include "runtime.h"
+#include "render/overlay.h"
 
 #include <windows.h>
 #include <psapi.h>
@@ -6,30 +7,47 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "blocks/block_mirror.h"
 #include "bridge/sifu_bridge.h"
+#include "combat/enemies.h"
+#include "combat/motion_probe.h"
+#include "combat/world_motion_service.h"
+#include "combat/npc_debug.h"
+#include "combat/damage.h"
+#include "combat/player_hits.h"
 #include "core/config.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "generated/sifu_build.g.h"
 #include "hooks/camera_fade.h"
+#include "hooks/streaming_guard.h"
+#include "interaction/native_interaction.h"
 #include "hooks/game_hooks.h"
 #include "hooks/hook_plan.h"
 #include "input/input_router.h"
+#include "input/ownership_intent.h"
+#include "input/displacement_guard.h"
+#include "input/anchor_request.h"
 #include "collision/builder.h"
+#include "collision/coverage_query.h"
+#include "collision/change_watch.h"
 #include "collision/components.h"
 #include "collision/shapes.h"
 #include "collision/walk_check.h"
 #include "probe/block_census.h"
 #include "probe/collision_census.h"
+#include "probe/combat_census.h"
 #include "probe/probe.h"
 #include "ue/objects.h"
 #include "ue/reflection.h"
 #include "ue/transform.h"
+#include "ue/language.h"
+#include "ui/player_hud.h"
 
 namespace sifucraft::runtime {
 
@@ -125,17 +143,19 @@ float HorizontalFov(float vertical_degrees, float aspect) {
 }
 
 // Minecraft's pose and camera are usable once Minecraft re-anchored to the current hand-over.
-bool McAnchoredTo(std::uint32_t epoch) {
+bool McAnchoredTo(std::uint32_t epoch, std::uint32_t generation) {
     const bridge::McState& mc = g_bridge.peer_state();
-    return epoch != 0 && mc.valid && (mc.flags & protocol::kMcHasPose) && mc.anchor_epoch == epoch;
+    return epoch != 0 && mc.valid && (mc.flags & protocol::kMcHasPose) &&
+        !(mc.flags & (protocol::kMcDead | protocol::kMcRequestAnchor)) && mc.anchor_epoch == epoch &&
+        input::SameScope(mc.sifu_session, g_bridge.session(), mc.world_generation, generation);
 }
 
 // H4's input (stage >= 4): Minecraft's camera replaces Sifu's while Minecraft owns the input.
-void UpdateCameraOverride(std::uint32_t epoch) {
+void UpdateCameraOverride(std::uint32_t epoch, std::uint32_t generation) {
     static bool was_active = false;
     const bridge::McState& mc = g_bridge.peer_state();
     hooks::CameraOverride view;
-    view.active = input::Router().owner() == InputOwner::Minecraft && McAnchoredTo(epoch);
+    view.active = input::Router().owner() == InputOwner::Minecraft && McAnchoredTo(epoch, generation);
     if (view.active) {
         view.location = {mc.camera_location.x, mc.camera_location.y, mc.camera_location.z};
         view.rotation = {mc.camera_rotation.pitch, mc.camera_rotation.yaw, mc.camera_rotation.roll};
@@ -175,12 +195,12 @@ std::vector<std::uintptr_t> PlayerImpostorsNear(std::uintptr_t pawn, const proto
 
 // H1's input (stage >= 5): Minecraft's player pose drives the Sifu pawn while Minecraft owns the
 // input. Minecraft publishes feet; the pawn's location is its capsule centre.
-void UpdatePoseOverride(std::uintptr_t pawn, float capsule_half_height, std::uint32_t epoch) {
+void UpdatePoseOverride(std::uintptr_t pawn, float capsule_half_height, std::uint32_t epoch, std::uint32_t generation) {
     static bool was_active = false;
     const bridge::McState& mc = g_bridge.peer_state();
     hooks::PoseOverride pose;
     pose.active = hooks::PoseHooksReady() && input::Router().owner() == InputOwner::Minecraft &&
-                  McAnchoredTo(epoch) && capsule_half_height > 0.0f;
+                  McAnchoredTo(epoch, generation) && capsule_half_height > 0.0f;
     std::vector<std::uintptr_t> impostors;
     if (pose.active) {
         pose.location = {mc.player_location.x, mc.player_location.y, mc.player_location.z + capsule_half_height};
@@ -260,12 +280,8 @@ class Ownership {
 public:
     // `minecraft_has_collision`: Minecraft has loaded a collision grid of the current world.
     void Update(std::uintptr_t world, const probe::PlayerObjects& player, const protocol::Vec3& pawn_location,
-                std::uint64_t now_ms, bool minecraft_has_collision) {
+                std::uint64_t now_ms, bool minecraft_has_collision, std::uint32_t generation, bool allow_reanchor) {
         collision_ready_ = minecraft_has_collision;
-        if (input::Router().TakeToggleRequest()) {
-            enabled_ = !enabled_;
-            SC_LOG("[input] F8: routing to minecraft %s", enabled_ ? "ENABLED" : "DISABLED");
-        }
         const ScriptSignals signals = ReadScriptSignals(player);
         if (!(signals == signals_)) {
             SC_LOG("[script] inputs_disabled=%d ignore_move=%u ignore_look=%u cinematic=%d attached_to=%s",
@@ -273,17 +289,42 @@ public:
                    DescribeComponent(signals.attached_to).c_str());
             signals_ = signals;
         }
-        if (player.pawn != pawn_) {
+        const auto identity = ue::IdentityOf(player.pawn);
+        const bool new_pawn_scope = player.pawn != pawn_ || identity != pawn_identity_ || generation != world_generation_;
+        if (new_pawn_scope) {
             pawn_ = player.pawn;
+            pawn_identity_ = identity;
+            world_generation_ = generation;
             pawn_since_ms_ = now_ms;
+            displacement_.Reset(pawn_location, now_ms);
+            if (input::Router().owner() == InputOwner::Minecraft) {
+                epoch_ = input::NextEpoch(epoch_);
+                SC_LOG("[input] invalidated old pose after world/pawn change (epoch %u)", epoch_);
+            }
+        }
+        const auto& mc = g_bridge.peer_state();
+        if (allow_reanchor && world && player.pawn && g_bridge.peer_connected() && mc.valid &&
+            input::SameScope(mc.sifu_session, g_bridge.session(), mc.world_generation, generation) &&
+            input::WantsAnchor(mc.flags, mc.anchor_epoch, epoch_)) {
+            epoch_ = input::NextEpoch(epoch_);
+            SC_LOG("[respawn] acknowledged anchor request %u -> %u world=%u", mc.anchor_epoch, epoch_, generation);
         }
         now_ms_ = now_ms;
-        UpdateDriving(player.pawn != 0, pawn_location, now_ms);
+        if (!new_pawn_scope) UpdateDriving(player.pawn != 0, pawn_location, now_ms);
 
-        const char* blocked = BlockReason(world, player);
-        const InputOwner desired = blocked ? InputOwner::Sifu : InputOwner::Minecraft;
+        const bool toggle = input::Router().TakeToggleRequest();
+        const bool recovered = toggle && displacement_.ManualRecovery(now_ms);
+        if (recovered) SC_LOG("[script] F8 cleared the displacement-only handover wait; explicit script/menu guards remain active");
+        const char* guard = GuardReason(world, player);
+        if (toggle) {
+            intent_.RequestSwitch(input::Router().owner(), guard != nullptr || recovered);
+            SC_LOG("[input] F8: request %s%s%s", intent_.enabled() ? "MINECRAFT" : "sifu",
+                   guard ? "; waiting: " : "", guard ? guard : "");
+        }
+        const char* blocked = intent_.enabled() ? guard : "disabled with F8";
+        const InputOwner desired = intent_.Desired(guard != nullptr);
         if (desired != input::Router().owner()) {
-            if (desired == InputOwner::Minecraft) ++epoch_;
+            if (desired == InputOwner::Minecraft) epoch_ = input::NextEpoch(epoch_);
             input::Router().SetOwner(desired);
             g_bridge.SendOwnerChanged(desired);
             SC_LOG("[input] owner -> %s%s%s (epoch %u)", desired == InputOwner::Minecraft ? "MINECRAFT" : "sifu",
@@ -298,44 +339,24 @@ public:
 
 private:
     static constexpr std::uint64_t kSettleMs = 2000;
-    static constexpr std::uint32_t kYieldAfterFrames = 3;
-    static constexpr float kStillToleranceCm = 1.0f;
-    static constexpr std::uint64_t kStillForMs = 1000;
-    static constexpr std::uint64_t kMaxStillForMs = 8000;
-    static constexpr std::uint64_t kRelapseWithinMs = 3000;
 
     // Fallback for scripts that set none of the flags: Sifu moving the pawn over our writes on
     // several frames in a row means it is driving the player. Take the player back only once the
     // pawn has stood still for a moment; each time Sifu takes it again right after, wait twice as
     // long before the next try.
     void UpdateDriving(bool has_pawn, const protocol::Vec3& location, std::uint64_t now_ms) {
-        if (!driving_) {
-            const std::uint32_t frames = hooks::ConsecutiveDisplacements();
-            if (frames < kYieldAfterFrames) return;
-            driving_ = true;
-            still_ref_ = location;
-            still_since_ms_ = now_ms;
-            const bool relapse = released_ms_ && now_ms - released_ms_ < kRelapseWithinMs;
-            still_for_ms_ = relapse ? std::min(still_for_ms_ * 2, kMaxStillForMs) : kStillForMs;
+        const auto frames = hooks::ConsecutiveDisplacements();
+        const auto change = displacement_.Update(input::Router().owner() == InputOwner::Minecraft,
+            hooks::PoseActive(), has_pawn, location, frames, now_ms);
+        if (change == input::DisplacementGuard::Change::Yield) {
             SC_LOG("[script] Sifu moved the pawn on %u frames in a row: yielding the player to Sifu until it "
-                   "stands still for %llu ms", frames, static_cast<unsigned long long>(still_for_ms_));
-            return;
-        }
-        if (!has_pawn) return;
-        const float dx = location.x - still_ref_.x, dy = location.y - still_ref_.y, dz = location.z - still_ref_.z;
-        if (dx * dx + dy * dy + dz * dz > kStillToleranceCm * kStillToleranceCm) {
-            still_ref_ = location;
-            still_since_ms_ = now_ms;
-        } else if (now_ms - still_since_ms_ >= still_for_ms_) {
-            driving_ = false;
-            released_ms_ = now_ms;
-            SC_LOG("[script] the pawn has been still for %llu ms: Sifu stopped driving it",
-                   static_cast<unsigned long long>(now_ms - still_since_ms_));
+                   "stands still for %llu ms", frames, static_cast<unsigned long long>(displacement_.quiet_ms()));
+        } else if (change == input::DisplacementGuard::Change::Recovered) {
+            SC_LOG("[script] the pawn has been still for %llu ms: Sifu stopped driving it", static_cast<unsigned long long>(displacement_.quiet_ms()));
         }
     }
 
-    const char* BlockReason(std::uintptr_t world, const probe::PlayerObjects& player) const {
-        if (!enabled_) return "disabled with F8";
+    const char* GuardReason(std::uintptr_t world, const probe::PlayerObjects& player) const {
         if (!hooks::InputHooksInstalled()) return "input hooks not installed";
         if (!g_bridge.peer_connected()) return "minecraft not connected";
         const bridge::McState& mc = g_bridge.peer_state();
@@ -350,23 +371,21 @@ private:
         if (signals_.ignore_look) return "sifu script: look input ignored";
         if (signals_.attached_to) return "sifu script: pawn attached";
         if (now_ms_ - pawn_since_ms_ < kSettleMs) return "pawn just spawned (settling)";
-        if (driving_) return "sifu script: Sifu is driving the pawn";
+        if (displacement_.driving()) return "sifu script: Sifu is driving the pawn";
         if (!OurWindowInForeground()) return "sifu window not in foreground";
         return nullptr;
     }
 
-    bool enabled_ = true;
+    input::OwnershipIntent intent_;
     bool collision_ready_ = false;
     std::string last_reason_;
     ScriptSignals signals_;
     std::uintptr_t pawn_ = 0;
+    ue::ObjectIdentity pawn_identity_;
+    std::uint32_t world_generation_ = 0;
     std::uint64_t pawn_since_ms_ = 0;
     std::uint64_t now_ms_ = 0;
-    bool driving_ = false;
-    protocol::Vec3 still_ref_{};
-    std::uint64_t still_since_ms_ = 0;
-    std::uint64_t still_for_ms_ = kStillForMs;
-    std::uint64_t released_ms_ = 0;
+    input::DisplacementGuard displacement_;
     std::uint32_t epoch_ = 0;
 };
 
@@ -382,10 +401,10 @@ std::string MapName(const std::string& world_path) {
 class CollisionSchedule {
 public:
     void Update(std::uintptr_t world, std::uint32_t generation, const std::string& world_path, std::uintptr_t pawn,
-                const bridge::PlayerFrame& frame, std::uint64_t now_ms) {
+                const bridge::PlayerFrame& frame, std::uint64_t now_ms, bool diagnostic_census) {
         if (!world || !pawn) return;
         UpdateReferenceResponses(pawn);
-        const int levels = collision::VisibleLevelCount(world);
+        const auto levels = collision::VisibleLevelSignature(world);
         if (generation != generation_ || levels != levels_) {
             if (generation != generation_) last_components_ = 0;
             generation_ = generation;
@@ -396,8 +415,13 @@ public:
         if (!done_ && now_ms - stable_since_ms_ >= kStableMs) {
             if (!have_reference_) return;  // the pawn's normal collision has not been seen yet
             done_ = true;
-            probe::LogCollisionCensus(world, pawn);
-            probe::LogBlockCensus(world, pawn);
+            // Full read-only object/material surveys take hundreds of ms and
+            // starve the 200ms world-context publication and 500ms NPC leases.
+            // Collision extraction is required; diagnostic inventories are opt-in.
+            if (diagnostic_census) {
+                probe::LogCollisionCensus(world, pawn);
+                probe::LogBlockCensus(world, pawn);
+            }
             const ULONGLONG start = GetTickCount64();
             collision::BuildRequest request;
             request.shapes = collision::ExtractShapes(world, reference_, PawnWalkableFloorZ(pawn));
@@ -446,6 +470,14 @@ public:
 
     // Logs the walk check and appends its samples to SifuCraft\debug\walk_<map>.csv.
     bool GridBuilt(std::uint32_t generation) const { return builder_.Latest(generation) != nullptr; }
+    bool HasReference() const { return have_reference_; }
+    collision::Responses Reference() const { return reference_; }
+    float WalkableZ(std::uintptr_t pawn) { return PawnWalkableFloorZ(pawn); }
+    bool NativeSupport(std::uint32_t generation, const protocol::Vec3& feet) const {
+        const auto grid = builder_.Latest(generation);
+        return grid && collision::HasFloorSupport(*grid, {feet.x, feet.y, feet.z});
+    }
+    std::shared_ptr<const collision::VoxelGrid> MotionGrid(std::uint32_t generation) const { return builder_.Latest(generation); }
 
     void FlushCheck() {
         if (walk_check_.samples() == 0) return;
@@ -563,25 +595,174 @@ private:
     std::uint32_t loaded_generation_ = 0;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> history_;  // (grid, world generation) published
     std::uint32_t generation_ = 0;
-    int levels_ = -1;
+    std::uint64_t levels_ = 0;
     std::uint64_t stable_since_ms_ = 0;
     bool done_ = false;
 };
 
+class DoorSchedule {
+public:
+    void Update(std::uintptr_t world, std::uint32_t generation, const std::string& path, std::uintptr_t pawn,
+                CollisionSchedule& collision, std::uint64_t now) {
+        if (!world || !pawn || !collision.HasReference() || now < next_) return;
+        next_ = now + 100;
+        if (generation != generation_) {
+            generation_ = generation; hash_ = 0; scan_ = 0; shared_ = 0; components_.clear();
+            g_bridge.PublishDoors({});
+            collision::coverage::Invalidate();
+        }
+        const auto visible = collision::VisibleLevelSignature(world);
+        if(visible!=levels_){collision::coverage::Invalidate();g_bridge.PublishDoors({});}
+        const auto candidate = interaction::Snapshot();
+        if (now >= scan_ || visible != levels_ || (candidate.owner && candidate.owner != target_owner_)) {
+            components_.clear();
+            for (auto p : collision::DynamicSceneComponents(world)) components_.push_back({p, ue::IdentityOf(p)});
+            scan_ = now + 5000; levels_ = visible; target_owner_ = candidate.owner;
+        }
+        ue::FVector center{};
+        if (!ue::ReadWorldLocation(mem::ReadPtr(pawn + off::AActor::RootComponent), &center)) return;
+        std::uint64_t hash = 14695981039346656037ull;
+        auto mix = [&](std::uint64_t v) { hash = (hash ^ v) * 1099511628211ull; };
+        std::vector<std::uintptr_t> nearby;
+        const auto reference = collision.Reference();
+        for (const auto& [p, id] : components_) {
+            if (!ue::IsLive(p) || ue::IdentityOf(p) != id || !collision::VisibleLevelOf(p, world)) continue;
+            ue::Affine transform;
+            if (!ue::ReadComponentToWorld(p, &transform)) continue;
+            // Import all loaded movable scene blockers. Water/TNT/boats can
+            // remain active after the player leaves a 25m neighbourhood.
+            if(!collision::Blocks(p,reference))continue;
+            nearby.push_back(p); mix(static_cast<std::uint32_t>(id.index)); mix(id.serial);
+            mix(collision::BodySetupOf(p));
+            const float* values = &transform.m[0][0];
+            for (int i = 0; i < 9; ++i) mix(std::bit_cast<std::uint32_t>(values[i]));
+            mix(std::bit_cast<std::uint32_t>(transform.t.x)); mix(std::bit_cast<std::uint32_t>(transform.t.y)); mix(std::bit_cast<std::uint32_t>(transform.t.z));
+        }
+        if (hash != hash_) {
+            hash_ = hash;
+            collision::BuildRequest request;
+            request.shapes = collision::ExtractComponents(nearby, reference, collision.WalkableZ(pawn));
+            SC_LOG("[collision-dynamic] candidates=%llu blocking=%d convex=%llu capsules=%llu triangles=%llu unreadable=%d missing_setup=%d",static_cast<unsigned long long>(nearby.size()),request.shapes.components,
+                static_cast<unsigned long long>(request.shapes.convexes.size()),static_cast<unsigned long long>(request.shapes.capsules.size()),static_cast<unsigned long long>(request.shapes.triangles.size()),request.shapes.unreadable_meshes,request.shapes.no_body_setup);
+            request.map = path.substr(path.find_last_of('.') + 1); request.generation = generation;
+            request.file_tag = "-doors"; request.diagnostics = false; request.pawn_feet = center;
+            builder_.Submit(std::move(request));
+        }
+        const auto grid = builder_.Published();
+        if (grid.generation && grid.world_generation == generation && grid.generation != shared_) {
+            shared_ = grid.generation;
+            collision::coverage::Invalidate();g_bridge.PublishDoors({});
+        }
+    }
+private:
+    collision::Builder builder_;
+    std::vector<std::pair<std::uintptr_t, ue::ObjectIdentity>> components_;
+    std::uint64_t next_ = 0, scan_ = 0, hash_ = 0;
+    std::uint32_t generation_ = 0, shared_ = 0;
+    std::uint32_t target_owner_ = 0;
+    std::uint64_t levels_ = 0;
+};
+
+class CoverageSchedule {
+public:
+    void Update(std::uintptr_t world,std::uint32_t generation,const std::string& path,std::uintptr_t pawn,CollisionSchedule& collision){
+        if(generation_!=generation){generation_=generation;at_=0;shared_=0;watch_.Reset();g_bridge.PublishDoors({});}
+        if(!world||!pawn||!collision.HasReference())return;
+        auto sample=collision::coverage::Latest();
+        if(!sample||sample->world!=world||sample->generation!=generation){if(shared_){g_bridge.PublishDoors({});shared_=0;}return;}
+        if(watch_epoch_!=sample->epoch){watch_.Reset();watch_epoch_=sample->epoch;}
+        auto fingerprint=[&](const collision::coverage::Component& entry){return Fingerprint(entry,collision.Reference());};
+        const auto now=GetTickCount64();
+        if(now>=watch_at_){watch_at_=now+100;if(watch_.Changed(fingerprint)){
+            watch_.Reset();collision::coverage::Invalidate();g_bridge.PublishDoors({});at_=0;
+            SC_LOG("[coverage] original component identity/filter/static geometry changed; invalidating prior certificates");return;
+        }}
+        if(sample->at_ms!=at_){
+            at_=sample->at_ms;collision::BuildRequest request;
+            const float centers[]={sample->center.x,sample->center.y,sample->center.z},extents[]={sample->extent.x,sample->extent.y,sample->extent.z};
+            collision::CellRegion region;
+            for(int i=0;i<3;i++){region.min[i]=static_cast<int>(std::ceil((centers[i]-extents[i])/100))*8;region.max[i]=static_cast<int>(std::floor((centers[i]+extents[i])/100))*8;}
+            if(!region.valid())return;
+            std::vector<std::uintptr_t> components;bool missing=false;
+            for(const auto& component:sample->components){
+                auto name=ue::NameOf(component.pointer),owner_name=ue::NameOf(component.owner);
+                if(ue::IdentityOf(component.pointer)!=component.identity||ue::IdentityOf(component.owner)!=component.owner_identity||
+                   ue::OuterOf(component.pointer)!=component.owner||name.comparison_index!=component.name.comparison_index||name.number!=component.name.number||
+                   owner_name.comparison_index!=component.owner_name.comparison_index||owner_name.number!=component.owner_name.number){missing=true;continue;}
+                components.push_back(component.pointer);
+            }
+            request.shapes=collision::ExtractComponents(components,collision.Reference(),collision.WalkableZ(pawn));
+            request.coverage=collision::Coverage{{region},{}};
+            const bool observed=watch_.Observe(sample->components,[](const auto& entry){return entry.pointer;},fingerprint);
+            if(missing||request.shapes.unknown_bounds||!observed)request.coverage->unknown.push_back(region);
+            else for(const auto& box:request.shapes.unknown){
+                const float lo[]={box.min.x,box.min.y,box.min.z},hi[]={box.max.x,box.max.y,box.max.z};collision::CellRegion hole;
+                for(int i=0;i<3;i++){hole.min[i]=std::max(region.min[i],static_cast<int>(std::floor(lo[i]/12.5)));hole.max[i]=std::min(region.max[i],std::max(hole.min[i]+1,static_cast<int>(std::ceil(hi[i]/12.5))));}
+                if(hole.valid())request.coverage->unknown.push_back(hole);
+            }
+            request.map=path.substr(path.find_last_of('.')+1);request.generation=generation;request.file_tag="-coverage";request.diagnostics=false;
+            request.pawn_feet=sample->center;request.clip=region;request.cache_regions=true;request.coverage_epoch=sample->epoch;
+            SC_LOG("[coverage] build world=%u epoch=%llu known=1 unknown=%llu components=%llu",generation,sample->epoch,static_cast<unsigned long long>(request.coverage->unknown.size()),static_cast<unsigned long long>(components.size()));
+            builder_.Submit(std::move(request));
+        }
+        const auto grid=builder_.Published();
+        if(grid.generation&&grid.world_generation==generation&&grid.coverage_epoch==sample->epoch&&grid.generation!=shared_){
+            shared_=grid.generation;const int size=WideCharToMultiByte(CP_UTF8,0,grid.path.data(),static_cast<int>(grid.path.size()),nullptr,0,nullptr,nullptr);std::string file(size,'\0');
+            WideCharToMultiByte(CP_UTF8,0,grid.path.data(),static_cast<int>(grid.path.size()),file.data(),size,nullptr,nullptr);
+            g_bridge.PublishDoors({grid.generation,grid.world_generation,grid.block_count,grid.cell_count,grid.map,file});
+        }
+    }
+private:
+    static std::uint64_t Fingerprint(const collision::coverage::Component& c,const collision::Responses& reference){
+        if(!ue::IsLive(c.pointer)||!ue::IsLive(c.owner)||ue::IdentityOf(c.pointer)!=c.identity||ue::IdentityOf(c.owner)!=c.owner_identity||ue::OuterOf(c.pointer)!=c.owner)return 0;
+        const auto name=ue::NameOf(c.pointer),owner=ue::NameOf(c.owner);
+        if(name.comparison_index!=c.name.comparison_index||name.number!=c.name.number||owner.comparison_index!=c.owner_name.comparison_index||owner.number!=c.owner_name.number)return 0;
+        if(!collision::Blocks(c.pointer,reference))return 1;
+        std::uint64_t hash=14695981039346656037ull;
+        auto mix=[&](std::uint64_t value){hash=(hash^value)*1099511628211ull;};
+        mix(collision::BodySetupOf(c.pointer));const bool fixed=collision::IsFixed(c.pointer);mix(fixed);
+        // Movables already use voxel-content change detection in DoorSchedule.
+        // Do not turn harmless animated float jitter into a global invalidation.
+        if(fixed){ue::Affine transform;if(!ue::ReadComponentToWorld(c.pointer,&transform))return 0;
+            for(int i=0;i<9;i++)mix(std::bit_cast<std::uint32_t>((&transform.m[0][0])[i]));
+            mix(std::bit_cast<std::uint32_t>(transform.t.x));mix(std::bit_cast<std::uint32_t>(transform.t.y));mix(std::bit_cast<std::uint32_t>(transform.t.z));
+            std::array<std::uint32_t,7> bounds{};if(!mem::Copy(bounds.data(),c.pointer+off::USceneComponent::Bounds,sizeof(bounds)))return 0;for(auto value:bounds)mix(value);
+        }
+        return hash?hash:2;
+    }
+    collision::ChangeWatch<collision::coverage::Component> watch_;
+    collision::Builder builder_;std::uint32_t generation_=0,shared_=0;std::uint64_t at_=0,watch_at_=0,watch_epoch_=0;
+};
 }  // namespace
 
 void Run(std::uintptr_t image_base) {
     probe::WaitForEngine(image_base);
     g_bridge.Start();
     const config::Settings settings = config::Load();
+    combat::motion::Configure(settings.npc_motion_probe,settings.npc_ai_probe);
+    npc_debug::Configure(settings.npc_debug);
     hooks::Configure(image_base, settings.stage);
     bool engine_hooked = false;
     Ownership ownership;
     CollisionSchedule collision_schedule;
+    DoorSchedule door_schedule;
+    CoverageSchedule coverage_schedule;
+    probe::CombatCensus combat_census;
+    combat::Enemies enemies;
+    shape_data::Reader shape_reader;
+    shape_data::Frame shape_frame;
+    world_motion::Mailbox world_mailbox;
+    std::vector<protocol::Event> damage_events;
+    std::vector<combat::damage::Reply> damage_replies;
+    std::deque<combat::damage::Reply> pending_damage_replies;
+    std::vector<combat::player_hits::Hit> player_hits;
+    std::deque<combat::player_hits::Hit> pending_player_hits;
+    unsigned logged_player_hits = 0;
     input::InputRouter::Drained drained;
 
     std::uintptr_t world_ptr = 0;
     std::string world_path;
+    std::string language;
     std::uint32_t generation = 0;
     std::uint32_t dry_run_generation = 0;
     bool prepared = false;
@@ -594,6 +775,14 @@ void Run(std::uintptr_t image_base) {
         const std::uintptr_t world = mem::ReadPtr(image_base + gen::rva::GWorld);
 
         bridge::PlayerFrame frame;
+        if (tick % 100 == 1) {
+            const auto current_language = ue::ReadLanguage(image_base);
+            if (!current_language.empty() && current_language != language) {
+                language = current_language;
+                SC_LOG("[language] UI culture=%s (read-only)", language.c_str());
+            }
+        }
+        frame.language = language;
         if (!world) {
             if (world_ptr) SC_LOG("[world] none");
             world_ptr = 0;
@@ -634,12 +823,26 @@ void Run(std::uintptr_t image_base) {
             hooks::Maintain(GetTickCount64());
             if (settings.stage >= 3) {
                 ownership.Update(world, player, frame.player_location, GetTickCount64(),
-                                 collision_schedule.MinecraftHasGrid(generation));
+                                 collision_schedule.MinecraftHasGrid(generation), generation, settings.stage >= 7);
                 frame.anchor_epoch = ownership.epoch();
+                const auto& gui_peer = g_bridge.peer_state();
+                render::Scope gui_scope{g_bridge.peer_connected() ? g_bridge.peer_session() : 0, g_bridge.session(),
+                    generation, ownership.epoch(), GetTickCount64(),
+                    frame.input_owner == InputOwner::Minecraft};
+                gui_scope.enabled = input::Router().owner() == InputOwner::Minecraft && hooks::PoseActive() &&
+                    McAnchoredTo(ownership.epoch(), generation);
+                const bool gui_surface = settings.stage >= 8 &&
+                    render::FreshPresentation(gui_scope, render::LastPresentation(), GetTickCount64());
+                if (gui_surface) frame.flags |= protocol::kSnapshotGuiAvailable;
+                input::Router().SetGuiState(gui_surface && gui_peer.valid && (gui_peer.flags & protocol::kMcGuiAvailable),
+                    (gui_peer.flags & protocol::kMcGuiOpen) != 0, gui_peer.gui_input_ack,
+                    (gui_peer.flags & protocol::kMcGuiTextInput) != 0);
                 drained.events.clear();
                 input::Router().Drain(&drained);
                 for (const input::ForwardedEvent& e : drained.events) {
-                    g_bridge.SendInput(e.type, e.code, e.action, e.modifiers);
+                    if (e.type == protocol::EventType::GuiMouseMotion) g_bridge.SendGuiMotion(e.mouse_x, e.mouse_y, e.scroll);
+                    else if (!g_bridge.SendInput(e.type, e.code, e.action, e.modifiers, e.gui_revision))
+                        input::Router().GuiInputDropped(e.gui_revision);
                 }
                 frame.input_owner = input::Router().owner();
                 frame.mouse_dx = drained.mouse_dx;
@@ -648,27 +851,189 @@ void Run(std::uintptr_t image_base) {
             }
         }
         g_bridge.Tick(frame, GetTickCount64());
+        if (settings.npc_motion_probe || settings.npc_ai_probe) {
+            combat::motion::Context motion;
+            const auto world_id = ue::IdentityOf(world);
+            motion.scope = {g_bridge.session(), g_bridge.peer_connected() ? g_bridge.peer_session() : 0,
+                world, generation, world_id.index, world_id.serial};
+            motion.pawn = player.pawn; motion.pawn_identity = ue::IdentityOf(player.pawn);
+            motion.updated_ms = GetTickCount64();
+            const auto& motion_peer = g_bridge.peer_state();
+            motion.enabled = g_bridge.peer_connected() && motion_peer.valid && world && player.pawn &&
+                motion_peer.sifu_session == g_bridge.session() && motion_peer.world_generation == generation &&
+                (motion_peer.flags & protocol::kMcReady) && !(motion_peer.flags & protocol::kMcGuiOpen);
+            motion.targets = enemies.targets(); motion.grid = collision_schedule.MotionGrid(generation);
+            combat::motion::UpdateContext(std::move(motion));
+        }
+        if (settings.stage >= 10) {
+            const auto shape_map = MapName(world_path);
+            if (!g_bridge.peer_connected() || shape_frame.source_mc != g_bridge.peer_session() ||
+                shape_frame.header.world != generation || shape_map != shape_frame.header.map) shape_frame = {};
+            if (g_bridge.peer_connected()) shape_reader.Read(g_bridge.peer_session(),g_bridge.session(),generation,shape_map,GetTickCount64(),&shape_frame);
+            else shape_reader.Close();
+        }
+        input::Router().SetUseBinding(settings.stage >= 8 && g_bridge.peer_connected() && g_bridge.peer_state().valid ? g_bridge.peer_state().use_binding : 0);
+        if (settings.stage >= 7 && tick % 2 == 0) {
+            enemies.Update(world, generation, player.pawn, GetTickCount64());
+            g_bridge.PublishEnemies(world ? generation : 0, enemies.entries());
+        }
         // Blocks wait until the level has settled (its collision grid is built): by then the
         // materials they are made of have streamed in.
         if (settings.stage >= 6 && world && (frame.flags & protocol::kSnapshotHasPawn) &&
             collision_schedule.GridBuilt(generation)) {
-            blocks::Update(world, MapName(world_path), g_bridge.blocks());
+            const auto* shapes = settings.stage >= 10 && shape_frame.header.revision ? &shape_frame : nullptr;
+            blocks::Update(world, MapName(world_path), g_bridge.blocks(),shapes);
+            if (shapes) shape_reader.Acknowledge(*shapes,blocks::ShapesReady(),GetTickCount64(),blocks::ShapesAppliedRevision());
+        }
+        if(settings.stage>=10) {
+            world_motion::Context context;
+            const auto world_id=ue::IdentityOf(world);
+            context.actors.scope={g_bridge.session(),g_bridge.peer_connected()?g_bridge.peer_session():0,
+                world,generation,world_id.index,world_id.serial};
+            context.actors.pawn=player.pawn;context.actors.pawn_identity=ue::IdentityOf(player.pawn);
+            context.actors.updated_ms=GetTickCount64();
+            context.actors.native_frame=g_bridge.frame();
+            const auto& peer=g_bridge.peer_state();
+            context.actors.enabled=g_bridge.peer_connected()&&peer.valid&&world&&player.pawn&&
+                peer.sifu_session==g_bridge.session()&&peer.world_generation==generation&&
+                (peer.flags&protocol::kMcReady);
+            context.actors.targets=enemies.targets();context.actors.grid=collision_schedule.MotionGrid(generation);
+            context.enabled=!settings.npc_motion_probe&&!settings.npc_ai_probe;
+            context.observe_player=settings.player_world_observe;
+            if(shape_frame.source_mc==context.actors.scope.peer_session&&shape_frame.header.world==generation&&
+               shape_frame.header.revision&&MapName(world_path)==shape_frame.header.map) {
+                context.save=shape_frame.header.save_key;
+                context.map=shape_data::Hash(shape_frame.header.map,std::strlen(shape_frame.header.map));
+            }
+            world_motion::Exchange(std::move(context),world_mailbox);
         }
         if (settings.stage >= 4) {
-            UpdateCameraOverride(ownership.epoch());
+            UpdateCameraOverride(ownership.epoch(), generation);
             if (world) hooks::camera_fade::Resolve();
         }
-        if (settings.stage >= 5) UpdatePoseOverride(player.pawn, frame.capsule_half_height, ownership.epoch());
+        if (settings.stage >= 5) UpdatePoseOverride(player.pawn, frame.capsule_half_height, ownership.epoch(), generation);
+        hooks::streaming_guard::Context streaming;
+        if (settings.stage >= 8) {
+            hooks::streaming_guard::Resolve();
+            streaming.world = world; streaming.pawn = player.pawn;
+            streaming.world_identity = ue::IdentityOf(world);
+            streaming.pawn_identity = ue::IdentityOf(player.pawn);
+            streaming.updated_ms = GetTickCount64();
+            streaming.active = hooks::PoseActive() && input::Router().owner() == InputOwner::Minecraft &&
+                McAnchoredTo(ownership.epoch(), generation);
+            const auto& mc = g_bridge.peer_state();
+            streaming.freeze = !(mc.flags & protocol::kMcOnGround) || !collision_schedule.NativeSupport(generation, mc.player_location);
+        }
+        hooks::streaming_guard::UpdateContext(streaming);
+        interaction::Context interact;
+        interact.world = world; interact.pawn = player.pawn; interact.controller = player.controller;
+        interact.pawn_id = ue::IdentityOf(player.pawn); interact.controller_id = ue::IdentityOf(player.controller);
+        interact.generation = generation; interact.epoch = ownership.epoch(); interact.updated_ms = GetTickCount64();
+        interact.session = g_bridge.peer_connected() ? g_bridge.peer_session() : 0;
+        interact.eye = g_bridge.peer_state().camera_location;
+        interact.pose_owned = settings.stage >= 8 && streaming.active;
+        interact.active = interact.pose_owned && !(g_bridge.peer_state().flags & protocol::kMcGuiOpen);
+        interaction::UpdateContext(interact);
+        g_bridge.PublishInteraction(interaction::Snapshot());
+        if (settings.stage >= 8) {
+            render::Scope scope;
+            scope.mc_session = g_bridge.peer_connected() ? g_bridge.peer_session() : 0;
+            scope.sifu_session = g_bridge.session();
+            scope.world = generation; scope.epoch = ownership.epoch(); scope.updated_ms = GetTickCount64();
+            scope.enabled = g_bridge.peer_connected() && frame.input_owner == InputOwner::Minecraft &&
+                hooks::PoseActive() && McAnchoredTo(ownership.epoch(), generation);
+            scope.world_enabled = settings.stage >= 9 && g_bridge.peer_connected() && world && player.controller &&
+                (frame.flags & protocol::kSnapshotHasPawn) && (frame.flags & protocol::kSnapshotHasCamera) &&
+                McAnchoredTo(ownership.epoch(), generation) && !WorldPaused(world) && !CursorVisible(player.controller);
+            render::Maintain(image_base, scope, settings.stage);
+            ui::UpdateHudContext(world, player.controller, player.pawn, scope);
+        }
+        if (settings.stage >= 7) {
+            combat::damage::InstallObserver(image_base, player.pawn);
+            combat::player_hits::InstallObserver(image_base, player.pawn);
+            combat::damage::UpdateContext(world, generation, player.pawn,
+                g_bridge.peer_connected() && frame.input_owner == InputOwner::Minecraft && hooks::PoseActive(),
+                ownership.epoch(), g_bridge.peer_connected() ? g_bridge.peer_session() : 0, enemies.targets(), enemies.entries(), settings.stage >= 8);
+            combat::player_hits::UpdateContext(world, generation, player.pawn,
+                g_bridge.peer_connected() && frame.input_owner == InputOwner::Minecraft,
+                hooks::PoseActive() && McAnchoredTo(ownership.epoch(), generation), ownership.epoch(),
+                g_bridge.peer_connected() ? g_bridge.peer_session() : 0, enemies.targets());
+            g_bridge.DrainEnemyDamage(&damage_events);
+            for (const auto& event : damage_events) {
+                if (event.type == static_cast<std::uint32_t>(protocol::EventType::PlayerBlocked)) {
+                    if (settings.stage >= 8) combat::damage::SubmitBlocked(event);
+                }
+                else if (event.type == static_cast<std::uint32_t>(protocol::EventType::EnemyImpulse)) {
+                    if (settings.stage >= 8) combat::damage::SubmitImpulse(event);
+                }
+                else if (event.type == static_cast<std::uint32_t>(protocol::EventType::NativeInteract)) {
+                    if (settings.stage >= 8) interaction::Submit(event);
+                }
+                else combat::damage::Submit(event);
+            }
+            if (pending_damage_replies.size() < 512) {
+                combat::damage::DrainReplies(&damage_replies);
+                for (const auto& reply : damage_replies) pending_damage_replies.push_back(reply);
+            }
+            while (!pending_damage_replies.empty()) {
+                const auto& reply = pending_damage_replies.front();
+                if (!g_bridge.peer_connected() || reply.session != g_bridge.peer_session()) {
+                    pending_damage_replies.pop_front();
+                    continue;
+                }
+                if (!g_bridge.SendDamageResult(reply.payload)) break;
+                pending_damage_replies.pop_front();
+            }
+            if (pending_player_hits.size() < 128) {
+                combat::player_hits::DrainHits(&player_hits);
+                for (const auto& hit : player_hits) pending_player_hits.push_back(hit);
+            }
+            while (!pending_player_hits.empty()) {
+                const auto& hit = pending_player_hits.front();
+                if (!g_bridge.peer_connected() || hit.session != g_bridge.peer_session() ||
+                    frame.input_owner != InputOwner::Minecraft || hit.payload.world_generation != generation ||
+                    hit.payload.anchor_epoch != ownership.epoch() || !McAnchoredTo(ownership.epoch(), generation) || GetTickCount64() - hit.created_ms > 2000) {
+                    if (logged_player_hits++ < 200) SC_LOG("[player-hits] discarded queued hit after scope change or timeout");
+                    pending_player_hits.pop_front(); continue;
+                }
+                std::uint64_t hit_id = 0;
+                if (!g_bridge.SendPlayerHit(hit.payload, &hit_id)) break;
+                if (settings.stage >= 8) combat::damage::RecordPlayerHit(hit_id, hit.session, hit.payload, hit.created_ms);
+                if (logged_player_hits++ < 200) SC_LOG("[player-hits] sent attacker=%u/%u base=%.3f flags=0x%X world=%u epoch=%u",
+                    hit.payload.attacker_id, hit.payload.spawn, hit.payload.sifu_damage, hit.payload.flags,
+                    hit.payload.world_generation, hit.payload.anchor_epoch);
+                pending_player_hits.pop_front();
+            }
+        }
+        if (settings.stage < 7) combat::damage::UpdateContext(world, generation, player.pawn, false, 0, 0, {}, {}, false);
+        {
+            static std::deque<interaction::Reply> pending;
+            std::vector<interaction::Reply> replies;
+            interaction::DrainReplies(&replies);
+            for (const auto& reply : replies) if (pending.size() < 64) pending.push_back(reply);
+            while (!pending.empty()) {
+                if (!g_bridge.peer_connected() || pending.front().session != g_bridge.peer_session()) { pending.pop_front(); continue; }
+                if (!g_bridge.SendInteractionResult(pending.front().payload)) break;
+                pending.pop_front();
+            }
+        }
+        // The P5 S0 census remains read-only even at stage 0 / no-hooks, independently of
+        // the stage-7 damage path.
+        combat_census.Update(image_base, world, generation,
+                             world ? (player.pawn ? player.pawn : probe::FindPlayerObjects(world).pawn) : 0,
+                             GetTickCount64());
         tick_timing.Add(MicrosSince(start));
 
         if (world && tick % kCollisionCheckEveryTicks == 0) {
             const std::uintptr_t pawn = player.pawn ? player.pawn : probe::FindPlayerObjects(world).pawn;
-            collision_schedule.Update(world, generation, world_path, pawn, frame, GetTickCount64());
+            collision_schedule.Update(world, generation, world_path, pawn, frame, GetTickCount64(), settings.collision_census);
         }
         if (world && tick % kWalkCheckEveryTicks == 0) {
             collision_schedule.Check(generation, player.pawn ? player : probe::FindPlayerObjects(world), frame);
         }
         if (tick % kWalkCheckEveryTicks == 5) collision_schedule.Share();
+        if (settings.stage >= 8) door_schedule.Update(world, generation, world_path, player.pawn, collision_schedule, GetTickCount64());
+        if(settings.stage>=8)coverage_schedule.Update(world,generation,world_path,player.pawn,collision_schedule);
         if (world && log_tick) {
             const LARGE_INTEGER log_start = Now();
             probe::LogWorld(world, frame);
@@ -680,11 +1045,19 @@ void Run(std::uintptr_t image_base) {
                    log_timing.Take().c_str(), PrivateMegabytes());
             if (settings.stage >= 1) SC_LOG("[hooks] %s", hooks::TakeStats().c_str());
             if (settings.stage >= 6) SC_LOG("[blocks] %s", blocks::TakeStats().c_str());
+            SC_LOG("[combat-census] %s", combat_census.TakeStats().c_str());
+            if (settings.stage >= 7) SC_LOG("[combat] enemies %s", enemies.TakeStats().c_str());
+            if (settings.stage >= 7) SC_LOG("[combat] %s", combat::damage::TakeStats().c_str());
+            if (settings.stage >= 7) SC_LOG("[player-hits] %s", combat::player_hits::TakeStats().c_str());
+            if (settings.stage >= 8) SC_LOG("[overlay] %s", render::TakeStats().c_str());
+            if (settings.stage >= 8) SC_LOG("[hud] %s", ui::TakeHudStats().c_str());
+            if (settings.stage >= 8) SC_LOG("[streaming] %s", hooks::streaming_guard::TakeStats().c_str());
+            if (settings.stage >= 8) SC_LOG("[interaction] %s", interaction::TakeStats().c_str());
             collision_schedule.FlushCheck();
         }
     }
 }
 
-void OnProcessExit() { g_bridge.MarkClosing(); }
+void OnProcessExit() { render::OnProcessExit(); g_bridge.MarkClosing(); }
 
 }  // namespace sifucraft::runtime

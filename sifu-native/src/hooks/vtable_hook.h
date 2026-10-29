@@ -29,8 +29,10 @@ Resolution Resolve(std::uintptr_t image_base, const gen::hook::Target& target, s
 class VtableHook {
 public:
     bool Install(std::uintptr_t image_base, const gen::hook::Target& target, std::uintptr_t instance,
-                 void* replacement);
+                 void* replacement, bool log_lifecycle = true);
     bool Uninstall();
+    // No write. Used only after a caller identifies a legitimate runtime replacement.
+    bool RetireRestored(std::uintptr_t runtime_original);
 
     bool installed() const { return installed_; }
     const char* name() const { return target_ ? target_->name : "?"; }
@@ -50,6 +52,7 @@ private:
     std::uintptr_t original_ = 0;
     std::uintptr_t replacement_ = 0;
     bool installed_ = false;
+    bool log_lifecycle_ = true;
 };
 
 }  // namespace sifucraft::hooks

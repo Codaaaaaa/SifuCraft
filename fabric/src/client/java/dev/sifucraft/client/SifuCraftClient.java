@@ -9,6 +9,14 @@ import dev.sifucraft.collision.CollisionGrid;
 import dev.sifucraft.collision.CollisionLoader;
 import dev.sifucraft.collision.MapPlacement;
 import dev.sifucraft.collision.SifuCollision;
+import dev.sifucraft.combat.EnemyEntities;
+import dev.sifucraft.combat.EnemyMirrors;
+import dev.sifucraft.combat.EnemyProxy;
+import dev.sifucraft.combat.CombatHits;
+import dev.sifucraft.combat.PlayerDamage;
+import dev.sifucraft.bridge.PlayerHit;
+import dev.sifucraft.bridge.RespawnHandshake;
+import dev.sifucraft.bridge.DamageResult;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
@@ -18,18 +26,18 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.client.Camera;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.entity.NoopRenderer;
+import net.minecraft.client.renderer.entity.EntityRenderers;
 import net.minecraft.client.gui.screens.DeathScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.Item;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.Vec3;
 import org.lwjgl.sdl.SDLVideo;
@@ -40,7 +48,7 @@ import org.slf4j.LoggerFactory;
  * Client entrypoint: attaches the bridge as the Minecraft endpoint and, every frame right after
  * Minecraft polls its own input, applies the input Sifu routes here.
  *
- * <p>Development system properties: {@code sifucraft.devWorld} enters a creative superflat world as
+ * <p>Development system properties: {@code sifucraft.devWorld} enters a superflat development world as
  * soon as the client has finished loading; {@code sifucraft.hideWindow} hides the Minecraft window
  * so Sifu keeps the foreground; {@code sifucraft.exitWithSifu} stops the client (saving the world)
  * when Sifu closes.
@@ -60,16 +68,89 @@ public final class SifuCraftClient implements ClientModInitializer {
     private static final double FALL_RESCUE_BLOCKS = 20.0;
     private static final long RESCUE_COOLDOWN_MS = 1000;
 
-    private static final Item[] DEV_HOTBAR = {Items.STONE, Items.GRASS_BLOCK, Items.DIRT,
-            Items.OAK_LOG, Items.OAK_PLANKS, Items.COBBLESTONE, Items.BRICKS, Items.GLOWSTONE, Items.CRAFTING_TABLE};
-
     private static volatile SifuCraftClient instance;
 
     private Minecraft minecraft;
     private McBridge bridge;
     private InputInjector input;
+    private InventoryCheck inventoryCheck;
+    private DevItemCheck devItemCheck;
+    private dev.sifucraft.combat.TotemCheck totemCheck;
+    private FoodCheck foodCheck;
+    private MaceCheck maceCheck;
+    private WindChargeCheck windChargeCheck;
+    private ElytraCheck elytraCheck;
+    private NativeInteractionCheck interactionCheck;
+    private WorldEffectsCheck worldEffectsCheck;
+    private WorldCracksCheck worldCracksCheck;
+    private WorldModelCheck worldModelCheck;
+    private WorldAudioCheck worldAudioCheck;
+    private AvatarCheck avatarCheck;
+    private WorldStressCheck worldStressCheck;
+    private final NativeUse nativeUse = new NativeUse();
+    public static void beginUseGesture() { if (instance != null) instance.nativeUse.press(); }
+    public static boolean handleNativeUse() { return instance != null && instance.nativeUse.handle(instance.bridge, instance.minecraft); }
+    private int guiWireEvents;
+    private final OverlayCapture overlay = new OverlayCapture();
+    private final WorldLayerCapture worldLayers = new WorldLayerCapture();
+    private final BlockShapes blockShapes = new BlockShapes();
+    private final dev.sifucraft.bridge.WorldMotionRequests worldMotion=new dev.sifucraft.bridge.WorldMotionRequests();
+    private BlockModelCheck blockModelCheck;
+    private FluidRenderCheck fluidRenderCheck;
+    private WorldGpuCheck worldGpuCheck;
+    private PistonStressCheck pistonStressCheck;
+    private ShapeUpdateCheck shapeUpdateCheck;
+    private PistonTransactionCheck pistonTransactionCheck;
+    private NativePistonCheck nativePistonCheck;
+    private PistonObstructionCheck pistonObstructionCheck;
+    private CannonGroundCheck cannonGroundCheck;
+    private AirEnvironmentCheck airEnvironmentCheck;
+    private HotFloorCheck hotFloorCheck;
+    private BubbleMatrixCheck bubbleMatrixCheck;
+    private FluidSceneCheck fluidSceneCheck;
+    private FluidPersistenceCheck fluidPersistenceCheck;
+    private PlayerItemBubbleCheck playerItemBubbleCheck;
+    private PlayerEnvironmentCheck playerEnvironmentCheck;
+    private MachineInventoryCheck machineInventoryCheck;
+    private FluidAtmosphereCheck fluidAtmosphereCheck;
+    private CatalogModelCheck catalogModelCheck;
+    private CatalogLogicCheck catalogLogicCheck;
+    private CircuitScaleCheck circuitScaleCheck;
+    private NativeBoatCheck nativeBoatCheck;
+    private BoatDrivingCheck boatDrivingCheck;
+    private NativeSuffocationCheck nativeSuffocationCheck;
+    private NativeExplosionCheck nativeExplosionCheck;
+    private CannonCheck cannonCheck;
+    private CoverageSceneCheck coverageSceneCheck;
+    private EnvironmentDamageCheck environmentDamageCheck;
+    private NativePauseCheck nativePauseCheck;
+    private FluidMotionCheck fluidMotionCheck;
+    private FluidPartialCheck fluidPartialCheck;
+    private dev.sifucraft.combat.EnvironmentPathCheck environmentPathCheck;
+    private PistonTicketsCheck pistonTicketsCheck;
+    private NativeFluidCheck nativeFluidCheck;
+    private NativePlayerMotionCheck nativePlayerMotionCheck;
+    private PlayerPhysicsCheck playerPhysicsCheck;
+    private NativeLiftCheck nativeLiftCheck;
+    private MachineProjectileCheck machineProjectileCheck;
+    private NativeMachineCheck nativeMachineCheck;
+    private PistonAftermathCheck pistonAftermathCheck;
+    private SignalCheck signalCheck;
+    private PlayerSignalCheck playerSignalCheck;
+    private SensorCheck sensorCheck;
+    private PistonSceneCheck pistonSceneCheck;
+    private final HostLanguage hostLanguage = new HostLanguage();
+    private boolean crosshair;
     private CollisionLoader collision;
+    private CollisionLoader doors;
+    private Object fluidWorldLife;
+    private TntStressCheck tntStressCheck;
+    private WorldRecoveryCheck worldRecoveryCheck;
+    private ActiveSwimCheck activeSwimCheck;
+    private BubbleStructureCheck bubbleStructureCheck;
     private final UnrealSpace space = new UnrealSpace();
+    private final RespawnHandshake respawn = new RespawnHandshake();
+    private final dev.sifucraft.combat.ShieldBlockAnimation shieldAnimation = new dev.sifucraft.combat.ShieldBlockAnimation();
     private final MapSlots slots = new MapSlots(message -> LOG.info("[space] {}", message));
     private int teleportEpoch;
     private int teleportWorld;
@@ -90,9 +171,30 @@ public final class SifuCraftClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        EntityRenderers.register(EnemyEntities.ENEMY_PROXY, NoopRenderer::new);
+        EntityRenderers.register(dev.sifucraft.blocks.SignalEntities.PLAYER_BODY, NoopRenderer::new);
         minecraft = Minecraft.getInstance();
+        if(Boolean.getBoolean("sifucraft.cannonSelfTest")&&!Boolean.getBoolean("sifucraft.cannonLive")){CannonCheck.install();return;}
+        if (Boolean.getBoolean("sifucraft.isolatedSystemsSelfTest")) {
+            IsolatedSystemsCheck.install();
+            return;
+        }
         input = new InputInjector(minecraft);
+        ServerLifecycleEvents.SERVER_STARTING.register(server->dev.sifucraft.blocks.SceneFluidGeometry.publish(true,false,null));
         bridge = new McBridge(new McBridge.Listener() {
+            @Override public void onNativeInteraction(dev.sifucraft.bridge.NativeInteraction.Result result) {
+                if(cannonGroundCheck!=null)cannonGroundCheck.interaction(result);
+                LOG.info("[interaction] native reply request={} outcome={} target={} world={} epoch={}",
+                        result.request(), result.outcome(), result.target(), result.world(), result.epoch());
+            }
+            @Override public void onDamageResult(DamageResult result) { CombatHits.result(result); }
+            @Override public void onPlayerHit(long session, long eventId, PlayerHit hit) {
+                var player = minecraft.player;
+                boolean shield = player != null && player.isUsingItem() &&
+                        player.getUseItem().has(net.minecraft.core.component.DataComponents.BLOCKS_ATTACKS);
+                PlayerDamage.receive(session, eventId, hit, shield ? player.getUsedItemHand() : null,
+                        shield ? player.getUseItem().copy() : net.minecraft.world.item.ItemStack.EMPTY);
+            }
             @Override
             public void log(String message) {
                 LOG.info("[bridge] {}", message);
@@ -103,6 +205,11 @@ public final class SifuCraftClient implements ClientModInitializer {
                 logInput("key", scancode, action, modifiers);
                 input.key(scancode, action, modifiers);
             }
+            @Override public void onKey(int scancode, int action, int modifiers, int guiRevision) {
+                logInput("key", scancode, action, modifiers);
+                input.key(scancode, action, modifiers, guiRevision);
+            }
+            @Override public void onGuiMotion(double x, double y, double scroll) { guiWireEvents++; input.guiMotion(x, y, scroll); }
 
             @Override
             public void onMouseButton(int button, int action, int modifiers) {
@@ -120,6 +227,7 @@ public final class SifuCraftClient implements ClientModInitializer {
             public void onPeerConnection(boolean connected, String reason) {
                 if (connected) return;
                 input.setOwner(false);
+                space.reset(); teleportEpoch = 0; lastGround = null;
                 if ("peer closing".equals(reason) && Boolean.getBoolean("sifucraft.exitWithSifu")) {
                     LOG.info("[dev] Sifu went away, stopping the client");
                     minecraft.stop();
@@ -128,20 +236,319 @@ public final class SifuCraftClient implements ClientModInitializer {
         });
         try {
             bridge.start();
+            worldMotion.start(bridge::sampleWorldObservations);
+            dev.sifucraft.blocks.WorldMotionWorld.observe(bridge::worldEnemies);
         } catch (RuntimeException | LinkageError e) {
             LOG.error("bridge unavailable, SifuCraft stays inactive", e);
             bridge = null;
             return;
         }
         collision = new CollisionLoader(message -> LOG.info("[collision] {}", message));
+        doors = new CollisionLoader(message -> LOG.info("[doors] {}", message));
         appearance = new BlockAppearance(minecraft, message -> LOG.info("[blocks] {}", message));
         instance = this;
+        NpcDebugCommands.install(minecraft,bridge);
+        if (Boolean.getBoolean("sifucraft.survivalDifficultySelfTest")) {
+            ServerLifecycleEvents.SERVER_STARTED.register(SurvivalDifficultyCheck::prepare);
+            var check = new SurvivalDifficultyCheck();
+            ServerTickEvents.END_SERVER_TICK.register(check::tick);
+        }
+        ServerLifecycleEvents.SERVER_STARTED.register(DevWorld::migrateDifficulty);
         ServerLifecycleEvents.SERVER_STARTED.register(server -> PlacedBlocks.open(server.getWorldPath(LevelResource.ROOT),
                 message -> LOG.info("[blocks] {}", message)));
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> PlacedBlocks.close());
         ServerTickEvents.END_SERVER_TICK.register(server -> PlacedBlocks.saveIfDirty());
+        var sceneSupportUpdates=new dev.sifucraft.blocks.SceneBlockSupport.Updates();
+        ServerTickEvents.END_SERVER_TICK.register(sceneSupportUpdates::tick);
+        ServerLifecycleEvents.SERVER_STARTING.register(server -> NewPlayerSetup.reset());
+        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> NewPlayerSetup.joined(handler.player));
+        if (Boolean.getBoolean("sifucraft.inventorySelfTest")) {
+            inventoryCheck = new InventoryCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(inventoryCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.combatSelfTest")) {
+            CombatCheck check = new CombatCheck();
+            ServerTickEvents.END_SERVER_TICK.register(check::tick);
+        }
+        if (Boolean.getBoolean("sifucraft.shieldSelfTest")) {
+            var check = new dev.sifucraft.combat.ShieldCheck();
+            ServerTickEvents.END_SERVER_TICK.register(check::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.devItemsSelfTest")) devItemCheck = new DevItemCheck();
+        if (Boolean.getBoolean("sifucraft.totemSelfTest")) {
+            totemCheck = new dev.sifucraft.combat.TotemCheck();
+            ServerTickEvents.END_SERVER_TICK.register(totemCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(totemCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.foodSelfTest")) {
+            foodCheck = new FoodCheck();
+            ServerTickEvents.END_SERVER_TICK.register(foodCheck::serverTick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(foodCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.maceSelfTest")) {
+            maceCheck = new MaceCheck();
+            ServerTickEvents.END_SERVER_TICK.register(maceCheck::serverTick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(maceCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.windChargeSelfTest")) {
+            windChargeCheck = new WindChargeCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(windChargeCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.elytraSelfTest")) {
+            elytraCheck = new ElytraCheck();
+            ServerTickEvents.END_SERVER_TICK.register(elytraCheck::serverTick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(elytraCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.nativeInteractionSelfTest")) {
+            interactionCheck = new NativeInteractionCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(interactionCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.worldEffectsSelfTest")) {
+            worldEffectsCheck = new WorldEffectsCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(worldEffectsCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.worldCracksSelfTest")) {
+            worldCracksCheck = new WorldCracksCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(worldCracksCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.worldModelSelfTest")) {
+            worldModelCheck = new WorldModelCheck();
+            ServerTickEvents.END_SERVER_TICK.register(worldModelCheck::serverTick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(worldModelCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.worldAudioSelfTest")) worldAudioCheck = new WorldAudioCheck(minecraft);
+        if (Boolean.getBoolean("sifucraft.avatarSelfTest")) {
+            avatarCheck = new AvatarCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(avatarCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.worldStressSelfTest")) {
+            worldStressCheck = new WorldStressCheck();
+            ServerTickEvents.END_SERVER_TICK.register(worldStressCheck::serverTick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(worldStressCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.redstoneSelfTest")) {
+            var check = new RedstoneCheck();
+            ServerTickEvents.END_SERVER_TICK.register(check::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.signalSelfTest")){
+            signalCheck=new SignalCheck();
+            ServerTickEvents.END_SERVER_TICK.register(signalCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(signalCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.playerSignalSelfTest")){
+            playerSignalCheck=new PlayerSignalCheck();
+            ServerTickEvents.END_SERVER_TICK.register(playerSignalCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(playerSignalCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.sensorSelfTest")){
+            sensorCheck=new SensorCheck();
+            ServerTickEvents.END_SERVER_TICK.register(sensorCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(sensorCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.pistonSceneSelfTest")){
+            pistonSceneCheck=new PistonSceneCheck();
+            ServerTickEvents.END_SERVER_TICK.register(pistonSceneCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(pistonSceneCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.blockModelSelfTest")) {
+            blockModelCheck = new BlockModelCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(blockModelCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.fluidRenderSelfTest")) {
+            fluidRenderCheck = new FluidRenderCheck();
+            ServerLifecycleEvents.SERVER_STOPPING.register(fluidRenderCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.worldGpuSelfTest")){
+            worldGpuCheck=new WorldGpuCheck();ServerLifecycleEvents.SERVER_STOPPING.register(worldGpuCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.pistonStressSelfTest")) {
+            pistonStressCheck = new PistonStressCheck();
+            ServerTickEvents.END_SERVER_TICK.register(pistonStressCheck::serverTick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(pistonStressCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.shapeUpdateSelfTest")){
+            shapeUpdateCheck=new ShapeUpdateCheck();
+            ServerTickEvents.END_SERVER_TICK.register(shapeUpdateCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(shapeUpdateCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.pistonTransactionSelfTest")){
+            pistonTransactionCheck=new PistonTransactionCheck();ServerTickEvents.END_SERVER_TICK.register(pistonTransactionCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(pistonTransactionCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.nativePistonSelfTest")||Boolean.getBoolean("sifucraft.nativePlayerPistonSelfTest")){
+            nativePistonCheck=new NativePistonCheck();ServerTickEvents.END_SERVER_TICK.register(nativePistonCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(nativePistonCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.pistonObstructionSelfTest")){
+            pistonObstructionCheck=new PistonObstructionCheck();ServerTickEvents.END_SERVER_TICK.register(pistonObstructionCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(pistonObstructionCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.cannonGroundSelfTest")){
+            cannonGroundCheck=new CannonGroundCheck();ServerTickEvents.END_SERVER_TICK.register(cannonGroundCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(cannonGroundCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.fluidSceneSelfTest")){
+            fluidSceneCheck=new FluidSceneCheck();ServerTickEvents.END_SERVER_TICK.register(fluidSceneCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(fluidSceneCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.fluidPersistenceSelfTest")){
+            fluidPersistenceCheck=new FluidPersistenceCheck();ServerTickEvents.END_SERVER_TICK.register(fluidPersistenceCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(fluidPersistenceCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.circuitScaleSelfTest")){
+            circuitScaleCheck=new CircuitScaleCheck();ServerTickEvents.START_SERVER_TICK.register(circuitScaleCheck::beginTick);
+            ServerTickEvents.END_SERVER_TICK.register(circuitScaleCheck::tick);ServerLifecycleEvents.SERVER_STOPPING.register(circuitScaleCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.nativeBoatSelfTest")){
+            nativeBoatCheck=new NativeBoatCheck();ServerTickEvents.END_SERVER_TICK.register(nativeBoatCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(nativeBoatCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.boatDrivingSelfTest")||Boolean.getBoolean("sifucraft.boatBubbleSelfTest")||Boolean.getBoolean("sifucraft.boatPistonSelfTest")||Boolean.getBoolean("sifucraft.boatExplosionSelfTest")){
+            boatDrivingCheck=new BoatDrivingCheck();ServerTickEvents.END_SERVER_TICK.register(boatDrivingCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(boatDrivingCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.nativeExplosionSelfTest")){
+            // Independent fixture modes use the same production world endpoint.
+            nativeExplosionCheck=new NativeExplosionCheck();ServerTickEvents.END_SERVER_TICK.register(nativeExplosionCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(nativeExplosionCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.nativeSuffocationSelfTest")){
+            nativeSuffocationCheck=new NativeSuffocationCheck();ServerTickEvents.END_SERVER_TICK.register(nativeSuffocationCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(nativeSuffocationCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.cannonSelfTest"))cannonCheck=CannonCheck.attach();
+        if(Boolean.getBoolean("sifucraft.coverageSceneSelfTest")){coverageSceneCheck=new CoverageSceneCheck();ServerTickEvents.END_SERVER_TICK.register(coverageSceneCheck::tick);ServerLifecycleEvents.SERVER_STOPPING.register(coverageSceneCheck::restore);}
+        if(Boolean.getBoolean("sifucraft.tntStressSelfTest")){
+            tntStressCheck=new TntStressCheck();ServerTickEvents.START_SERVER_TICK.register(tntStressCheck::beginTick);ServerTickEvents.END_SERVER_TICK.register(tntStressCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(tntStressCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.worldRecoverySelfTest")){
+            worldRecoveryCheck=new WorldRecoveryCheck();ServerLifecycleEvents.SERVER_STARTED.register(worldRecoveryCheck::started);ServerTickEvents.END_SERVER_TICK.register(worldRecoveryCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(worldRecoveryCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.activeSwimSelfTest")){
+            activeSwimCheck=new ActiveSwimCheck();ServerTickEvents.END_SERVER_TICK.register(activeSwimCheck::tick);ServerLifecycleEvents.SERVER_STOPPING.register(activeSwimCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.bubbleStructureSelfTest")){
+            bubbleStructureCheck=new BubbleStructureCheck();ServerTickEvents.END_SERVER_TICK.register(bubbleStructureCheck::tick);ServerLifecycleEvents.SERVER_STOPPING.register(bubbleStructureCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.catalogLogicSelfTest")){
+            catalogLogicCheck=new CatalogLogicCheck();ServerTickEvents.END_SERVER_TICK.register(catalogLogicCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(catalogLogicCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.catalogModelSelfTest")){
+            catalogModelCheck=new CatalogModelCheck();ServerLifecycleEvents.SERVER_STOPPING.register(catalogModelCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.fluidAtmosphereSelfTest")){
+            fluidAtmosphereCheck=new FluidAtmosphereCheck();ServerTickEvents.END_SERVER_TICK.register(fluidAtmosphereCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(fluidAtmosphereCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.machineInventorySelfTest")){
+            machineInventoryCheck=new MachineInventoryCheck();ServerTickEvents.END_SERVER_TICK.register(machineInventoryCheck::tick);
+            ServerLifecycleEvents.SERVER_STARTED.register(machineInventoryCheck::serverStarted);
+            ServerLifecycleEvents.SERVER_STOPPING.register(machineInventoryCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.playerEnvironmentSelfTest")){
+            playerEnvironmentCheck=new PlayerEnvironmentCheck();ServerTickEvents.END_SERVER_TICK.register(playerEnvironmentCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(playerEnvironmentCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.playerItemBubblesSelfTest")){
+            playerItemBubbleCheck=new PlayerItemBubbleCheck();ServerTickEvents.END_SERVER_TICK.register(playerItemBubbleCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(playerItemBubbleCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.environmentDamageSelfTest")){
+            environmentDamageCheck=new EnvironmentDamageCheck();ServerTickEvents.END_SERVER_TICK.register(environmentDamageCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(environmentDamageCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.nativePauseSelfTest")){
+            nativePauseCheck=new NativePauseCheck();ServerTickEvents.END_SERVER_TICK.register(nativePauseCheck::tick);
+        }
+        if(Boolean.getBoolean("sifucraft.fluidMotionSelfTest")){
+            fluidMotionCheck=new FluidMotionCheck();ServerTickEvents.END_SERVER_TICK.register(fluidMotionCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(fluidMotionCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.airEnvironmentSelfTest")){
+            airEnvironmentCheck=new AirEnvironmentCheck();ServerTickEvents.END_SERVER_TICK.register(airEnvironmentCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(airEnvironmentCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.hotFloorSelfTest")){
+            hotFloorCheck=new HotFloorCheck();ServerTickEvents.END_SERVER_TICK.register(hotFloorCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(hotFloorCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.bubbleMatrixSelfTest")){
+            bubbleMatrixCheck=new BubbleMatrixCheck();ServerTickEvents.END_SERVER_TICK.register(bubbleMatrixCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(bubbleMatrixCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.fluidPartialSelfTest")){
+            fluidPartialCheck=new FluidPartialCheck();ServerTickEvents.END_SERVER_TICK.register(fluidPartialCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(fluidPartialCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.environmentPathSelfTest")){
+            environmentPathCheck=new dev.sifucraft.combat.EnvironmentPathCheck(DevWorld.LEVEL_ID);ServerTickEvents.END_SERVER_TICK.register(environmentPathCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(environmentPathCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.pistonTicketsSelfTest")){
+            pistonTicketsCheck=new PistonTicketsCheck();ServerTickEvents.END_SERVER_TICK.register(pistonTicketsCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(pistonTicketsCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.nativeFluidSelfTest")){
+            nativeFluidCheck=new NativeFluidCheck();ServerTickEvents.END_SERVER_TICK.register(nativeFluidCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(nativeFluidCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.nativePlayerMotionSelfTest")){
+            nativePlayerMotionCheck=new NativePlayerMotionCheck();ServerTickEvents.END_SERVER_TICK.register(nativePlayerMotionCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(nativePlayerMotionCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.playerPhysicsSelfTest")){
+            playerPhysicsCheck=new PlayerPhysicsCheck();ServerTickEvents.END_SERVER_TICK.register(playerPhysicsCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(playerPhysicsCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.nativeLiftSelfTest")){
+            nativeLiftCheck=new NativeLiftCheck();ServerTickEvents.END_SERVER_TICK.register(nativeLiftCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(nativeLiftCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.machineProjectileSelfTest")){
+            machineProjectileCheck=new MachineProjectileCheck();ServerTickEvents.END_SERVER_TICK.register(machineProjectileCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(machineProjectileCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.nativeMachineSelfTest")){
+            nativeMachineCheck=new NativeMachineCheck();ServerTickEvents.END_SERVER_TICK.register(nativeMachineCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(nativeMachineCheck::restore);
+        }
+        if(Boolean.getBoolean("sifucraft.pistonAftermathSelfTest")){
+            pistonAftermathCheck=new PistonAftermathCheck();ServerTickEvents.END_SERVER_TICK.register(pistonAftermathCheck::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(pistonAftermathCheck::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.sceneSupportSelfTest")) {
+            var check=new BlockSupportCheck();
+            ServerTickEvents.END_SERVER_TICK.register(check::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
+        }
+        if (Boolean.getBoolean("sifucraft.playerDamageTest") || Boolean.getBoolean("sifucraft.playerHitSelfTest") ||
+                Boolean.getBoolean("sifucraft.respawnSelfTest")) {
+            PlayerHitCheck check = new PlayerHitCheck();
+            ServerTickEvents.END_SERVER_TICK.register(check::tick);
+            ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> check.disconnect(server, handler.player));
+            ServerLifecycleEvents.SERVER_STOPPING.register(check::restore);
+        }
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            if (blockModelCheck != null) blockModelCheck.restoreClient(client);
+            if (fluidRenderCheck != null) fluidRenderCheck.restoreClient(client);
+            if (worldGpuCheck != null) worldGpuCheck.restoreClient(client);
+            if (worldStressCheck != null) worldStressCheck.restoreClient(client);
+            if (avatarCheck != null) avatarCheck.restoreClient(client);
+            if (worldAudioCheck != null) worldAudioCheck.close();
+            overlay.close();
+            worldLayers.close();
+            blockShapes.close();
+            dev.sifucraft.blocks.WorldMotionWorld.offer(null);
+            dev.sifucraft.blocks.WorldMotionWorld.observe(null);
+            dev.sifucraft.blocks.SceneFluidGeometry.publish(false,true,null);
+            worldMotion.close();
             collision.close();
+            doors.close();
             bridge.close();
         });
     }
@@ -152,10 +559,111 @@ public final class SifuCraftClient implements ClientModInitializer {
         return client != null && client.input.minecraftOwnsInput();
     }
 
+    public static boolean devItemsAvailable() {
+        var client = instance;
+        return Boolean.getBoolean("sifucraft.devItems") && DevWorld.enabled() && client != null &&
+                client.minecraft.getSingleplayerServer() != null && client.guiAvailable(client.bridge.latest());
+    }
+    public static boolean devItemsCheckComplete() { return !Boolean.getBoolean("sifucraft.devItemsSelfTest") || DevItemCheck.complete; }
+
     /** True while a Sifu peer is connected: the real cursor then belongs to Sifu. */
     public static boolean attachedToSifu() {
         SifuCraftClient client = instance;
         return client != null && client.bridge.peerConnected();
+    }
+
+    /** Active only for an opted-in, live, anchored Minecraft-owned frame. */
+    public static boolean overlayActive() {
+        SifuCraftClient client = instance;
+        return client != null && client.overlay.enabled() && client.overlayScope() != null;
+    }
+
+    public static void captureOverlay() {
+        SifuCraftClient client = instance;
+        if (client != null && client.overlay.enabled()) {
+            var scope = client.overlayScope();
+            var world = client.worldScope();
+            client.worldLayers.updateScope(world);
+            client.overlay.render(client.minecraft, scope, world);
+        }
+    }
+    public static void captureWorld(net.minecraft.client.renderer.state.level.CameraRenderState camera) {
+        var client = instance;
+        if (client != null && client.bridge.latest() != null)
+            client.worldLayers.finish(client.minecraft, client.worldScope(), camera, client.space, client.bridge.latest().frame());
+    }
+    public static void worldProjection(org.joml.Matrix4fc projection) {
+        if (instance != null) instance.worldLayers.projection(projection);
+    }
+    static boolean worldLayersActive() { return instance != null && instance.worldLayers.enabled() && WorldEffects.active(); }
+    static boolean blockWorldAttached() {
+        var c = instance;
+        return c != null && WorldEffects.configured() && c.worldLayers.enabled() &&
+                c.bridge.peerConnected() && c.minecraft.level != null;
+    }
+    public static boolean blockModelsActive() { return instance != null && instance.blockShapes.active(); }
+    static boolean blockCollisionCurrent() { return instance != null && instance.blockShapes.caughtUp(); }
+    public static boolean worldEffectsAvailable() {
+        var c = instance;
+        return c != null && (overlayActive() || (c.worldLayers.enabled() && c.worldScope() != null));
+    }
+    public static dev.sifucraft.bridge.WorldView nativeWorldView() {
+        var c = instance;
+        if (c == null || !c.worldLayers.enabled() || !WorldEffects.active() || c.worldScope() == null) return null;
+        var frame = c.bridge.latest();
+        if (frame.minecraftOwnsInput()) return null;
+        return dev.sifucraft.bridge.WorldView.from(frame, c.space.placement(),
+                c.minecraft.getWindow().getWidth(), c.minecraft.getWindow().getHeight());
+    }
+
+    public static void beginGuiFrame() { if (instance != null) instance.crosshair = false; }
+    public static void markCrosshair() { if (instance != null) instance.crosshair = true; }
+    static boolean hasCrosshair() { return instance != null && instance.crosshair; }
+    static int guiWireEvents() { return instance == null ? 0 : instance.guiWireEvents; }
+    public static void drawPointer(net.minecraft.client.gui.GuiGraphicsExtractor gui) {
+        if (mirroredScreenActive()) SmoothPointer.draw(instance.minecraft, gui);
+    }
+    public static void drawNativeInteraction(net.minecraft.client.gui.GuiGraphicsExtractor gui) {
+        var c = instance;
+        if (c == null || !overlayActive() || c.minecraft.gui.screen() != null || c.minecraft.options.keyShift.isDown() ||
+                c.nativeUse.candidate(c.bridge, c.minecraft) == null) return;
+        var text = net.minecraft.network.chat.Component.literal("[").append(c.minecraft.options.keyUse.getTranslatedKeyMessage())
+                .append("] ").append(net.minecraft.network.chat.Component.translatable("sifucraft.native_interact"));
+        int x = (gui.guiWidth() - c.minecraft.font.width(text)) / 2;
+        gui.text(c.minecraft.font, text, x, gui.guiHeight() / 2 + 20, 0xFFFFFFFF);
+    }
+    public static boolean mirroredScreenActive() {
+        var client = instance;
+        return client != null && client.input.minecraftOwnsInput() && client.guiAvailable(client.bridge.latest()) &&
+                client.minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>;
+    }
+    static int cursorReferenceWidth() {
+        return instance.overlay.viewportWidth() > 0 ? instance.overlay.viewportWidth() : instance.minecraft.getWindow().getWidth();
+    }
+    static int cursorReferenceHeight() {
+        return instance.overlay.viewportHeight() > 0 ? instance.overlay.viewportHeight() : instance.minecraft.getWindow().getHeight();
+    }
+    private boolean guiAvailable(SifuFrame frame) {
+        return overlay.enabled() && bridge.peerConnected() && frame != null && frame.minecraftOwnsInput() &&
+                (frame.flags() & Protocol.SNAPSHOT_GUI_AVAILABLE) != 0 && respawn.ready() && space.anchoredTo(frame) &&
+                minecraft.player != null && minecraft.player.isAlive() && minecraft.gui.overlay() == null;
+    }
+
+    private OverlayCapture.Scope overlayScope() {
+        SifuFrame frame = bridge.latest();
+        if (!bridge.peerConnected() || frame == null || !frame.minecraftOwnsInput() ||
+                minecraft.level == null || minecraft.player == null || !minecraft.player.isAlive() ||
+                (minecraft.gui.screen() != null && !mirroredScreenActive()) || minecraft.gui.overlay() != null ||
+                !respawn.ready() || !space.anchoredTo(frame)) return null;
+        return new OverlayCapture.Scope(bridge.session(), bridge.peerSession(), frame.worldGeneration(), frame.anchorEpoch());
+    }
+    private OverlayCapture.Scope worldScope() {
+        SifuFrame frame = bridge.latest();
+        if (!bridge.peerConnected() || frame == null || !frame.hasPawn() || !frame.hasCamera() ||
+                minecraft.level == null || minecraft.player == null || !minecraft.player.isAlive() ||
+                minecraft.gui.screen() != null && !mirroredScreenActive() || minecraft.gui.overlay() != null ||
+                !respawn.ready() || !space.anchoredTo(frame)) return null;
+        return new OverlayCapture.Scope(bridge.session(), bridge.peerSession(), frame.worldGeneration(), frame.anchorEpoch());
     }
 
     /** Called by {@code SDLEventHandlerMixin} on the render thread after Minecraft polled its input. */
@@ -165,6 +673,11 @@ public final class SifuCraftClient implements ClientModInitializer {
     }
 
     private void frame() {
+        if (!dev.sifucraft.bridge.LiveTestFocus.allowed()) {
+            LOG.warn("[live-test-focus] INTERRUPTED: {}. No automatic resume; await user confirmation.", dev.sifucraft.bridge.LiveTestFocus.reason());
+            minecraft.stop();
+            return;
+        }
         long now = System.currentTimeMillis();
         minecraft.options.pauseOnLostFocus = false;
         hideWindowOnce();
@@ -174,20 +687,106 @@ public final class SifuCraftClient implements ClientModInitializer {
             space.reset();
         }
         SifuFrame previous = bridge.latest();
+        nativeUse.update(bridge, minecraft);
         collision.update(bridge.collisionManifest());
+        doors.update(previous != null && bridge.doors().worldGeneration() == previous.worldGeneration()
+                ? bridge.doors() : dev.sifucraft.bridge.CollisionManifest.NONE);
         bridge.setLoadedCollision(collision.loadedGeneration());
-        respawnIfDead();
+        respawnIfDead(now, previous);
         closeInvisibleScreens();
+        input.syncMouseMode();
         placeIfNeeded(previous);
         publishCollision();
+        publishFluidGeometry(previous);
+        blockShapes.update(minecraft, bridge, space.placement());
+        WorldTerrain.update(minecraft);
         publishBlocks(previous);
         enforceNoFlight();
         rescueFromFall(previous);
-        bridge.tick(now, currentState(previous));
+        var outgoing=currentState(previous);
+        if(playerSignalCheck!=null)outgoing=playerSignalCheck.protectNativePose(outgoing,guiAvailable(previous));
+        bridge.tick(now, outgoing);
+        bridge.setUseBinding(input.useBinding());
         SifuFrame frame = bridge.latest();
+        DevItemAccess.update(minecraft, bridge.peerSession(), frame == null ? 0 : frame.worldGeneration(),
+                frame == null ? 0 : frame.anchorEpoch(), frame != null && guiAvailable(frame));
+        if (bridge.peerConnected() && frame != null) hostLanguage.update(minecraft, frame.language());
+        publishEnemies(frame);
+        publishWorldMotion(frame);
+        publishPlayerSignals(frame);
+        CombatHits.pump(bridge);
+        dev.sifucraft.combat.ShieldBlocks.pump(bridge);
+        PlayerDamage.pump(bridge, minecraft.getSingleplayerServer(), minecraft.player == null ? null : minecraft.player.getUUID(),
+                minecraft.player, respawn.ready() && minecraft.player != null && minecraft.player.isAlive());
+        shieldAnimation.pump(minecraft, bridge, frame != null && respawn.ready() && space.anchoredTo(frame));
         if (frame == null) space.reset();
-        input.setOwner(frame != null && frame.minecraftOwnsInput());
-        input.applyMotion(frame);
+        input.setOwner(frame != null && frame.minecraftOwnsInput() && respawn.ready());
+        // This disposable benchmark owns a fixed camera. Native cursor jitter
+        // must not change the input between its water and solid controls.
+        if (worldGpuCheck == null) input.applyMotion(frame);
+        overlay.updateViewport(minecraft);
+        if (inventoryCheck != null) inventoryCheck.tick(minecraft, input, guiAvailable(frame));
+        if (devItemCheck != null) devItemCheck.tick(minecraft, input, guiAvailable(frame));
+        if (totemCheck != null) totemCheck.clientTick(minecraft);
+        if (foodCheck != null) foodCheck.tick(minecraft, input, guiAvailable(frame));
+        if (maceCheck != null) maceCheck.clientTick(minecraft, guiAvailable(frame));
+        if (windChargeCheck != null) windChargeCheck.tick(minecraft, input, guiAvailable(frame));
+        if (elytraCheck != null) elytraCheck.tick(minecraft, input, guiAvailable(frame));
+        if (interactionCheck != null) interactionCheck.tick(minecraft, input, guiAvailable(frame));
+        if (worldEffectsCheck != null) worldEffectsCheck.tick(minecraft, input, guiAvailable(frame));
+        if (blockModelCheck != null) blockModelCheck.tick(minecraft,guiAvailable(frame));
+        if (fluidRenderCheck != null) fluidRenderCheck.tick(minecraft,guiAvailable(frame));
+        if (worldGpuCheck != null) worldGpuCheck.tick(minecraft,guiAvailable(frame));
+        if (pistonStressCheck != null) pistonStressCheck.clientTick(minecraft,guiAvailable(frame));
+        if(shapeUpdateCheck!=null)shapeUpdateCheck.clientTick(minecraft,guiAvailable(frame));
+        if(pistonTransactionCheck!=null)pistonTransactionCheck.clientTick(minecraft,guiAvailable(frame));
+        if(nativePistonCheck!=null)nativePistonCheck.clientTick(minecraft,guiAvailable(frame),frame);
+        if(pistonObstructionCheck!=null)pistonObstructionCheck.clientTick(minecraft,guiAvailable(frame));
+        if(cannonGroundCheck!=null)cannonGroundCheck.clientTick(minecraft,bridge,input,guiAvailable(frame));
+        if(fluidSceneCheck!=null)fluidSceneCheck.clientTick(minecraft,guiAvailable(frame));
+        if(fluidPersistenceCheck!=null)fluidPersistenceCheck.clientTick(minecraft,guiAvailable(frame));
+        if(playerItemBubbleCheck!=null)playerItemBubbleCheck.clientTick(minecraft,guiAvailable(frame));
+        if(tntStressCheck!=null)tntStressCheck.clientTick(minecraft,frame);
+        if(worldRecoveryCheck!=null)worldRecoveryCheck.clientTick(minecraft,frame);
+        if(activeSwimCheck!=null)activeSwimCheck.clientTick(minecraft,input,frame);
+        if(bubbleStructureCheck!=null)bubbleStructureCheck.clientTick(minecraft,frame);
+        if(playerEnvironmentCheck!=null)playerEnvironmentCheck.clientTick(minecraft,guiAvailable(frame));
+        if(machineInventoryCheck!=null)machineInventoryCheck.clientTick(minecraft,guiAvailable(frame));
+        if(fluidAtmosphereCheck!=null)fluidAtmosphereCheck.clientTick(minecraft,frame);
+        if(catalogModelCheck!=null)catalogModelCheck.tick(minecraft,guiAvailable(frame));
+        if(catalogLogicCheck!=null)catalogLogicCheck.clientTick(minecraft,guiAvailable(frame));
+        if(circuitScaleCheck!=null)circuitScaleCheck.clientTick(minecraft,frame,blockShapes.metrics());
+        if(nativeBoatCheck!=null)nativeBoatCheck.clientTick(minecraft,frame);
+        if(nativeExplosionCheck!=null)nativeExplosionCheck.clientTick(minecraft,frame);
+        if(boatDrivingCheck!=null)boatDrivingCheck.clientTick(minecraft,input,frame,guiAvailable(frame));
+        if(nativeSuffocationCheck!=null)nativeSuffocationCheck.clientTick(minecraft,frame,guiAvailable(frame));
+        if(cannonCheck!=null)cannonCheck.clientTick(minecraft,frame);
+        if(coverageSceneCheck!=null)coverageSceneCheck.clientTick(minecraft,frame);
+        if(environmentDamageCheck!=null)environmentDamageCheck.clientTick(minecraft,frame);
+        if(nativePauseCheck!=null)nativePauseCheck.clientTick(minecraft);
+        if(fluidMotionCheck!=null)fluidMotionCheck.clientTick(minecraft);
+        if(airEnvironmentCheck!=null)airEnvironmentCheck.clientTick(minecraft);
+        if(hotFloorCheck!=null)hotFloorCheck.clientTick(minecraft);
+        if(bubbleMatrixCheck!=null)bubbleMatrixCheck.clientTick(minecraft);
+        if(fluidPartialCheck!=null)fluidPartialCheck.clientTick(minecraft);
+        if(environmentPathCheck!=null)environmentPathCheck.clientTick(minecraft);
+        if(pistonTicketsCheck!=null)pistonTicketsCheck.clientTick(minecraft);
+        if(nativeFluidCheck!=null)nativeFluidCheck.clientTick(minecraft,frame);
+        if(nativePlayerMotionCheck!=null)nativePlayerMotionCheck.clientTick(minecraft,frame);
+        if(playerPhysicsCheck!=null)playerPhysicsCheck.clientTick(minecraft);
+        if(nativeLiftCheck!=null)nativeLiftCheck.clientTick(minecraft,frame);
+        if(machineProjectileCheck!=null)machineProjectileCheck.clientTick(minecraft,frame);
+        if(nativeMachineCheck!=null)nativeMachineCheck.clientTick(minecraft,frame);
+        if(pistonAftermathCheck!=null)pistonAftermathCheck.clientTick(minecraft);
+        if (signalCheck != null) signalCheck.clientTick(minecraft,guiAvailable(frame));
+        if (playerSignalCheck != null) playerSignalCheck.clientTick(minecraft,guiAvailable(frame),frame);
+        if (sensorCheck != null) sensorCheck.clientTick(minecraft,guiAvailable(frame));
+        if (pistonSceneCheck != null) pistonSceneCheck.clientTick(minecraft,guiAvailable(frame));
+        if (worldCracksCheck != null) worldCracksCheck.tick(minecraft, input, guiAvailable(frame));
+        if (worldModelCheck != null) worldModelCheck.tick(minecraft, guiAvailable(frame));
+        if (avatarCheck != null) avatarCheck.tick(minecraft, input, guiAvailable(frame));
+        if (worldStressCheck != null) worldStressCheck.tick(minecraft, guiAvailable(frame));
+        if (worldAudioCheck != null) worldAudioCheck.tick(frame, worldScope() != null);
         if (now >= nextStatusMs) {
             nextStatusMs = now + STATUS_EVERY_MS;
             logStatus(frame);
@@ -204,13 +803,23 @@ public final class SifuCraftClient implements ClientModInitializer {
     private void placeIfNeeded(SifuFrame frame) {
         Player player = minecraft.player;
         IntegratedServer server = minecraft.getSingleplayerServer();
-        if (frame == null || !frame.hasPawn() || frame.anchorEpoch() == 0 || player == null || server == null
+        if (frame == null || !frame.hasPawn() || frame.anchorEpoch() == 0 || player == null || server == null ||
+                !player.isAlive() || !respawn.mayPlace()
                 || space.anchoredTo(frame)) {
             return;
         }
         slots.open(server.getWorldPath(LevelResource.ROOT));
         MapPlacement placement = slots.placement(UnrealSpace.mapName(frame.worldPath()));
         long now = System.currentTimeMillis();
+        if(player.getVehicle() instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat boat&&
+            !boat.isRemoved()&&boat.level()==minecraft.level&&placement.containsX(boat.blockPosition().getX())&&space.canRetainBoat(frame,placement,player.position())){
+            var pawn=frame.playerLocation();var nativeFeet=new Vec3(placement.mcX(pawn.x()),placement.mcY(pawn.z()-frame.capsuleHalfHeight()),placement.mcZ(pawn.y()));
+            var seat=player.position();
+                // A same-world handoff while still at the boat is not a new
+                // player spawn. Teleporting here would make vanilla dismount.
+                space.anchor(frame,placement);lastGround=null;teleportEpoch=frame.anchorEpoch();teleportWorld=frame.worldGeneration();teleportTarget=seat;teleportSentMs=now;
+                LOG.info("[space] epoch {} retained original boat {} at native handoff distance {}m",frame.anchorEpoch(),boat.getUUID(),fmt(nativeFeet.distanceTo(seat)));return;
+        }
         boolean sameHandOver = teleportEpoch == frame.anchorEpoch() && teleportWorld == frame.worldGeneration();
         if (!sameHandOver || now - teleportSentMs > TELEPORT_RETRY_MS) {
             SifuFrame.Vec3 pawn = frame.playerLocation();
@@ -223,7 +832,6 @@ public final class SifuCraftClient implements ClientModInitializer {
             }
             Vec3 target = new Vec3(placement.mcX(pawn.x()), placement.mcY(standZ), placement.mcZ(pawn.y()));
             teleport(server, player, target, UnrealSpace.yawFromUnreal(frame.playerRotation().y()), player.getXRot());
-            if (DevWorld.enabled()) stockDevHotbar(server, player);
             if (!sameHandOver) {
                 LOG.info("[space] epoch {}: teleporting to {} slot x {}: Minecraft ({}, {}, {}) for pawn feet "
                         + "({}, {}, {}) cm, standing at {} cm", frame.anchorEpoch(), placement.map(),
@@ -257,23 +865,6 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerPlayer onServer = server.getPlayerList().getPlayer(id);
             if (onServer != null) {
                 onServer.teleportTo(server.overworld(), target.x, target.y, target.z, Set.of(), yaw, pitch, true);
-            }
-        });
-    }
-
-    /**
-     * Development: blocks to build with in the empty hotbar slots (the Minecraft window is hidden, so
-     * no inventory screen): plain ones, ones whose faces differ, a light one.
-     */
-    private static void stockDevHotbar(IntegratedServer server, Player player) {
-        UUID id = player.getUUID();
-        server.execute(() -> {
-            ServerPlayer onServer = server.getPlayerList().getPlayer(id);
-            if (onServer == null) return;
-            for (int slot = 0; slot < DEV_HOTBAR.length; slot++) {
-                if (onServer.getInventory().getItem(slot).isEmpty()) {
-                    onServer.getInventory().setItem(slot, new ItemStack(DEV_HOTBAR[slot], 64));
-                }
             }
         });
     }
@@ -326,16 +917,34 @@ public final class SifuCraftClient implements ClientModInitializer {
         publishedBlocksVersion = version;
     }
 
-    /**
-     * Health is not bridged yet (P5): a player that dies in Minecraft while attached to Sifu (the void
-     * under a level, a save left there) respawns at once, and the next hand-over puts it back.
-     */
-    private void respawnIfDead() {
-        if (minecraft.player == null || !bridge.peerConnected() || !minecraft.player.isDeadOrDying()) return;
-        if (minecraft.gui.screen() instanceof DeathScreen) minecraft.gui.setScreen(null);
-        minecraft.player.respawn();
-        teleportEpoch = 0; // hand the current epoch over again once alive
-        LOG.info("[space] the Minecraft player died: respawned");
+    /** Keep old-life poses out of the bridge until respawn and a fresh Sifu anchor have landed. */
+    private void respawnIfDead(long now, SifuFrame frame) {
+        var player = minecraft.player;
+        boolean dead = player != null && player.isDeadOrDying();
+        var action = respawn.tick(now, bridge.peerConnected(), bridge.peerSession(), frame, player != null, dead,
+                frame != null && space.anchoredTo(frame));
+        if (dead && bridge.peerConnected() && minecraft.gui.screen() instanceof DeathScreen) minecraft.gui.setScreen(null);
+        switch (action) {
+            case DIED -> {
+                space.reset(); teleportEpoch = 0; lastGround = null;
+                input.setOwner(false);
+                LOG.info("[respawn] Minecraft player died; waiting 1 s, pose and damage suspended");
+            }
+            case RESPAWN -> {
+                if (player != null) player.respawn();
+                LOG.info("[respawn] sent vanilla respawn request");
+            }
+            case REQUEST -> {
+                space.reset(); teleportEpoch = 0; lastGround = null;
+                LOG.info("[respawn] requesting new anchor after epoch {}", respawn.requestEpoch());
+            }
+            case ACKNOWLEDGED -> {
+                space.reset(); teleportEpoch = 0;
+                LOG.info("[respawn] Sifu acknowledged new epoch {}; awaiting landing", frame.anchorEpoch());
+            }
+            case LANDED -> LOG.info("[respawn] completed at epoch {}; pose, input and damage resumed", frame.anchorEpoch());
+            default -> { }
+        }
     }
 
     /**
@@ -349,7 +958,9 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (screen == null || minecraft.player == null || !bridge.peerConnected() || screen instanceof DeathScreen) return;
         String name = screen.getClass().getSimpleName();
         if (name.contains("Loading") || name.contains("Receiving") || name.contains("Message")) return;
-        minecraft.gui.setScreen(null);
+        if (guiAvailable(bridge.latest()) && screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>) return;
+        if (screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>) minecraft.player.closeContainer();
+        else minecraft.gui.setScreen(null);
         if (closedScreens.add(name)) LOG.info("[input] closed {}: Minecraft's window is hidden while attached to Sifu", name);
     }
 
@@ -402,9 +1013,12 @@ public final class SifuCraftClient implements ClientModInitializer {
             if (current != null) SifuCollision.set(null);
             return;
         }
-        if (current != null && current.grid() == grid) return;
+        var dynamic = doors.grid();
+        if (dynamic != null && !dynamic.map().equals(grid.map())) dynamic = null;
+        long session=bridge.peerSession();int world=bridge.collisionManifest().worldGeneration();
+        if (current != null && current.baseGrid() == grid && current.doors() == dynamic && current.matchesScope(session,world)) return;
         MapPlacement placement = slots.placement(grid.map());
-        SifuCollision.set(new SifuCollision.Active(grid, placement));
+        SifuCollision.set(new SifuCollision.Active(grid, placement, dynamic,session,world));
         LOG.info("[collision] in force: {} ({} blocks) at Minecraft origin ({}, {}, {})", grid.map(), grid.blockCount(),
                 placement.originX(), placement.originY(), placement.originZ());
     }
@@ -413,7 +1027,71 @@ public final class SifuCraftClient implements ClientModInitializer {
         return String.format("%.1f", value);
     }
 
+    private void publishFluidGeometry(SifuFrame frame){
+        var server=minecraft.getSingleplayerServer();
+        if(fluidWorldLife!=server)fluidWorldLife=server;
+        boolean required=server!=null;
+        var scene=SifuCollision.active();var manifest=bridge.collisionManifest();var dynamic=bridge.doors();
+        boolean ready=required&&bridge.peerConnected()&&frame!=null&&manifest.generation()!=0&&
+                manifest.worldGeneration()==frame.worldGeneration()&&collision.loadedGeneration()==manifest.generation()&&
+                scene!=null&&scene.baseGrid()==collision.grid()&&scene.matchesScope(bridge.peerSession(),frame.worldGeneration())&&
+                scene.placement().map().equals(UnrealSpace.mapName(frame.worldPath()))&&
+                (dynamic.generation()==0||dynamic.worldGeneration()==frame.worldGeneration()&&doors.loadedGeneration()==dynamic.generation()&&
+                        scene.doors()!=null&&scene.doors()==doors.grid()&&scene.doors().map().equals(scene.placement().map()));
+        var status=worldMotion.status();
+        if(required&&(status==null||status.capabilities()==0||((status.capabilities()&dev.sifucraft.bridge.WorldMotionProtocol.COVERAGE_CAPABILITY)!=0&&
+            (dynamic.generation()==0||scene==null||!scene.grid().hasCoverage()))))ready=false;
+        dev.sifucraft.blocks.SceneFluidGeometry.publish(required,ready,scene);
+    }
+
+    private void publishEnemies(SifuFrame frame) {
+        IntegratedServer server = minecraft.getSingleplayerServer();
+        if (server == null || frame == null || !frame.hasPawn()) {
+            EnemyMirrors.offer(null, null, null, false);
+            return;
+        }
+        slots.open(server.getWorldPath(LevelResource.ROOT));
+        EnemyMirrors.offer(frame, bridge.enemies(), slots.placement(UnrealSpace.mapName(frame.worldPath())),
+                respawn.ready() && minecraft.player != null && minecraft.player.isAlive() && space.anchoredTo(frame));
+    }
+
+    private void publishWorldMotion(SifuFrame frame) {
+        var server=minecraft.getSingleplayerServer();
+        if(!worldBlocksAvailable()||!bridge.peerConnected()||server==null||frame==null||!frame.hasPawn()||frame.worldGeneration()==0) {
+            dev.sifucraft.blocks.WorldMotionWorld.offer(null);worldMotion.attach(null);return;
+        }
+        var placement=slots.placement(UnrealSpace.mapName(frame.worldPath()));
+        long save=dev.sifucraft.bridge.ShapeProtocol.mapHash(server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize().toString());
+        var scope=new dev.sifucraft.bridge.WorldMotionRequests.Scope(bridge.session(),bridge.peerSession(),frame.worldGeneration(),save==0?1:save,
+            dev.sifucraft.bridge.ShapeProtocol.mapHash(placement.map()));
+        worldMotion.attach(scope);
+        dev.sifucraft.blocks.WorldMotionWorld.offer(new dev.sifucraft.blocks.WorldMotionWorld.View(worldMotion,scope,placement,
+            bridge.enemies(),SifuCollision.active(),worldMotion.status(),blockShapes.geometry()));
+    }
+    private static boolean worldBlocksAvailable(){return dev.sifucraft.blocks.WorldBlocks.ENABLED&&BlockShapes.ENABLED;}
+    public static boolean worldPaused(){
+        if(!dev.sifucraft.bridge.LiveTestFocus.allowed())return true;
+        var view=dev.sifucraft.blocks.WorldMotionWorld.current();if(view==null||view.nativeStatus()==null)return false;
+        var status=view.nativeStatus();long now=dev.sifucraft.bridge.WorldWriter.clockMillis();
+        return status.world()==view.scope().world()&&status.atMs()<=now&&now-status.atMs()<=500&&(status.capabilities()&dev.sifucraft.bridge.WorldMotionProtocol.PAUSE_CAPABILITY)!=0&&
+            (status.flags()&dev.sifucraft.bridge.WorldMotionProtocol.PAUSED)!=0;
+    }
+
+    private void publishPlayerSignals(SifuFrame frame) {
+        if(playerSignalCheck!=null)return;
+        var server=minecraft.getSingleplayerServer();
+        if(!bridge.peerConnected()||server==null||minecraft.player==null||frame==null||!frame.hasPawn()){
+            dev.sifucraft.blocks.PlayerSignalContacts.offer(null,0,null,null,null,false);return;
+        }
+        slots.open(server.getWorldPath(LevelResource.ROOT));
+        dev.sifucraft.blocks.PlayerSignalContacts.offer(server,bridge.peerSession(),frame,
+            slots.placement(UnrealSpace.mapName(frame.worldPath())),minecraft.player.getUUID(),
+            respawn.ready()&&minecraft.player.isAlive()&&space.anchoredTo(frame));
+    }
+
     private McState currentState(SifuFrame frame) {
+        if (!respawn.ready()) return McState.withoutPose(respawn.flags(), respawn.requestEpoch(),
+                bridge.peerSession(), frame == null ? 0 : frame.worldGeneration());
         Player player = minecraft.player;
         if (minecraft.level == null || player == null) return McState.NOT_READY;
         if (frame == null || !space.anchoredTo(frame)) return McState.ready();
@@ -438,7 +1116,10 @@ public final class SifuCraftClient implements ClientModInitializer {
                 space.toUnreal(eye.x, eye.y, eye.z),
                 UnrealSpace.rotationToUnreal(cameraPitch, cameraYaw),
                 minecraft.options.fov().get(),
-                space.anchorEpoch());
+                space.anchorEpoch(), bridge.peerSession(), frame.worldGeneration()).withGui(
+                    overlay.enabled() && frame.minecraftOwnsInput() && minecraft.gui.overlay() == null,
+                    mirroredScreenActive(), input.guiInputAck(), minecraft.gui.screen() != null &&
+                        minecraft.gui.screen().getFocused() instanceof net.minecraft.client.gui.components.EditBox);
     }
 
     private static int perspective(CameraType type) {
@@ -481,5 +1162,27 @@ public final class SifuCraftClient implements ClientModInitializer {
                 bridge.peerConnected() ? "connected" : "absent", input.minecraftOwnsInput() ? "MINECRAFT" : "sifu",
                 where, s.keys, s.buttons, s.moves, Math.round(s.dxSum), Math.round(s.dySum), s.scrollSum,
                 s.releaseAlls);
+        if (minecraft.level != null && bridge.enemies() != null && frame != null && frame.hasPawn() && slots.isOpen()) {
+            int count = 0;
+            int sizeMismatches = 0;
+            double maxError = 0;
+            MapPlacement placement = slots.placement(UnrealSpace.mapName(frame.worldPath()));
+            for (var entity : minecraft.level.entitiesForRendering()) {
+                if (!(entity instanceof EnemyProxy proxy)) continue;
+                count++;
+                for (var enemy : bridge.enemies().entries()) {
+                    if (!enemy.key().equals(proxy.sifuKey())) continue;
+                    if (Math.abs(proxy.getBbWidth() - enemy.radius() * 2 / 100.0f) > 0.001f ||
+                            Math.abs(proxy.getBbHeight() - enemy.halfHeight() * 2 / 100.0f) > 0.001f) sizeMismatches++;
+                    double x = placement.mcX(enemy.location().x());
+                    double y = placement.mcY(enemy.location().z() - enemy.halfHeight());
+                    double z = placement.mcZ(enemy.location().y());
+                    double dx = x - proxy.getX(), dy = y - proxy.getY(), dz = z - proxy.getZ();
+                    maxError = Math.max(maxError, Math.sqrt(dx * dx + dy * dy + dz * dz) * 100);
+                }
+            }
+            LOG.info("[combat] client proxies={} table={} world={} max_position_error_cm={} size_mismatches={}", count,
+                    bridge.enemies().entries().size(), bridge.enemies().worldGeneration(), fmt(maxError), sizeMismatches);
+        }
     }
 }

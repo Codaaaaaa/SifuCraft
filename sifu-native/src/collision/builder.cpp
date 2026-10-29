@@ -38,12 +38,29 @@ void LogExtent(const VoxelGrid& grid) {
     }
 }
 
-std::shared_ptr<const VoxelGrid> Build(const BuildRequest& request) {
+std::shared_ptr<const VoxelGrid> Build(BuildRequest& request) {
     const ShapeSet& s = request.shapes;
     auto built = std::make_shared<VoxelGrid>();
     VoxelGrid& grid = *built;
+    if(request.clip)grid.Clip(*request.clip);
     VoxelStats stats;
     Voxelize(s, &grid, &stats);
+    if(request.coverage&&request.clip){
+        const auto& region=*request.clip;
+        if(stats.rejected_bounds)request.coverage->unknown.push_back(region);
+        else for(const auto& box:stats.rejected){
+            const float lo[]={box.min.x,box.min.y,box.min.z},hi[]={box.max.x,box.max.y,box.max.z};CellRegion hole;
+            bool finite=true;
+            for(int i=0;i<3;i++){
+                if(!std::isfinite(lo[i])||!std::isfinite(hi[i])){finite=false;break;}
+                hole.min[i]=static_cast<int>(std::clamp(std::floor(double(lo[i])/12.5),double(region.min[i]),double(region.max[i])));
+                hole.max[i]=static_cast<int>(std::clamp(std::ceil(double(hi[i])/12.5),double(region.min[i]),double(region.max[i])));
+            }
+            if(!finite){request.coverage->unknown.push_back(region);break;}
+            if(hole.valid())request.coverage->unknown.push_back(hole);
+        }
+    }
+    if (!request.diagnostics) return built;
     SC_LOG("[collision] %s: voxelized %d convex (%d degenerate) %d capsules %d triangles (%d slivers) in %.0f + %.0f + "
            "%.0f ms -> %llu cells in %zu blocks (%d oversized shapes left out) | %d steep faces made walls "
            "(walkable floor Z %.3f, %d components with a slope override)",
@@ -92,6 +109,7 @@ void Builder::Submit(BuildRequest request) {
 
 std::optional<PublishedGrid> Builder::Publish(const BuildRequest& request, const VoxelGrid& grid) {
     PublishedGrid out;
+    out.coverage_epoch=request.coverage_epoch;
     out.generation = next_generation_++;
     if (out.generation == 0) out.generation = next_generation_++;
     out.world_generation = request.generation;
@@ -101,10 +119,10 @@ std::optional<PublishedGrid> Builder::Publish(const BuildRequest& request, const
 
     const std::wstring directory = log::RootDirectory() + L"\\collision";
     CreateDirectoryW(directory.c_str(), nullptr);
-    out.path = directory + L"\\" + Widen(request.map) + L"-" + std::to_wstring(out.generation) + L".scvx";
+    out.path = directory + L"\\" + Widen(request.map + request.file_tag) + L"-" + std::to_wstring(out.generation) + L".scvx";
     // Written aside and renamed into place, so Minecraft never sees a partial file.
     const std::wstring partial = out.path + L".partial";
-    if (!WriteVoxelFile(partial, grid, request.map, request.pawn_feet) ||
+    if (!WriteVoxelFile(partial, grid, request.map, request.pawn_feet,request.coverage?&*request.coverage:nullptr) ||
         !MoveFileExW(partial.c_str(), out.path.c_str(), MOVEFILE_REPLACE_EXISTING)) {
         SC_LOG("[collision] could not write the grid file for %s (error %lu)", request.map.c_str(), GetLastError());
         DeleteFileW(partial.c_str());
@@ -134,7 +152,16 @@ void Builder::Run() {
             pending_.reset();
         }
         std::shared_ptr<const VoxelGrid> grid = Build(request);
-        std::optional<PublishedGrid> published = Publish(request, *grid);
+        if(request.cache_regions&&request.clip&&request.coverage){
+            auto combined=regions_.Put(request.generation,request.map,request.coverage_epoch,*request.clip,grid,*request.coverage);
+            if(!combined.coverage.valid()){SC_LOG("[collision] coverage capacity exceeded; prior file retained");continue;}
+            grid=std::move(combined.grid);request.coverage=std::move(combined.coverage);
+        }
+        std::optional<PublishedGrid> published;
+        if (!content_.Matches(request,*grid)) {
+            published = Publish(request,*grid);
+            if (published) content_.Confirm(request,grid);
+        }
         std::lock_guard lock(mutex_);
         latest_ = std::move(grid);
         latest_generation_ = request.generation;

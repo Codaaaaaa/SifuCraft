@@ -12,7 +12,7 @@ namespace sifucraft::config {
 
 namespace {
 
-constexpr int kMaxStage = 6;
+constexpr int kMaxStage = 10;
 
 bool Exists(const std::wstring& path) { return GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES; }
 
@@ -32,6 +32,11 @@ Settings Load() {
     Settings settings;
     settings.no_hooks = Exists(root + L"\\no-hooks");
     settings.stage = settings.no_hooks ? 0 : ReadStage(root + L"\\stage");
+    settings.npc_motion_probe = settings.stage >= 10 && Exists(root + L"\\npc-motion-probe");
+    settings.npc_ai_probe = settings.stage >= 10 && Exists(root + L"\\npc-ai-probe");
+    settings.player_world_observe = settings.stage >= 10 && Exists(root + L"\\player-world-observe");
+    settings.collision_census = settings.stage == 0 || Exists(root + L"\\collision-census");
+    settings.npc_debug = settings.stage >= 10 && Exists(root + L"\\npc-debug");
     SC_LOG("config: rollout stage %d%s", settings.stage, settings.no_hooks ? " (no-hooks file present)" : "");
     return settings;
 }

@@ -35,11 +35,14 @@ struct TriangleShape {
     FVector v[3]{};
     float walkable_z = kDefaultWalkableFloorZ;
 };
+struct UnknownBounds {FVector min{},max{};};
 
 struct ShapeSet {
     std::vector<ConvexShape> convexes;
     std::vector<CapsuleShape> capsules;
     std::vector<TriangleShape> triangles;
+    std::vector<UnknownBounds> unknown;
+    bool unknown_bounds=false;
 
     float pawn_walkable_z = kDefaultWalkableFloorZ;  // the pawn's own WalkableFloorZ
 
@@ -47,7 +50,7 @@ struct ShapeSet {
     int components = 0;
     int boxes = 0, spheres = 0, capsule_elems = 0, convex_elems = 0, triangle_meshes = 0, instances = 0;
     int unreadable_meshes = 0;   // triangle meshes whose layout did not validate (left out)
-    int skipped_movable = 0;     // blocking but movable: doors, props (not imported in P3)
+    int skipped_movable = 0;     // moving character bodies, intentionally not terrain
     int no_body_setup = 0;
     int capped = 0;              // arrays larger than the sanity limits (left out)
     int slope_overrides = 0;     // components whose walkable slope override changes the pawn's
@@ -57,5 +60,8 @@ struct ShapeSet {
 // with collision filtering `pawn` and walkable floor Z `pawn_walkable_z`. Runtime thread; reads
 // memory only.
 ShapeSet ExtractShapes(std::uintptr_t world, const Responses& pawn, float pawn_walkable_z);
+bool DynamicSceneComponent(std::uintptr_t component);
+std::vector<std::uintptr_t> DynamicSceneComponents(std::uintptr_t world);
+ShapeSet ExtractComponents(const std::vector<std::uintptr_t>& components, const Responses& pawn, float walkable_z);
 
 }  // namespace sifucraft::collision

@@ -29,6 +29,25 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  */
 @Mixin(Entity.class)
 public abstract class EntityMixin {
+    @org.spongepowered.asm.mixin.injection.ModifyVariable(method="collide",at=@At("HEAD"),argsOnly=true)
+    private Vec3 sifucraft$nativeBoatPassengerClearance(Vec3 movement){
+        return (Object)this instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat boat
+            ?dev.sifucraft.combat.BoatPassengers.constrainBoat(boat,movement):movement;
+    }
+    /** Vehicles without their own seat code (minecarts) seat a native passenger only on its actual reserved root. */
+    @Inject(method="positionRider(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/entity/Entity$MoveFunction;)V",at=@At("HEAD"),cancellable=true)
+    private void sifucraft$actualHitMirror(Entity passenger,Entity.MoveFunction move,CallbackInfo ci){
+        if(!dev.sifucraft.combat.BoatPassengers.positionRider(passenger))ci.cancel();
+    }
+    @Inject(method="applyMovementEmissionAndPlaySound",at=@At("HEAD"),cancellable=true)
+    private void sifucraft$ignoreInactivePlayerFootsteps(Entity.MovementEmission emission,Vec3 motion,
+            net.minecraft.core.BlockPos pos,net.minecraft.world.level.block.state.BlockState state,CallbackInfo ci) {
+        if(dev.sifucraft.blocks.PlayerSignalContacts.ignores((Entity)(Object)this))ci.cancel();
+    }
+    @Inject(method="isIgnoringBlockTriggers",at=@At("HEAD"),cancellable=true)
+    private void sifucraft$ignoreInactivePlayerSignals(CallbackInfoReturnable<Boolean> cir) {
+        if(dev.sifucraft.blocks.PlayerSignalContacts.ignores((Entity)(Object)this))cir.setReturnValue(true);
+    }
     @Unique private static final double MIN_MOVE = 1.0E-4;
     @Unique private static final double ABOVE_STEP = 0.05;
     @Unique private static final double REACH = 0.2;
@@ -47,7 +66,10 @@ public abstract class EntityMixin {
     @Inject(method = "move", at = @At("HEAD"))
     private void sifucraft$beforeMove(MoverType type, Vec3 movement, CallbackInfo ci) {
         sifucraft$tangent = null;
-        sifucraft$velocity = ((Entity) (Object) this).getDeltaMovement();
+        var self=(Entity)(Object)this;
+        sifucraft$velocity = self.getDeltaMovement();
+        if(!(self instanceof Player)||dev.sifucraft.blocks.PlayerSignalContacts.minecraftOwnsPlayer())
+            dev.sifucraft.blocks.SceneFluidGeometry.knownVolume(self.level(),self.getBoundingBox().expandTowards(movement).inflate(2));
     }
 
     @Inject(method = "collide", at = @At("RETURN"), cancellable = true)

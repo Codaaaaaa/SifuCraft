@@ -15,9 +15,115 @@ inline constexpr std::uintptr_t GWorld = 0x5EC09E8;
 inline constexpr std::uintptr_t GEngine = 0x5EBD0E8;
 inline constexpr std::uintptr_t GUObjectArray = 0x5D8A1A0;
 inline constexpr std::uintptr_t NamePoolData = 0x5D71C00;
+inline constexpr std::uintptr_t GD3D11RHI = 0x5D98E78;
+inline constexpr std::uintptr_t GDynamicRHI = 0x5E602C0;
+inline constexpr std::uintptr_t InternationalizationStore = 0x5D26918;
+inline constexpr std::uintptr_t LevelStreamingManager = 0x5C7EBF0;
+inline constexpr std::uintptr_t InteractionKey = 0x5D8AE10;
+inline constexpr std::uintptr_t SceneRenderTargets = 0x5A55318;
+inline constexpr std::uintptr_t DepthTextureVtable = 0x4B7E440;
+inline constexpr std::uintptr_t FidgetResetTimer = 0x18995F0;
+inline constexpr std::uintptr_t FidgetStartTimer = 0x189E7E0;
+inline constexpr std::uintptr_t FidgetProcessVtable = 0x486E7A8;
+inline constexpr std::uintptr_t CoverageArrayFree = 0x1D94B90;
+inline constexpr std::uintptr_t PassengerBlastLandingHit = 0x19FDCA0;
+inline constexpr std::uintptr_t PassengerBlastLandingLanded = 0x1A03770;
 }  // namespace rva
 
 namespace off {
+namespace UCollisionProfile {
+inline constexpr std::uint32_t ObjectTypeMapping = 0x150;
+}
+namespace UBoxComponent {
+inline constexpr std::uint32_t BoxExtent = 0x4A8;
+}
+namespace FViewUniformShaderParameters {
+inline constexpr std::uint32_t WorldToClip = 0x40;
+inline constexpr std::uint32_t ViewToClip = 0x1C0;
+inline constexpr std::uint32_t ViewToClipNoAA = 0x200;
+inline constexpr std::uint32_t InvDeviceZToWorldZTransform = 0x410;
+inline constexpr std::uint32_t WorldCameraOrigin = 0x430;
+inline constexpr std::uint32_t TemporalAAJitter = 0x7E0;
+inline constexpr std::uint32_t ViewRectMin = 0x810;
+inline constexpr std::uint32_t ViewSizeAndInvSize = 0x820;
+inline constexpr std::uint32_t BufferSizeAndInvSize = 0x840;
+inline constexpr std::uint32_t NearPlane = 0x8E0;
+inline constexpr std::uint32_t FrameNumber = 0x900;
+}
+namespace FSceneRenderTargets {
+inline constexpr std::uint32_t SceneDepthZ = 0x38;
+}
+namespace IPooledRenderTarget {
+inline constexpr std::uint32_t RenderTargetItem = 0x8;
+}
+namespace FSceneRenderTargetItem {
+inline constexpr std::uint32_t TargetableTexture = 0x0;
+inline constexpr std::uint32_t ShaderResourceTexture = 0x8;
+}
+namespace D3D11Texture2D {
+inline constexpr std::uint32_t Resource = 0x90;
+inline constexpr std::uint32_t ShaderResourceView = 0x98;
+}
+namespace FRHITexture2D {
+inline constexpr std::uint32_t SizeX = 0x60;
+inline constexpr std::uint32_t SizeY = 0x64;
+}
+namespace FRHITexture {
+inline constexpr std::uint32_t NumSamples = 0x38;
+inline constexpr std::uint32_t Format = 0x3C;
+}
+namespace AFightingPlayerController {
+inline constexpr std::uint32_t m_CurrentInteractionObjectComponent = 0x1330;
+}
+namespace UInteractionObjectComponent {
+inline constexpr std::uint32_t m_DetectionComponent = 0x1DC;
+inline constexpr std::uint32_t m_VisualComponent = 0x1E4;
+inline constexpr std::uint32_t m_bIsUsable = 0x161;
+inline constexpr std::uint32_t m_bUseCustomWalkInteractionDist = 0x128;
+inline constexpr std::uint32_t m_fCustomWalkInteractionDist = 0x12C;
+}
+namespace FSCLevelStreamingManager {
+inline constexpr std::uint32_t m_World = 0x148;
+inline constexpr std::uint32_t m_bStreamingVolumesEnabled = 0x2B0;
+}
+namespace InternationalizationStore {
+inline constexpr std::uint32_t Data = 0x0;
+inline constexpr std::uint32_t Ptr = 0x98;
+}
+namespace FInternationalization {
+inline constexpr std::uint32_t bIsInitialized = 0x0;
+inline constexpr std::uint32_t CurrentLanguage = 0x28;
+}
+namespace FCulture {
+inline constexpr std::uint32_t CachedName = 0x28;
+}
+namespace UWidget {
+inline constexpr std::uint32_t Visibility = 0xC3;
+inline constexpr std::uint32_t VisibilityDelegate = 0x80;
+inline constexpr std::uint32_t NativeBindings = 0xF8;
+inline constexpr std::uint32_t Slot = 0x28;
+}
+namespace UUserWidget {
+inline constexpr std::uint32_t WidgetTree = 0x1E0;
+}
+namespace UPanelSlot {
+inline constexpr std::uint32_t Parent = 0x28;
+inline constexpr std::uint32_t Content = 0x30;
+}
+namespace ScriptDelegate {
+inline constexpr std::uint32_t Object = 0x0;
+inline constexpr std::uint32_t FunctionName = 0x8;
+}
+namespace FD3D11DynamicRHI {
+inline constexpr std::uint32_t Viewports = 0x2690;
+inline constexpr std::uint32_t Direct3DDeviceIMContext = 0x160;
+inline constexpr std::uint32_t Direct3DDevice = 0x178;
+}
+namespace FD3D11Viewport {
+inline constexpr std::uint32_t WindowHandle = 0x40;
+inline constexpr std::uint32_t SwapChain = 0x70;
+inline constexpr std::uint32_t PixelColorSpace = 0x64;
+}
 namespace UObjectBase {
 inline constexpr std::uint32_t ObjectFlags = 0x8;
 inline constexpr std::uint32_t InternalIndex = 0xC;
@@ -30,6 +136,11 @@ inline constexpr std::uint32_t SuperStruct = 0x40;
 inline constexpr std::uint32_t Children = 0x48;
 inline constexpr std::uint32_t ChildProperties = 0x50;
 inline constexpr std::uint32_t PropertiesSize = 0x58;
+inline constexpr std::uint32_t Script = 0x60;
+}
+namespace UFunction {
+inline constexpr std::uint32_t FunctionFlags = 0xB0;
+inline constexpr std::uint32_t ParmsSize = 0xB6;
 }
 namespace UField {
 inline constexpr std::uint32_t Next = 0x28;
@@ -55,6 +166,50 @@ inline constexpr std::uint32_t Struct = 0x78;
 }
 namespace FArrayProperty {
 inline constexpr std::uint32_t Inner = 0x78;
+}
+namespace UDataTable {
+inline constexpr std::uint32_t RowStruct = 0x28;
+inline constexpr std::uint32_t RowMap = 0x30;
+}
+namespace FDataTableRowHandle {
+inline constexpr std::uint32_t DataTable = 0x0;
+inline constexpr std::uint32_t RowName = 0x8;
+}
+namespace DataTableMap {
+inline constexpr std::uint32_t Pairs = 0x0;
+}
+namespace DataTableSet {
+inline constexpr std::uint32_t Elements = 0x0;
+}
+namespace DataTableSparse {
+inline constexpr std::uint32_t Data = 0x0;
+inline constexpr std::uint32_t AllocationFlags = 0x10;
+}
+namespace DataTableBits {
+inline constexpr std::uint32_t AllocatorInstance = 0x0;
+inline constexpr std::uint32_t NumBits = 0x18;
+inline constexpr std::uint32_t MaxBits = 0x1C;
+}
+namespace DataTableBitAllocator {
+inline constexpr std::uint32_t InlineData = 0x0;
+inline constexpr std::uint32_t SecondaryData = 0x10;
+}
+namespace DataTableElement {
+inline constexpr std::uint32_t Value = 0x0;
+}
+namespace DataTablePair {
+inline constexpr std::uint32_t Key = 0x0;
+inline constexpr std::uint32_t Value = 0x8;
+}
+namespace ComboAttackMap {
+inline constexpr std::uint32_t Pairs = 0x0;
+}
+namespace ComboAttackElement {
+inline constexpr std::uint32_t Value = 0x0;
+}
+namespace ComboAttackPair {
+inline constexpr std::uint32_t Key = 0x0;
+inline constexpr std::uint32_t Value = 0x8;
 }
 namespace FBoolProperty {
 inline constexpr std::uint32_t FieldSize = 0x78;
@@ -97,6 +252,7 @@ namespace UWorld {
 inline constexpr std::uint32_t PersistentLevel = 0x30;
 inline constexpr std::uint32_t OwningGameInstance = 0x180;
 inline constexpr std::uint32_t Levels = 0x138;
+inline constexpr std::uint32_t TimeSeconds = 0x598;
 }
 namespace ULevel {
 inline constexpr std::uint32_t Actors = 0x98;
@@ -115,12 +271,111 @@ inline constexpr std::uint32_t PlayerController = 0x30;
 namespace AActor {
 inline constexpr std::uint32_t RootComponent = 0x190;
 }
+namespace UActorComponent {
+inline constexpr std::uint32_t OwnerPrivate = 0xB0;
+}
+namespace AAIController {
+inline constexpr std::uint32_t BrainComponent = 0x370;
+}
+namespace USCAIComponent {
+inline constexpr std::uint32_t m_CachedBehaviorTreeComponent = 0xE0;
+}
+namespace UAIFightingComponent {
+inline constexpr std::uint32_t m_bIsOutOfIdle = 0x934;
+inline constexpr std::uint32_t m_bForceActionHandlerTick = 0x935;
+}
+namespace FFidgetPlayerHandler {
+inline constexpr std::uint32_t m_ComponentOwner = 0x20;
+inline constexpr std::uint32_t m_GameInstance = 0x28;
+inline constexpr std::uint32_t m_LaunchFidgetTimerHandle = 0x90;
+}
+namespace UASMComponent {
+inline constexpr std::uint32_t m_ActionStateManager = 0x108;
+}
+namespace SCActionStateManager {
+inline constexpr std::uint32_t m_currentState = 0x50;
+inline constexpr std::uint32_t m_PreState = 0x28;
+inline constexpr std::uint32_t m_PostState = 0x58;
+}
+namespace ActionStateManager {
+inline constexpr std::uint32_t m_Owner = 0xF0;
+}
+namespace SCActionState {
+inline constexpr std::uint32_t m_actionProcesses = 0x8;
+inline constexpr std::uint32_t m_owner = 0x20;
+}
+namespace SCActionProcess {
+inline constexpr std::uint32_t m_Owner = 0x8;
+}
+namespace APFidget {
+inline constexpr std::uint32_t m_MovementComponent = 0x18;
+inline constexpr std::uint32_t m_fidgetPlayerHandler = 0x38;
+}
+namespace USCBehaviorTreeComponent {
+inline constexpr std::uint32_t m_OwnerAiComponent = 0x310;
+}
+namespace UAIBehaviorTreeComponent {
+inline constexpr std::uint32_t m_CharacterOwner = 0x318;
+}
+namespace ABaseCharacter {
+inline constexpr std::uint32_t m_OrderComponent = 0x870;
+}
+namespace UOrderComponent {
+inline constexpr std::uint32_t m_OrderManager = 0x248;
+}
+namespace OrderManager {
+inline constexpr std::uint32_t m_OrderList = 0xA8;
+inline constexpr std::uint32_t m_DelayedOrderCommand = 0xB8;
+inline constexpr std::uint32_t m_DelayedOrderCommandDuringPrediction = 0x188;
+}
+namespace UFightingMovementComponent {
+inline constexpr std::uint32_t m_bIsRushing = 0x13D8;
+inline constexpr std::uint32_t m_LocalResyncRequest = 0x1458;
+inline constexpr std::uint32_t m_LocalTimedoutResyncRequest = 0x1468;
+inline constexpr std::uint32_t m_ResyncRequestOnReplica = 0x1478;
+inline constexpr std::uint32_t m_fInitialHeight = 0x1408;
+}
+namespace USkeletalMeshComponent {
+inline constexpr std::uint32_t AnimScriptInstance = 0x6F0;
+inline constexpr std::uint32_t ParallelAnimationEvaluationTask = 0xBD0;
+inline constexpr std::uint32_t ParallelBlendPhysicsCompletionTask = 0xBD8;
+}
+namespace UAnimInstance {
+inline constexpr std::uint32_t MontageInstances = 0x78;
+inline constexpr std::uint32_t RootMotionMontageInstance = 0x2D8;
+inline constexpr std::uint32_t RootMotionBlendQueue = 0x2E0;
+inline constexpr std::uint32_t ExtractedRootMotion = 0x2F0;
+}
+namespace FRootMotionMovementParams {
+inline constexpr std::uint32_t bHasRootMotion = 0x0;
+}
+namespace FRootMotionSourceGroup {
+inline constexpr std::uint32_t RootMotionSources = 0x8;
+inline constexpr std::uint32_t PendingAddRootMotionSources = 0x18;
+}
+namespace FHitResult {
+inline constexpr std::uint32_t Time = 0x8;
+inline constexpr std::uint32_t Location = 0x10;
+inline constexpr std::uint32_t Normal = 0x28;
+inline constexpr std::uint32_t ImpactNormal = 0x34;
+}
 namespace APawn {
 inline constexpr std::uint32_t Controller = 0x2E8;
+inline constexpr std::uint32_t ControlInputVector = 0x2F4;
+inline constexpr std::uint32_t LastControlInputVector = 0x300;
 }
 namespace ACharacter {
 inline constexpr std::uint32_t CharacterMovement = 0x318;
 inline constexpr std::uint32_t Mesh = 0x310;
+inline constexpr std::uint32_t CapsuleComponent = 0x320;
+inline constexpr std::uint32_t BasedMovement = 0x328;
+}
+namespace FBasedMovementInfo {
+inline constexpr std::uint32_t MovementBase = 0x0;
+inline constexpr std::uint32_t BoneName = 0x8;
+inline constexpr std::uint32_t Location = 0x10;
+inline constexpr std::uint32_t Rotation = 0x1C;
+inline constexpr std::uint32_t bRelativeRotation = 0x29;
 }
 namespace AController {
 inline constexpr std::uint32_t Pawn = 0x2E0;
@@ -242,12 +497,21 @@ inline constexpr std::uint32_t PerInstanceSMData = 0x528;
 }
 namespace UMovementComponent {
 inline constexpr std::uint32_t Velocity = 0xD4;
+inline constexpr std::uint32_t UpdatedComponent = 0xC0;
+inline constexpr std::uint32_t UpdatedPrimitive = 0xC8;
 }
 namespace UCharacterMovementComponent {
+inline constexpr std::uint32_t CharacterOwner = 0x158;
 inline constexpr std::uint32_t MovementMode = 0x178;
 inline constexpr std::uint32_t WalkableFloorAngle = 0x170;
 inline constexpr std::uint32_t WalkableFloorZ = 0x174;
 inline constexpr std::uint32_t MaxStepHeight = 0x164;
+inline constexpr std::uint32_t RootMotionParams = 0xB50;
+inline constexpr std::uint32_t CurrentRootMotion = 0xA50;
+inline constexpr std::uint32_t PendingLaunchVelocity = 0x3D4;
+inline constexpr std::uint32_t OldBaseLocation = 0x190;
+inline constexpr std::uint32_t OldBaseQuat = 0x180;
+inline constexpr std::uint32_t Acceleration = 0x23C;
 }
 namespace UCapsuleComponent {
 inline constexpr std::uint32_t CapsuleHalfHeight = 0x4A8;
@@ -256,17 +520,175 @@ inline constexpr std::uint32_t CapsuleRadius = 0x4AC;
 namespace UEngine {
 inline constexpr std::uint32_t GameViewport = 0x798;
 }
+namespace ASCCharacter {
+inline constexpr std::uint32_t m_bIsPooled = 0x5BE;
+inline constexpr std::uint32_t m_bPooledActorActive = 0x5BF;
+}
 namespace AFightingCharacter {
 inline constexpr std::uint32_t m_HealthComponent = 0x1350;
 inline constexpr std::uint32_t m_eFaction = 0x1530;
+inline constexpr std::uint32_t m_HitComponent = 0x1328;
+inline constexpr std::uint32_t m_DefenseComponent = 0x12A8;
+inline constexpr std::uint32_t m_AttackComponent = 0x1308;
+inline constexpr std::uint32_t m_HitCapsule = 0x1348;
+inline constexpr std::uint32_t m_AvoidCapsule = 0x1340;
+inline constexpr std::uint32_t m_AbilityComponent = 0x12B0;
+inline constexpr std::uint32_t m_bHasJustBeenHitted = 0xCF8;
+inline constexpr std::uint32_t m_HittedDescription = 0xD00;
+inline constexpr std::uint32_t m_AIComponent = 0x1338;
+inline constexpr std::uint32_t m_ASMComponent = 0x1378;
 }
 namespace UHealthComponent {
 inline constexpr std::uint32_t m_fHealth = 0x138;
 inline constexpr std::uint32_t m_fMaxHealth = 0x140;
+inline constexpr std::uint32_t m_bCanBeDamaged = 0x13C;
+inline constexpr std::uint32_t m_bCanDieByDamage = 0x13D;
+inline constexpr std::uint32_t m_bForceDeathOnApplyDamage = 0x149;
+}
+namespace UCharacterHealthComponent {
+inline constexpr std::uint32_t m_fMaxHealthMultiplier = 0x178;
+inline constexpr std::uint32_t m_bIsDown = 0x19C;
+inline constexpr std::uint32_t m_eDownState = 0x19D;
+}
+namespace UDefenseComponent {
+inline constexpr std::uint32_t m_GuardDB = 0x200;
+inline constexpr std::uint32_t m_DefaultGuardDB = 0x210;
+}
+namespace USCGameSettings {
+inline constexpr std::uint32_t m_DefaultHitbox = 0x6E0;
+}
+namespace UGuardDB {
+inline constexpr std::uint32_t m_DefaultHitImpact = 0xA70;
+inline constexpr std::uint32_t m_DefaultGuardImpact = 0xAA0;
+inline constexpr std::uint32_t m_DefaultDeflectImpact = 0xA28;
+inline constexpr std::uint32_t m_ParryWindow = 0xAEC;
+}
+namespace FFloatRange {
+inline constexpr std::uint32_t LowerBound = 0x0;
+inline constexpr std::uint32_t UpperBound = 0x8;
+}
+namespace FloatRangeBound {
+inline constexpr std::uint32_t Type = 0x0;
+inline constexpr std::uint32_t Value = 0x4;
+}
+namespace GuardStack {
+inline constexpr std::uint32_t m_Stack = 0x0;
+}
+namespace GuardStackValue {
+inline constexpr std::uint32_t m_Value = 0x8;
+inline constexpr std::uint32_t m_ValueGetter = 0x10;
+}
+namespace GuardValueGetter {
+inline constexpr std::uint32_t Callable = 0x0;
+}
+namespace FDamageInfos {
+inline constexpr std::uint32_t m_fDamage = 0x0;
+inline constexpr std::uint32_t m_fHealthBeforeDamage = 0x4;
+inline constexpr std::uint32_t m_Instigator = 0x8;
+inline constexpr std::uint32_t m_uiApplyDamageBehavior = 0x14;
+}
+namespace FHitRequest {
+inline constexpr std::uint32_t m_AttackRequest = 0x10;
+inline constexpr std::uint32_t m_Instigator = 0xE4;
+inline constexpr std::uint32_t m_HitBox = 0x110;
+inline constexpr std::uint32_t m_uiApplyDamageBehavior = 0x3B4;
+inline constexpr std::uint32_t m_vDamageDir = 0x3CC;
+inline constexpr std::uint32_t m_AttackProperties = 0x3E8;
+inline constexpr std::uint32_t m_bCanBeDefended = 0x409;
+}
+namespace FAttackRequest {
+inline constexpr std::uint32_t m_AttackDB = 0x40;
+inline constexpr std::uint32_t m_Combo = 0x28;
+inline constexpr std::uint32_t m_AttackName = 0x4;
+}
+namespace UAttackDB {
+inline constexpr std::uint32_t m_Attack = 0x30;
+}
+namespace UCombo {
+inline constexpr std::uint32_t m_Attacks = 0x88;
+}
+namespace FComboAttack {
+inline constexpr std::uint32_t m_Animation = 0x10;
+inline constexpr std::uint32_t m_fAnimFrameRate = 0xAC;
+}
+namespace UAnimSequenceBase {
+inline constexpr std::uint32_t Notifies = 0x80;
+}
+namespace FAnimNotifyEvent {
+inline constexpr std::uint32_t Notify = 0x48;
+inline constexpr std::uint32_t TriggerTimeOffset = 0x34;
+}
+namespace FAnimLinkableElement {
+inline constexpr std::uint32_t LinkMethod = 0x18;
+inline constexpr std::uint32_t LinkValue = 0x24;
+}
+namespace UCurveFloat {
+inline constexpr std::uint32_t FloatCurve = 0x30;
+}
+namespace FRichCurve {
+inline constexpr std::uint32_t Keys = 0x70;
+}
+namespace FRichCurveKey {
+inline constexpr std::uint32_t Time = 0x4;
+}
+namespace FFrameRange {
+inline constexpr std::uint32_t m_Anim = 0x0;
+}
+namespace FGameplayTagContainer {
+inline constexpr std::uint32_t GameplayTags = 0x0;
+inline constexpr std::uint32_t ParentTags = 0x10;
+}
+namespace FGameplayTag {
+inline constexpr std::uint32_t TagName = 0x0;
+}
+namespace FHitBox {
+inline constexpr std::uint32_t m_HitRow = 0x20;
+inline constexpr std::uint32_t m_CachedRow = 0x50;
+inline constexpr std::uint32_t m_bCachedRowSetup = 0x290;
+inline constexpr std::uint32_t m_FrameRange = 0x30;
+}
+namespace FHitboxDataRow {
+inline constexpr std::uint32_t m_bCanBeLethal = 0x84;
+inline constexpr std::uint32_t m_bCanBreakStructure = 0x85;
+inline constexpr std::uint32_t m_OnHitImpact = 0x88;
+inline constexpr std::uint32_t m_OnGuardImpact = 0xC0;
+inline constexpr std::uint32_t m_OnDeflectImpact = 0xF8;
+inline constexpr std::uint32_t m_eHitType = 0x154;
+inline constexpr std::uint32_t m_eAttackPower = 0x1A8;
+inline constexpr std::uint32_t m_bParriable = 0x1B2;
+}
+namespace FHitImpact {
+inline constexpr std::uint32_t m_eGuardType = 0x8;
+inline constexpr std::uint32_t m_bUseDamage = 0x9;
+inline constexpr std::uint32_t m_fDamage = 0xC;
+inline constexpr std::uint32_t m_fStructureDamage = 0x14;
+}
+namespace FHitDescription {
+inline constexpr std::uint32_t m_Request = 0x0;
+inline constexpr std::uint32_t m_Result = 0x450;
+inline constexpr std::uint32_t m_ImpactResult = 0x4E0;
+}
+namespace FImpactResult {
+inline constexpr std::uint32_t m_bIsValid = 0x0;
+inline constexpr std::uint32_t m_fDamage = 0x4;
+inline constexpr std::uint32_t m_bLethal = 0x68;
+inline constexpr std::uint32_t m_HitImpact = 0x20;
+}
+namespace UAbilitySystemComponent {
+inline constexpr std::uint32_t SpawnedAttributes = 0x150;
+}
+namespace UCharacterStatAttributeSet {
+inline constexpr std::uint32_t GameDifficulty = 0x180;
+}
+namespace FGameplayAttributeData {
+inline constexpr std::uint32_t BaseValue = 0x8;
+inline constexpr std::uint32_t CurrentValue = 0xC;
 }
 }  // namespace off
 
 namespace size {
+inline constexpr std::uint32_t InternationalizationStore = 0xA0;
+inline constexpr std::uint32_t FCulture = 0xD0;
 inline constexpr std::uint32_t FUObjectItem = 0x18;
 inline constexpr std::uint32_t UObjectBase = 0x28;
 inline constexpr std::uint32_t FName = 0x8;
@@ -278,9 +700,36 @@ inline constexpr std::uint32_t FKSphereElem = 0x40;
 inline constexpr std::uint32_t FKSphylElem = 0x50;
 inline constexpr std::uint32_t FKTaperedCapsuleElem = 0x58;
 inline constexpr std::uint32_t FInstancedStaticMeshInstanceData = 0x40;
+inline constexpr std::uint32_t FDamageInfos = 0x28;
+inline constexpr std::uint32_t FHitRequest = 0x450;
+inline constexpr std::uint32_t FHitBox = 0x298;
+inline constexpr std::uint32_t FHitboxDataRow = 0x240;
+inline constexpr std::uint32_t FHitImpact = 0x30;
+inline constexpr std::uint32_t FHitDescription = 0x5A0;
+inline constexpr std::uint32_t FImpactResult = 0xC0;
+inline constexpr std::uint32_t GuardStackValue = 0x50;
+inline constexpr std::uint32_t DataTableElement = 0x18;
+inline constexpr std::uint32_t FGameplayTag = 0x8;
+inline constexpr std::uint32_t FAnimNotifyEvent = 0xB8;
+inline constexpr std::uint32_t FRichCurveKey = 0x1C;
+inline constexpr std::uint32_t ComboAttackElement = 0x18;
+inline constexpr std::uint32_t FHitResult = 0x8C;
 }  // namespace size
 
 namespace bits {
+namespace UCharacterMovementComponent {
+inline constexpr std::uint32_t bForceNextFloorCheck_Offset = 0x201;
+inline constexpr std::uint32_t bForceNextFloorCheck_Shift = 3;
+inline constexpr std::uint32_t bForceNextFloorCheck_Width = 1;
+}
+namespace UBehaviorTreeComponent {
+inline constexpr std::uint32_t bIsRunning_Offset = 0x283;
+inline constexpr std::uint32_t bIsRunning_Shift = 5;
+inline constexpr std::uint32_t bIsRunning_Width = 1;
+inline constexpr std::uint32_t bIsPaused_Offset = 0x283;
+inline constexpr std::uint32_t bIsPaused_Shift = 6;
+inline constexpr std::uint32_t bIsPaused_Width = 1;
+}
 namespace FNameEntryHeader {
 inline constexpr std::uint32_t bIsWide_Offset = 0x0;
 inline constexpr std::uint32_t bIsWide_Shift = 0;
@@ -301,6 +750,22 @@ namespace AActor {
 inline constexpr std::uint32_t bHidden_Offset = 0x60;
 inline constexpr std::uint32_t bHidden_Shift = 6;
 inline constexpr std::uint32_t bHidden_Width = 1;
+inline constexpr std::uint32_t bActorEnableCollision_Offset = 0xB2;
+inline constexpr std::uint32_t bActorEnableCollision_Shift = 4;
+inline constexpr std::uint32_t bActorEnableCollision_Width = 1;
+}
+namespace FBodyInstanceCore {
+inline constexpr std::uint32_t bSimulatePhysics_Offset = 0x10;
+inline constexpr std::uint32_t bSimulatePhysics_Shift = 0;
+inline constexpr std::uint32_t bSimulatePhysics_Width = 1;
+}
+namespace FHitResult {
+inline constexpr std::uint32_t bBlockingHit_Offset = 0x0;
+inline constexpr std::uint32_t bBlockingHit_Shift = 0;
+inline constexpr std::uint32_t bBlockingHit_Width = 1;
+inline constexpr std::uint32_t bStartPenetrating_Offset = 0x0;
+inline constexpr std::uint32_t bStartPenetrating_Shift = 1;
+inline constexpr std::uint32_t bStartPenetrating_Width = 1;
 }
 namespace ULevel {
 inline constexpr std::uint32_t bIsVisible_Offset = 0x204;
@@ -324,13 +789,23 @@ inline constexpr std::uint32_t bOverrideWalkableSlopeOnInstance_Width = 1;
 
 // Functions called directly.
 namespace fn {
+inline constexpr std::uintptr_t FKey_Copy = 0x1BA9B10;
 inline constexpr std::uintptr_t FKey_Destructor = 0xF523F0;
+inline constexpr std::uintptr_t LaunchImpactInternal = 0x1A64D30;
+inline constexpr std::uintptr_t SaveBaseLocation = 0x33D0DD0;
+inline constexpr std::uintptr_t MovementOnTeleported = 0x33C9440;
 }  // namespace fn
 
 // Virtual slots used for calls through an object's own vtable.
 namespace slot {
 namespace UObject {
 inline constexpr std::uint32_t ProcessEvent = 0x220;
+}
+namespace UMovementComponent {
+inline constexpr std::uint32_t OnTeleported = 0x530;
+}
+namespace UCharacterMovementComponent {
+inline constexpr std::uint32_t SaveBaseLocation = 0x660;
 }
 }  // namespace slot
 
@@ -354,6 +829,65 @@ inline constexpr Target PlayerInputAxis{"PlayerInputAxis", 0x4893030, 0xD10, 0x1
 inline constexpr Target CameraUpdate{"CameraUpdate", 0x487DD98, 0x760, 0x3763770};
 // UFightingMovementComponent vftable, UActorComponent::TickComponent slot -> UFightingMovementComponent::TickComponent
 inline constexpr Target MovementTick{"MovementTick", 0x48A2968, 0x360, 0x1ABB6F0};
+// UAIFightingComponent vftable, UActorComponent::TickComponent slot -> UAIFightingComponent::TickComponent
+inline constexpr Target AIFightingTick{"AIFightingTick", 0x485DAA0, 0x360, 0x18C8960};
+// UAIBehaviorTreeComponent vftable, UActorComponent::TickComponent slot -> USCBehaviorTreeComponent::TickComponent
+inline constexpr Target BehaviorTreeTick{"BehaviorTreeTick", 0x48DF738, 0x360, 0xBF0A10};
+// UHitComponent vftable, UHitComponent::BPE_ValidateHit_Implementation slot -> UHitComponent::BPE_ValidateHit_Implementation
+inline constexpr Target ValidateHit{"ValidateHit", 0x4897F48, 0x418, 0x85E600};
+// UCharacterHealthComponent vftable, UHealthComponent::InternalApplyDamage slot -> UCharacterHealthComponent::InternalApplyDamage
+inline constexpr Target InternalApplyDamage{"InternalApplyDamage", 0x4897AC0, 0x430, 0x1A62AE0};
 }  // namespace hook
+
+namespace value {
+namespace EAnimLinkMethod::Type {
+inline constexpr std::int32_t Absolute = 0;
+}
+namespace ERangeBoundTypes::Type {
+inline constexpr std::int32_t Exclusive = 0;
+inline constexpr std::int32_t Inclusive = 1;
+inline constexpr std::int32_t Open = 2;
+}
+namespace ESlateVisibility {
+inline constexpr std::int32_t Visible = 0;
+inline constexpr std::int32_t Collapsed = 1;
+inline constexpr std::int32_t Hidden = 2;
+inline constexpr std::int32_t HitTestInvisible = 3;
+inline constexpr std::int32_t SelfHitTestInvisible = 4;
+}
+namespace EColorSpaceAndEOTF {
+inline constexpr std::int32_t EUnknown = 0;
+inline constexpr std::int32_t ERec709_sRGB = 33;
+inline constexpr std::int32_t ERec709_Linear = 17;
+inline constexpr std::int32_t ERec2020_PQ = 50;
+}
+namespace EFactionsEnums {
+inline constexpr std::int32_t TMP_Neutral = 5;
+inline constexpr std::int32_t Count = 6;
+}
+namespace EGuardType {
+inline constexpr std::int32_t None = 0;
+inline constexpr std::int32_t Guard = 1;
+inline constexpr std::int32_t Deflect = 2;
+inline constexpr std::int32_t Count = 3;
+}
+namespace EImpactType {
+inline constexpr std::int32_t Hit = 0;
+}
+namespace EAttackPowers {
+inline constexpr std::int32_t Light = 0;
+inline constexpr std::int32_t Medium = 1;
+inline constexpr std::int32_t Strong = 2;
+}
+namespace EHeight {
+inline constexpr std::int32_t Mid = 1;
+}
+namespace EQuadrantTypes {
+inline constexpr std::int32_t FrontLeft = 0;
+}
+namespace ESCCardinalPoints {
+inline constexpr std::int32_t North = 0;
+}
+}  // namespace value
 
 }  // namespace sifucraft::gen

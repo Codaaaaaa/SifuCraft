@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <limits>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
@@ -17,13 +18,16 @@ struct ForwardedEvent {
     std::int32_t code;
     std::int32_t action;       // 1 press, 0 release, -1 repeat
     std::int32_t modifiers;    // SDL keymod bits
+    std::uint32_t gui_revision = 0;
+    double mouse_x = 0, mouse_y = 0, scroll = 0;
 };
 
 // Routes the local player's keyboard and mouse between Sifu and Minecraft.
 //
 // A key's press and release always go to the same side: the side that received the press keeps
 // the key until it is released, whatever the owner is by then. When Minecraft loses ownership,
-// every key it still holds is released on its side. Escape always stays with Sifu (pause menu);
+// every key it still holds is released on its side. Escape closes a mirrored container first;
+// otherwise it stays with Sifu. Prediction tokens cover fast E/Escape sequences.
 // F8 never reaches Sifu and toggles routing on/off.
 //
 // Called from the game thread (input hooks) and the runtime thread (ownership, draining); all
@@ -31,13 +35,19 @@ struct ForwardedEvent {
 class InputRouter {
 public:
     // Game thread. True when the event belongs to Minecraft: the hook must consume it.
-    bool OnKey(const MappedKey& key, std::string_view unreal_name, int action);
+    bool OnKey(const MappedKey& key, std::string_view unreal_name, int action,
+               double game_seconds = std::numeric_limits<double>::quiet_NaN());
     bool OnAxis(KeyKind kind, float delta);
 
     // Runtime thread.
     protocol::InputOwner owner() const;
     void SetOwner(protocol::InputOwner owner);
     bool TakeToggleRequest();
+    void SetGuiState(bool available, bool open, std::uint32_t acknowledged, bool text_input = false);
+    void GuiInputDropped(std::uint32_t revision);
+    void SetUseBinding(std::uint32_t binding);
+    void ResetUse();
+    double UseAge(double game_seconds) const;
 
     struct Drained {
         std::vector<ForwardedEvent> events;
@@ -49,7 +59,7 @@ public:
 
 private:
     std::int32_t ModifiersLocked() const;
-    void PushLocked(protocol::EventType type, std::int32_t code, std::int32_t action);
+    void PushLocked(protocol::EventType type, std::int32_t code, std::int32_t action, std::uint32_t revision = 0);
 
     mutable SRWLOCK lock_ = SRWLOCK_INIT;
     protocol::InputOwner owner_ = protocol::InputOwner::Sifu;
@@ -59,6 +69,10 @@ private:
     double mouse_dy_ = 0.0;
     double scroll_ = 0.0;
     bool toggle_requested_ = false;
+    bool gui_available_ = false, gui_open_ = false, gui_text_input_ = false;
+    std::uint32_t gui_revision_ = 0, gui_pending_ = 0;
+    std::uint32_t use_binding_ = 0;
+    double use_started_ = std::numeric_limits<double>::quiet_NaN();
 };
 
 InputRouter& Router();

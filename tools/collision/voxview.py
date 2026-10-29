@@ -23,7 +23,7 @@ def load(path):
     if data[:4] != b"SCVX":
         sys.exit(f"{path}: not a SCVX file")
     version, cell_cm, per_block = struct.unpack_from("<IfI", data, 4)
-    if version != 1:
+    if version not in (1,2):
         sys.exit(f"{path}: unsupported version {version}")
     feet = struct.unpack_from("<3f", data, 16)
     (name_length,) = struct.unpack_from("<I", data, 28)
@@ -41,7 +41,14 @@ def load(path):
                 bit = (layer & -layer).bit_length() - 1
                 layer &= layer - 1
                 cells.add((bx * per_block + bit % per_block, by * per_block + bit // per_block, bz * per_block + lz))
-    return {"cell": cell_cm, "feet": feet, "map": name, "cells": cells, "blocks": count}
+    coverage=[]
+    if version==2:
+        for _ in range(2):
+            n,=struct.unpack_from('<I',data,at);at+=4
+            assert n<=65536 and at+n*24<=len(data)
+            coverage.append([struct.unpack_from('<6i',data,at+i*24) for i in range(n)]);at+=n*24
+        assert at==len(data)
+    return {"cell": cell_cm, "feet": feet, "map": name, "cells": cells, "blocks": count,"coverage":coverage}
 
 
 def write_png(path, width, height, pixels):

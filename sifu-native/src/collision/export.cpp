@@ -63,11 +63,12 @@ std::vector<FVector> CapsulePoints(const CapsuleShape& c) {
 
 }  // namespace
 
-bool WriteVoxelFile(const std::wstring& path, const VoxelGrid& grid, const std::string& map, const FVector& pawn_feet) {
+bool WriteVoxelFile(const std::wstring& path, const VoxelGrid& grid, const std::string& map, const FVector& pawn_feet,const Coverage* coverage) {
+    if(coverage&&!coverage->valid())return false;
     const File f = Open(path);
     if (!f) return false;
     std::fwrite("SCVX", 1, 4, f.get());
-    Put(f.get(), kVoxelFileVersion);
+    Put(f.get(), coverage?kCoverageVoxelFileVersion:kVoxelFileVersion);
     Put(f.get(), kCellCm);
     Put(f.get(), static_cast<std::uint32_t>(kCellsPerBlock));
     Put(f.get(), pawn_feet);
@@ -80,6 +81,10 @@ bool WriteVoxelFile(const std::wstring& path, const VoxelGrid& grid, const std::
         const std::int32_t coords[3] = {bx, by, bz};
         Put(f.get(), coords);
         Put(f.get(), block.layers);
+    }
+    if(coverage)for(const auto* regions:{&coverage->known,&coverage->unknown}){
+        Put(f.get(),static_cast<std::uint32_t>(regions->size()));
+        for(const auto& region:*regions){Put(f.get(),region.min);Put(f.get(),region.max);}
     }
     return std::ferror(f.get()) == 0;
 }

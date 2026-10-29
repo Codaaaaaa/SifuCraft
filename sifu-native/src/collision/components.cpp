@@ -113,6 +113,17 @@ bool LevelVisible(std::uintptr_t level) {
     return (mem::ReadOr<std::uint8_t>(level + bits::bIsVisible_Offset, 0) >> bits::bIsVisible_Shift) & 1;
 }
 
+std::uint64_t VisibleLevelSignature(std::uintptr_t world){
+    mem::RawArray levels;if(!world||!mem::ReadArray(world+off::UWorld::Levels,&levels)||levels.num>4096)return 0;
+    std::uint64_t hash=14695981039346656037ull;
+    for(int i=0;i<levels.num;i++){
+        const auto level=mem::ReadPtr(levels.data+std::uintptr_t(i)*sizeof(std::uintptr_t));if(!level||!LevelVisible(level))continue;
+        const auto id=ue::IdentityOf(level);const auto name=ue::NameOf(level);
+        for(auto value:{std::uint64_t(level),std::uint64_t(static_cast<unsigned>(id.index)),std::uint64_t(static_cast<unsigned>(id.serial)),std::uint64_t(name.comparison_index),std::uint64_t(name.number)})hash=(hash^value)*1099511628211ull;
+    }
+    return hash;
+}
+
 int VisibleLevelCount(std::uintptr_t world) {
     mem::RawArray levels;
     if (!world || !mem::ReadArray(world + off::UWorld::Levels, &levels)) return 0;
