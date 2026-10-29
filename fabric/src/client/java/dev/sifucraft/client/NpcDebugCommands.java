@@ -62,7 +62,7 @@ final class NpcDebugCommands {
         if(manifest.path().isEmpty()){message("尚无实际场景目录");return 0;}
         var collision=Path.of(manifest.path()).toAbsolutePath().getParent();if(collision==null||collision.getParent()==null)return 0;
         var root=collision.getParent();
-        if(!Files.isRegularFile(root.resolve("npc-debug"))){message("Native调试未启用：先运行tools/npc-debug.ps1 -Enable，并正常重启Sifu");return 0;}
+        if(!Files.isRegularFile(root.resolve("npc-debug"))){message("Native调试未启用：在Sifu的SifuCraft目录下新建空文件npc-debug，并重启Sifu");return 0;}
         if(!pending.compareAndSet(false,true)){message("上一条命令仍在等待；不会自动重复生成/移动");return 0;}
         long now=WorldWriter.clockMillis(),id=ids.updateAndGet(old->Math.max(old+1,now));
         var r=new NpcDebugProtocol.Request(op,kind,id,now,v.scope().nativeSession(),v.scope().mc(),v.scope().world(),target,e==null?0:e.spawn(),
@@ -82,7 +82,7 @@ final class NpcDebugCommands {
                     }
                     Thread.sleep(75);
                 }
-                message("结果超时，可能已执行；先用list核对，工具不会自动重放。确认Native已开启npc-debug并重启。");
+                message("结果超时，可能已执行；先用list核对，工具不会自动重放。确认SifuCraft目录下有npc-debug文件并已重启Sifu。");
             }catch(InterruptedException error){Thread.currentThread().interrupt();}
             catch(Exception error){message("命令通信失败："+error.getMessage()+"；如已写请求，先核对实际角色，勿盲目重发");}
             finally{pending.set(false);}
