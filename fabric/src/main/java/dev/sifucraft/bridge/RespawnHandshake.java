@@ -7,6 +7,7 @@ public final class RespawnHandshake {
     private Phase phase = Phase.ALIVE;
     private long deathMs, lastSendMs, sourceSession;
     private int requestWorld, requestEpoch;
+    private boolean deathScreen;
 
     public Phase phase() { return phase; }
     public boolean ready() { return phase == Phase.ALIVE; }
@@ -29,8 +30,20 @@ public final class RespawnHandshake {
 
     public Action tick(long nowMs, boolean connected, long session, SifuFrame frame,
                        boolean present, boolean dead, boolean anchored) {
+        return tick(nowMs, connected, session, frame, present, dead, anchored, false);
+    }
+    /** {@code clickToRespawn}: vanilla's death screen is shown in Sifu and respawns on the player's click. */
+    public Action tick(long nowMs, boolean connected, long session, SifuFrame frame,
+                       boolean present, boolean dead, boolean anchored, boolean clickToRespawn) {
         if (!connected) return Action.NONE;
+        if (present && dead && clickToRespawn && phase == Phase.ALIVE) { deathScreen = true; return Action.NONE; }
+        if (present && !dead && deathScreen) {
+            deathScreen = false;
+            request(session, frame);
+            return Action.REQUEST;
+        }
         if (present && dead) {
+            deathScreen = false;
             if (phase != Phase.DEAD_WAIT && phase != Phase.RESPAWN_SENT) {
                 phase = Phase.DEAD_WAIT; deathMs = nowMs;
                 return Action.DIED;

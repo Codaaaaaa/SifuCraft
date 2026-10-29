@@ -254,6 +254,7 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerTickEvents.END_SERVER_TICK.register(check::tick);
         }
         ServerLifecycleEvents.SERVER_STARTED.register(DevWorld::migrateDifficulty);
+        ServerLifecycleEvents.SERVER_STARTED.register(DevWorld::lockDaytime);
         ServerLifecycleEvents.SERVER_STARTED.register(server -> PlacedBlocks.open(server.getWorldPath(LevelResource.ROOT),
                 message -> LOG.info("[blocks] {}", message)));
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> PlacedBlocks.close());
@@ -635,7 +636,8 @@ public final class SifuCraftClient implements ClientModInitializer {
     public static boolean mirroredScreenActive() {
         var client = instance;
         return client != null && client.input.minecraftOwnsInput() && client.guiAvailable(client.bridge.latest()) &&
-                client.minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>;
+                (client.minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> ||
+                 client.minecraft.gui.screen() instanceof DeathScreen);
     }
     static int cursorReferenceWidth() {
         return instance.overlay.viewportWidth() > 0 ? instance.overlay.viewportWidth() : instance.minecraft.getWindow().getWidth();
@@ -646,13 +648,17 @@ public final class SifuCraftClient implements ClientModInitializer {
     private boolean guiAvailable(SifuFrame frame) {
         return overlay.enabled() && bridge.peerConnected() && frame != null && frame.minecraftOwnsInput() &&
                 (frame.flags() & Protocol.SNAPSHOT_GUI_AVAILABLE) != 0 && respawn.ready() && space.anchoredTo(frame) &&
-                minecraft.player != null && minecraft.player.isAlive() && minecraft.gui.overlay() == null;
+                minecraft.player != null && alive() && minecraft.gui.overlay() == null;
+    }
+    /** A dead player still has a Sifu GUI while vanilla's death screen waits for the respawn click. */
+    private boolean alive() {
+        return minecraft.player.isAlive() || minecraft.gui.screen() instanceof DeathScreen;
     }
 
     private OverlayCapture.Scope overlayScope() {
         SifuFrame frame = bridge.latest();
         if (!bridge.peerConnected() || frame == null || !frame.minecraftOwnsInput() ||
-                minecraft.level == null || minecraft.player == null || !minecraft.player.isAlive() ||
+                minecraft.level == null || minecraft.player == null || !alive() ||
                 (minecraft.gui.screen() != null && !mirroredScreenActive()) || minecraft.gui.overlay() != null ||
                 !respawn.ready() || !space.anchoredTo(frame)) return null;
         return new OverlayCapture.Scope(bridge.session(), bridge.peerSession(), frame.worldGeneration(), frame.anchorEpoch());
@@ -660,7 +666,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private OverlayCapture.Scope worldScope() {
         SifuFrame frame = bridge.latest();
         if (!bridge.peerConnected() || frame == null || !frame.hasPawn() || !frame.hasCamera() ||
-                minecraft.level == null || minecraft.player == null || !minecraft.player.isAlive() ||
+                minecraft.level == null || minecraft.player == null || !alive() ||
                 minecraft.gui.screen() != null && !mirroredScreenActive() || minecraft.gui.overlay() != null ||
                 !respawn.ready() || !space.anchoredTo(frame)) return null;
         return new OverlayCapture.Scope(bridge.session(), bridge.peerSession(), frame.worldGeneration(), frame.anchorEpoch());
@@ -921,9 +927,11 @@ public final class SifuCraftClient implements ClientModInitializer {
     private void respawnIfDead(long now, SifuFrame frame) {
         var player = minecraft.player;
         boolean dead = player != null && player.isDeadOrDying();
+        // In Minecraft's view the death screen is mirrored into Sifu and waits for its Respawn button.
+        boolean clickToRespawn = dead && minecraft.gui.screen() instanceof DeathScreen && guiAvailable(frame);
         var action = respawn.tick(now, bridge.peerConnected(), bridge.peerSession(), frame, player != null, dead,
-                frame != null && space.anchoredTo(frame));
-        if (dead && bridge.peerConnected() && minecraft.gui.screen() instanceof DeathScreen) minecraft.gui.setScreen(null);
+                frame != null && space.anchoredTo(frame), clickToRespawn);
+        if (dead && !clickToRespawn && bridge.peerConnected() && minecraft.gui.screen() instanceof DeathScreen) minecraft.gui.setScreen(null);
         switch (action) {
             case DIED -> {
                 space.reset(); teleportEpoch = 0; lastGround = null;
