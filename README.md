@@ -1,8 +1,8 @@
 # SifuCraft
 
-**在原版 Sifu 的关卡与敌人世界中，操控一个由 Minecraft Java 规则驱动的 Steve。**
+**在原版 Sifu 的关卡与敌人世界中游玩 Minecraft。**
 
-SifuCraft 不是给 Sifu 换一套 Minecraft 皮肤，也不是在 Sifu 里仿写 Minecraft 的手感。Sifu 与 Minecraft 作为两个独立进程同时运行，通过共享内存桥接：
+Sifu 与 Minecraft 作为两个独立进程同时运行，通过共享内存桥接：
 
 - **Sifu** 负责世界几何、敌人 AI、敌人状态、关卡流程和最终画面；
 - **Minecraft（Fabric Mod）** 负责玩家移动、物品、方块、战斗、生存与红石等规则；
@@ -161,7 +161,7 @@ powershell -File tools/gradle.ps1 build
 2. **启动 Minecraft 客户端**（推荐配置）：
 
    ```powershell
-   powershell -File tools/gradle.ps1 runClient -Psifucraft.overlay=true -Psifucraft.worldEffects=true -Psifucraft.worldLayers=true
+   powershell -File tools/gradle.ps1 runClient '-Psifucraft.overlay=true' '-Psifucraft.worldEffects=true' '-Psifucraft.worldLayers=true'
    ```
 
    Minecraft 会直接进入专用存档 `sifucraft-dev`，其窗口自动隐藏，Sifu 保持在前台。
@@ -221,7 +221,7 @@ Minecraft 接管时，按键遵循 Minecraft 的键位设置：
 
 ### Minecraft 侧：启动参数
 
-通过 `runClient -P<名称>=<值>` 传入：
+通过 `runClient '-P<名称>=<值>'` 传入（在 PowerShell 中必须用单引号包住每个 `-P` 参数，否则会在点号处被拆开）：
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
