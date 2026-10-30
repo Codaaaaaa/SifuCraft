@@ -25,4 +25,6 @@ void DrainReplies(std::vector<Reply>* replies);
 std::string TakeStats();
 // H1 only: keeps existing MC pose/camera for small corrections from its own door use.
 bool PreserveDoorView(std::uintptr_t pawn, float correction_cm);
+// Runtime thread: a door use is still animating, so a sequence-anchor attach is not a cutscene.
+bool DoorAnimationActive();
 }

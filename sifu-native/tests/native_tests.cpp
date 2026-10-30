@@ -1193,6 +1193,12 @@ void TestDoorViewHandover() {
     door.Arm(scope, 100, true);
     Expect(!door.Observe(scope, 104, 51) && !door.Observe(scope, 108, 1.1f), "large native snaps revoke the exception");
     door.Arm(scope, 100, true);
+    // Double doors warp the pawn smoothly past 50 cm (log: 50.5, 51.0, 51.6 cm ...), then attach it to a sequence anchor.
+    bool warped = true;
+    for (int i = 0; i < 200; ++i) warped = warped && door.Observe(scope, 104 + i * 4, 1.5f + i * 0.6f);
+    Expect(warped && door.Active(scope, 5000), "a slow door warp keeps MC view and covers the anchored tail");
+    Expect(!door.Observe(scope, 5004, 160) && !door.Active(scope, 5008), "a snap during the warp still revokes it");
+    door.Arm(scope, 100, true);
     Expect(!door.Observe(scope, 104, NAN), "invalid motion cannot suppress the native script guard");
     door.Arm(scope, 100, true); door.Arm(scope, 104, false);
     Expect(!door.Observe(scope, 108, 1.1f), "a new non-door use cannot inherit door motion permission");

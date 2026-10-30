@@ -370,7 +370,7 @@ private:
         if (signals_.inputs_disabled) return "sifu script: player inputs disabled";
         if (signals_.ignore_move) return "sifu script: movement input ignored";
         if (signals_.ignore_look) return "sifu script: look input ignored";
-        if (signals_.attached_to) return "sifu script: pawn attached";
+        if (signals_.attached_to && !interaction::DoorAnimationActive()) return "sifu script: pawn attached";
         if (now_ms_ - pawn_since_ms_ < kSettleMs) return "pawn just spawned (settling)";
         if (displacement_.driving()) return "sifu script: Sifu is driving the pawn";
         if (!OurWindowInForeground()) return "sifu window not in foreground";
