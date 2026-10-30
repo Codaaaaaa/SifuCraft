@@ -8,6 +8,8 @@ namespace sifucraft::render {
 class WorldCompositor {
 public:
     HRESULT Prepare(const world_image::Frame& frame);
+    // Moves another compositor's CPU Prepare result in; GPU objects stay, buffers are recycled.
+    void TakePrepared(WorldCompositor& from);
     HRESULT Draw(ID3D11Device* device, ID3D11Texture2D* backbuffer, const WorldScene& scene);
     void Reset();
     std::size_t pixels() const { return pixel_count_; }

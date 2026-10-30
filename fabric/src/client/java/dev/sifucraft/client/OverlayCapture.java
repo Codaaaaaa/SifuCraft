@@ -81,10 +81,11 @@ final class OverlayCapture implements AutoCloseable {
                 long shipped = completed.frame;
                 for (Transfer transfer : transfers) if (transfer.state == COMPLETE && transfer.frame <= shipped) transfer.state = FREE;
             }
-            if (now < nextCaptureNs) return;
             // Advance a stable deadline instead of restarting the clock at each rendered frame.
-            // Restarting at 'now' repeatedly rounds a 60 Hz target down when frames arrive late.
+            // Restarting at 'now' repeatedly rounds a 60 Hz target down when frames arrive late;
+            // the quarter-interval slack keeps vsync jitter from skipping frames that are barely early.
             long interval = 1_000_000_000L / FPS;
+            if (now < nextCaptureNs - interval / 4) return;
             nextCaptureNs = nextCaptureNs == 0 || now - nextCaptureNs >= interval
                     ? now + interval : nextCaptureNs + interval;
             var target = minecraft.gameRenderer.mainRenderTarget();

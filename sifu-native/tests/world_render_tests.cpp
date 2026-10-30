@@ -97,7 +97,8 @@ void MovingSurface(ID3D11Device* device, ID3D11DeviceContext* context) {
         std::printf("surface motion tx=%.0f tz=%.0f yaw=%.2f pitch=%.2f interior=%u holes=%u\n",motion[0],motion[1],motion[2],motion[3],tested,holes);
         Check(tested>100&&holes==0,"continuous opaque surface has no interior see-through pixels under camera motion");
     }
-    camera(45,15,.2f,.1f);source(false,true);++h.frame_id;world.Prepare(frame);context->ClearRenderTargetView(rtv.get(),background);world.Draw(device,image.get(),scene);
+    // Prepared on a CPU-only compositor and handed over, as the Sifu world worker does.
+    camera(45,15,.2f,.1f);source(false,true);++h.frame_id;{render::WorldCompositor worker;Check(worker.Prepare(frame)==S_OK,"worker prepare");world.TakePrepared(worker);}context->ClearRenderTargetView(rtv.get(),background);world.Draw(device,image.get(),scene);
     auto pixels=Read(device,context,image.get());unsigned translucent_errors=0;
     for(UINT y=0;y<height;++y)for(UINT x=0;x<width;++x)if(inside(x+.5f,y+.5f,.55f)){
         const auto at=(y*width+x)*4;if(std::abs(int(pixels[at])-153)>2||std::abs(int(pixels[at+1])-51)>2||std::abs(int(pixels[at+2])-76)>2)++translucent_errors;

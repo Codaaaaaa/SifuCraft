@@ -584,6 +584,8 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (client != null && client.overlay.enabled()) {
             var scope = client.overlayScope();
             var world = client.worldScope();
+            // Input arrives through Sifu, so MC's own AFK limiter (30 fps after 60 s) would throttle every layer.
+            if (scope != null || world != null) client.minecraft.getFramerateLimitTracker().onInputReceived();
             client.worldLayers.updateScope(world);
             client.overlay.render(client.minecraft, scope, world);
         }
