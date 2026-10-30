@@ -171,7 +171,7 @@ public final class SifuCraftClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        EntityRenderers.register(EnemyEntities.ENEMY_PROXY, NoopRenderer::new);
+        EntityRenderers.register(EnemyEntities.ENEMY_PROXY, EnemyProxyRenderer::new);
         EntityRenderers.register(dev.sifucraft.blocks.SignalEntities.PLAYER_BODY, NoopRenderer::new);
         minecraft = Minecraft.getInstance();
         if(Boolean.getBoolean("sifucraft.cannonSelfTest")&&!Boolean.getBoolean("sifucraft.cannonLive")){CannonCheck.install();return;}
@@ -254,6 +254,7 @@ public final class SifuCraftClient implements ClientModInitializer {
             ServerTickEvents.END_SERVER_TICK.register(check::tick);
         }
         ServerLifecycleEvents.SERVER_STARTED.register(DevWorld::migrateDifficulty);
+        ServerLifecycleEvents.SERVER_STARTED.register(DevWorld::lockDaytime);
         ServerLifecycleEvents.SERVER_STARTED.register(server -> PlacedBlocks.open(server.getWorldPath(LevelResource.ROOT),
                 message -> LOG.info("[blocks] {}", message)));
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> PlacedBlocks.close());
@@ -583,6 +584,8 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (client != null && client.overlay.enabled()) {
             var scope = client.overlayScope();
             var world = client.worldScope();
+            // Input arrives through Sifu, so MC's own AFK limiter (30 fps after 60 s) would throttle every layer.
+            if (scope != null || world != null) client.minecraft.getFramerateLimitTracker().onInputReceived();
             client.worldLayers.updateScope(world);
             client.overlay.render(client.minecraft, scope, world);
         }
@@ -607,6 +610,10 @@ public final class SifuCraftClient implements ClientModInitializer {
         var c = instance;
         return c != null && (overlayActive() || (c.worldLayers.enabled() && c.worldScope() != null));
     }
+    static dev.sifucraft.bridge.EnemyHeads.Head enemyHead(dev.sifucraft.bridge.EnemyFrame.Key key) {
+        return instance == null ? null : instance.bridge.enemyHeads().get(key);
+    }
+    static MapPlacement worldPlacement() { return instance == null ? null : instance.space.placement(); }
     public static dev.sifucraft.bridge.WorldView nativeWorldView() {
         var c = instance;
         if (c == null || !c.worldLayers.enabled() || !WorldEffects.active() || c.worldScope() == null) return null;
@@ -635,8 +642,16 @@ public final class SifuCraftClient implements ClientModInitializer {
     public static boolean mirroredScreenActive() {
         var client = instance;
         return client != null && client.input.minecraftOwnsInput() && client.guiAvailable(client.bridge.latest()) &&
-                client.minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>;
+                (client.minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> ||
+                 client.minecraft.gui.screen() instanceof DeathScreen ||
+                 client.minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.ChatScreen ||
+                 valueBoard(client.minecraft.gui.screen()));
     }
+    /** Create's hold-Use value board (motor speed, delays...); optional, matched by name. */
+    static boolean valueBoard(Screen screen) {
+        return screen != null && screen.getClass().getName().equals("com.zurrtum.create.client.foundation.blockEntity.ValueSettingsScreen");
+    }
+    public static void warpPointer(double px, double py) { if (instance != null) instance.input.warp(px, py); }
     static int cursorReferenceWidth() {
         return instance.overlay.viewportWidth() > 0 ? instance.overlay.viewportWidth() : instance.minecraft.getWindow().getWidth();
     }
@@ -646,13 +661,17 @@ public final class SifuCraftClient implements ClientModInitializer {
     private boolean guiAvailable(SifuFrame frame) {
         return overlay.enabled() && bridge.peerConnected() && frame != null && frame.minecraftOwnsInput() &&
                 (frame.flags() & Protocol.SNAPSHOT_GUI_AVAILABLE) != 0 && respawn.ready() && space.anchoredTo(frame) &&
-                minecraft.player != null && minecraft.player.isAlive() && minecraft.gui.overlay() == null;
+                minecraft.player != null && alive() && minecraft.gui.overlay() == null;
+    }
+    /** A dead player still has a Sifu GUI while vanilla's death screen waits for the respawn click. */
+    private boolean alive() {
+        return minecraft.player.isAlive() || minecraft.gui.screen() instanceof DeathScreen;
     }
 
     private OverlayCapture.Scope overlayScope() {
         SifuFrame frame = bridge.latest();
         if (!bridge.peerConnected() || frame == null || !frame.minecraftOwnsInput() ||
-                minecraft.level == null || minecraft.player == null || !minecraft.player.isAlive() ||
+                minecraft.level == null || minecraft.player == null || !alive() ||
                 (minecraft.gui.screen() != null && !mirroredScreenActive()) || minecraft.gui.overlay() != null ||
                 !respawn.ready() || !space.anchoredTo(frame)) return null;
         return new OverlayCapture.Scope(bridge.session(), bridge.peerSession(), frame.worldGeneration(), frame.anchorEpoch());
@@ -660,7 +679,7 @@ public final class SifuCraftClient implements ClientModInitializer {
     private OverlayCapture.Scope worldScope() {
         SifuFrame frame = bridge.latest();
         if (!bridge.peerConnected() || frame == null || !frame.hasPawn() || !frame.hasCamera() ||
-                minecraft.level == null || minecraft.player == null || !minecraft.player.isAlive() ||
+                minecraft.level == null || minecraft.player == null || !alive() ||
                 minecraft.gui.screen() != null && !mirroredScreenActive() || minecraft.gui.overlay() != null ||
                 !respawn.ready() || !space.anchoredTo(frame)) return null;
         return new OverlayCapture.Scope(bridge.session(), bridge.peerSession(), frame.worldGeneration(), frame.anchorEpoch());
@@ -701,7 +720,6 @@ public final class SifuCraftClient implements ClientModInitializer {
         blockShapes.update(minecraft, bridge, space.placement());
         WorldTerrain.update(minecraft);
         publishBlocks(previous);
-        enforceNoFlight();
         rescueFromFall(previous);
         var outgoing=currentState(previous);
         if(playerSignalCheck!=null)outgoing=playerSignalCheck.protectNativePose(outgoing,guiAvailable(previous));
@@ -921,9 +939,11 @@ public final class SifuCraftClient implements ClientModInitializer {
     private void respawnIfDead(long now, SifuFrame frame) {
         var player = minecraft.player;
         boolean dead = player != null && player.isDeadOrDying();
+        // In Minecraft's view the death screen is mirrored into Sifu and waits for its Respawn button.
+        boolean clickToRespawn = dead && minecraft.gui.screen() instanceof DeathScreen && guiAvailable(frame);
         var action = respawn.tick(now, bridge.peerConnected(), bridge.peerSession(), frame, player != null, dead,
-                frame != null && space.anchoredTo(frame));
-        if (dead && bridge.peerConnected() && minecraft.gui.screen() instanceof DeathScreen) minecraft.gui.setScreen(null);
+                frame != null && space.anchoredTo(frame), clickToRespawn);
+        if (dead && !clickToRespawn && bridge.peerConnected() && minecraft.gui.screen() instanceof DeathScreen) minecraft.gui.setScreen(null);
         switch (action) {
             case DIED -> {
                 space.reset(); teleportEpoch = 0; lastGround = null;
@@ -958,24 +978,16 @@ public final class SifuCraftClient implements ClientModInitializer {
         if (screen == null || minecraft.player == null || !bridge.peerConnected() || screen instanceof DeathScreen) return;
         String name = screen.getClass().getSimpleName();
         if (name.contains("Loading") || name.contains("Receiving") || name.contains("Message")) return;
-        if (guiAvailable(bridge.latest()) && screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>) return;
+        if (mirroredScreenActive()) return; // containers and chat are shown in Sifu
         if (screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>) minecraft.player.closeContainer();
         else minecraft.gui.setScreen(null);
         if (closedScreens.add(name)) LOG.info("[input] closed {}: Minecraft's window is hidden while attached to Sifu", name);
     }
 
-    /** While attached to Sifu the player walks on Sifu's level: no flying (creative grants it again on every ability sync). */
-    private void enforceNoFlight() {
-        Player player = minecraft.player;
-        if (player == null || !bridge.peerConnected() || !player.getAbilities().mayfly) return;
-        player.getAbilities().mayfly = false;
-        player.getAbilities().flying = false;
-        player.onUpdateAbilities();
-    }
-
     /**
      * A player that drops far below where it last stood (a hole in the grid, a gap between Sifu's
      * collision and the edge of the level) is put back there instead of falling through the world.
+     * A creative player flying down on purpose is not falling.
      */
     private void rescueFromFall(SifuFrame frame) {
         Player player = minecraft.player;
@@ -996,7 +1008,7 @@ public final class SifuCraftClient implements ClientModInitializer {
             return;
         }
         long now = System.currentTimeMillis();
-        if (lastGround == null || player.getY() > lastGround.y - FALL_RESCUE_BLOCKS || now - rescueSentMs < RESCUE_COOLDOWN_MS) {
+        if (lastGround == null || player.getAbilities().flying || player.getY() > lastGround.y - FALL_RESCUE_BLOCKS || now - rescueSentMs < RESCUE_COOLDOWN_MS) {
             return;
         }
         rescueSentMs = now;

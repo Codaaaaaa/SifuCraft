@@ -15,6 +15,7 @@
 #include "blocks/block_mirror.h"
 #include "bridge/sifu_bridge.h"
 #include "combat/enemies.h"
+#include "combat/enemy_heads.h"
 #include "combat/motion_probe.h"
 #include "combat/world_motion_service.h"
 #include "combat/npc_debug.h"
@@ -369,7 +370,7 @@ private:
         if (signals_.inputs_disabled) return "sifu script: player inputs disabled";
         if (signals_.ignore_move) return "sifu script: movement input ignored";
         if (signals_.ignore_look) return "sifu script: look input ignored";
-        if (signals_.attached_to) return "sifu script: pawn attached";
+        if (signals_.attached_to && !interaction::DoorAnimationActive()) return "sifu script: pawn attached";
         if (now_ms_ - pawn_since_ms_ < kSettleMs) return "pawn just spawned (settling)";
         if (displacement_.driving()) return "sifu script: Sifu is driving the pawn";
         if (!OurWindowInForeground()) return "sifu window not in foreground";
@@ -749,6 +750,7 @@ void Run(std::uintptr_t image_base) {
     CoverageSchedule coverage_schedule;
     probe::CombatCensus combat_census;
     combat::Enemies enemies;
+    combat::EnemyHeads enemy_heads;
     shape_data::Reader shape_reader;
     shape_data::Frame shape_frame;
     world_motion::Mailbox world_mailbox;
@@ -875,7 +877,8 @@ void Run(std::uintptr_t image_base) {
         input::Router().SetUseBinding(settings.stage >= 8 && g_bridge.peer_connected() && g_bridge.peer_state().valid ? g_bridge.peer_state().use_binding : 0);
         if (settings.stage >= 7 && tick % 2 == 0) {
             enemies.Update(world, generation, player.pawn, GetTickCount64());
-            g_bridge.PublishEnemies(world ? generation : 0, enemies.entries());
+            enemy_heads.Update(enemies.targets(), enemies.entries());
+            g_bridge.PublishEnemies(world ? generation : 0, enemies.entries(), enemy_heads.entries());
         }
         // Blocks wait until the level has settled (its collision grid is built): by then the
         // materials they are made of have streamed in.
@@ -1046,7 +1049,7 @@ void Run(std::uintptr_t image_base) {
             if (settings.stage >= 1) SC_LOG("[hooks] %s", hooks::TakeStats().c_str());
             if (settings.stage >= 6) SC_LOG("[blocks] %s", blocks::TakeStats().c_str());
             SC_LOG("[combat-census] %s", combat_census.TakeStats().c_str());
-            if (settings.stage >= 7) SC_LOG("[combat] enemies %s", enemies.TakeStats().c_str());
+            if (settings.stage >= 7) SC_LOG("[combat] enemies %s %s", enemies.TakeStats().c_str(), enemy_heads.TakeStats().c_str());
             if (settings.stage >= 7) SC_LOG("[combat] %s", combat::damage::TakeStats().c_str());
             if (settings.stage >= 7) SC_LOG("[player-hits] %s", combat::player_hits::TakeStats().c_str());
             if (settings.stage >= 8) SC_LOG("[overlay] %s", render::TakeStats().c_str());

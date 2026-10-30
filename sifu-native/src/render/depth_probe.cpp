@@ -7,6 +7,9 @@
 #include <cstring>
 #include <vector>
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include "core/log.h"
 #include "core/safe_memory.h"
 #include "generated/sifu_build.g.h"
@@ -37,6 +40,31 @@ struct CpuTime {
     }
     std::uint64_t Average() const { const auto count = samples.load(); return count ? total_us.load() / count : 0; }
 } prepare_cpu, submit_cpu;
+// Read+Prepare run here, so the 16 MB frame copy and CPU patch build never block Present.
+struct WorldWorker {
+    std::mutex mutex;
+    std::condition_variable wake;
+    bool started = false, signalled = false, active = false, fresh = false;
+    Scope scope;
+    std::uint64_t generation = 0, ready_generation = 0;
+    WorldCompositor ready; // CPU result only; the Present thread swaps it into its own compositor
+    world_image::FrameHeader ready_header{};
+    void Request(const Scope& s) {
+        { std::lock_guard lock(mutex); scope = s; active = signalled = true;
+          if (!started) { started = true; std::thread([this] { Run(); }).detach(); } }
+        wake.notify_one();
+    }
+    void Stop() {
+        { std::lock_guard lock(mutex); ++generation; active = fresh = false; signalled = true; }
+        wake.notify_one();
+    }
+    bool Take(WorldCompositor& renderer, world_image::FrameHeader& header) {
+        std::lock_guard lock(mutex);
+        if (!fresh || ready_generation != generation) return false;
+        renderer.TakePrepared(ready); header = ready_header; fresh = false; return true;
+    }
+    void Run();
+} &world_worker = *new WorldWorker;
 struct VerifiedBinding {
     DepthBinding::Stage stage = DepthBinding::None;
     UINT slot = 0, bytes = 0;
@@ -187,8 +215,7 @@ struct Probe {
     DepthIdentity parameter_identity;
     WorldScene world_scene;
     WorldCompositor world_renderer;
-    world_image::Reader world_reader;
-    world_image::Frame world_frame;
+    world_image::FrameHeader world_header{};
     std::uint64_t scene_ms = 0, verified_last_ms = 0, world_retry_ms = 0, world_error_log_ms = 0, world_wait_log_ms = 0, world_gpu_log_ms = 0;
     bool world_active = false;
     ParameterReadback parameters;
@@ -201,7 +228,7 @@ struct Probe {
     unsigned logs = 0;
     void CancelCapture() { staging.reset(); pending_device.reset(); pending_since = 0; }
     void ResetWorld() {
-        world_scene.Reset(); world_renderer.Reset(); world_reader.Close(); world_frame = {}; scene_ms = world_retry_ms = 0; world_active = false;
+        world_scene.Reset(); world_renderer.Reset(); world_worker.Stop(); world_header = {}; scene_ms = world_retry_ms = 0; world_active = false;
         world_pixels = world_no_depth = world_patches = 0;
     }
     void Reset() { CancelCapture(); parameters.Reset(); copy.Reset(); verified = {}; parameter_identity = {}; ResetWorld(); }
@@ -264,6 +291,38 @@ struct Probe {
     }
 } &probe = *new Probe;
 }
+void WorldWorker::Run() {
+    world_image::Reader reader;
+    world_image::Frame frame;
+    WorldCompositor prepared;
+    std::uint64_t seen = 0;
+    for (;;) {
+        Scope s; std::uint64_t job; bool on;
+        { std::unique_lock lock(mutex); wake.wait(lock, [this] { return signalled; }); signalled = false; s = scope; job = generation; on = active; }
+        if (job != seen) { reader.Close(); prepared.Reset(); seen = job; }
+        if (!on || !reader.Read(s.mc_session, s.sifu_session, s.world, s.epoch, GetTickCount64(), &frame)) continue;
+        ++world_frames;
+        const auto started = std::chrono::steady_clock::now();
+        if (FAILED(prepared.Prepare(frame))) { ++world_errors; frame.header = {}; }
+        prepare_cpu.Record(started);
+        world_pixels = prepared.pixels(); world_no_depth = prepared.missing_depth(); world_patches = prepared.patches();
+        world_peak_pixels = std::max(world_peak_pixels.load(), world_pixels.load());
+        world_peak_no_depth = std::max(world_peak_no_depth.load(), world_no_depth.load());
+        if (prepared.hasContent() && world_capture.exchange(false)) {
+            FILE* file = _wfopen((log::RootDirectory() + L"\\world-frame.bin").c_str(), L"wb");
+            bool ok = false;
+            if (file) {
+                const bool written = std::fwrite(&frame.header,sizeof(frame.header),1,file)==1 &&
+                    std::fwrite(frame.pixels.data(),1,frame.pixels.size(),file)==frame.pixels.size();
+                const bool closed = std::fclose(file)==0; ok=written&&closed;
+            }
+            SC_LOG("[world-image] frame capture %s -> world-frame.bin", ok ? "PASS" : "FAIL");
+        }
+        std::lock_guard lock(mutex);
+        if (job != generation) continue;
+        ready.TakePrepared(prepared); ready_header = frame.header; ready_generation = job; fresh = true;
+    }
+}
 void Configure(std::uintptr_t image_base, bool enabled, bool capture, bool observe_bindings, bool world_render, const Scope& scope) {
     AcquireSRWLockExclusive(&config_lock); configuration = {image_base, enabled, observe_bindings, world_render && observe_bindings, scope}; ReleaseSRWLockExclusive(&config_lock);
     if (capture) { capture_until = GetTickCount64() + 10000; parameters_capture = observe_bindings; if (observe_bindings) depth_observer::RequestParameters(); }
@@ -319,29 +378,10 @@ void Tick(IDXGISwapChain* chain) {
     probe.world_scene.Invalidate(); probe.scene_ms = 0;
     if (world_active) {
         probe.world_active = true;
-        if (probe.world_reader.Read(c.scope.mc_session, c.scope.sifu_session, c.scope.world, c.scope.epoch, now, &probe.world_frame)) {
-            ++world_frames;
-            const auto started = std::chrono::steady_clock::now();
-            if (FAILED(probe.world_renderer.Prepare(probe.world_frame))) { ++world_errors; probe.world_frame = {}; }
-            prepare_cpu.Record(started);
-            world_pixels = probe.world_renderer.pixels(); world_no_depth = probe.world_renderer.missing_depth();
-            world_patches = probe.world_renderer.patches();
-            world_peak_pixels = std::max(world_peak_pixels.load(), world_pixels.load());
-            world_peak_no_depth = std::max(world_peak_no_depth.load(), world_no_depth.load());
-            if (probe.world_renderer.hasContent() && world_capture.exchange(false)) {
-                FILE* file = _wfopen((log::RootDirectory() + L"\\world-frame.bin").c_str(), L"wb");
-                bool ok = false;
-                if (file) {
-                    const auto& frame = probe.world_frame;
-                    const bool written = std::fwrite(&frame.header,sizeof(frame.header),1,file)==1 &&
-                        std::fwrite(frame.pixels.data(),1,frame.pixels.size(),file)==frame.pixels.size();
-                    const bool closed = std::fclose(file)==0; ok=written&&closed;
-                }
-                SC_LOG("[world-image] frame capture %s -> world-frame.bin", ok ? "PASS" : "FAIL");
-            }
-        }
-        const bool drawable = world_image::ValidFrame(probe.world_frame.header, now) && probe.world_renderer.hasContent() &&
-            probe.world_frame.header.world_generation == c.scope.world && probe.world_frame.header.anchor_epoch == c.scope.epoch;
+        world_worker.Request(c.scope);
+        world_worker.Take(probe.world_renderer, probe.world_header);
+        const bool drawable = world_image::ValidFrame(probe.world_header, now) && probe.world_renderer.hasContent() &&
+            probe.world_header.world_generation == c.scope.world && probe.world_header.anchor_epoch == c.scope.epoch;
         if (drawable && correct_context && depth_observer::Installed() && expected.identity.resource) {
             if (now >= probe.world_wait_log_ms) {
                 probe.world_wait_log_ms = now + 3000;
@@ -410,18 +450,18 @@ void Tick(IDXGISwapChain* chain) {
 }
 void DrawWorld(ID3D11Device* device, ID3D11Texture2D* backbuffer, const Scope& scope, std::uint64_t now) {
     if (!probe.world_active || !scope.enabled || !SameScope(scope, probe.live_scope) || !Recent(scope.updated_ms, now) ||
-        !Recent(probe.scene_ms, now) || !world_image::ValidFrame(probe.world_frame.header, now) || !probe.world_scene.depth() || now < probe.world_retry_ms) return;
+        !Recent(probe.scene_ms, now) || !world_image::ValidFrame(probe.world_header, now) || !probe.world_scene.depth() || now < probe.world_retry_ms) return;
     const auto started = std::chrono::steady_clock::now();
     const auto result = probe.world_renderer.Draw(device, backbuffer, probe.world_scene);
     submit_cpu.Record(started);
     if (result == S_OK) {
         if (world_draws.fetch_add(1) == 0) SC_LOG("[world-image] first native draw world=%u epoch=%u source=%ux%u visible=%llu no_depth=%llu",
-            scope.world, scope.epoch, probe.world_frame.header.width, probe.world_frame.header.height,
+            scope.world, scope.epoch, probe.world_header.width, probe.world_header.height,
             static_cast<unsigned long long>(world_pixels.load()), static_cast<unsigned long long>(world_no_depth.load()));
         if(now>=probe.world_gpu_log_ms){
             probe.world_gpu_log_ms=now+2000;const auto gpu=probe.world_renderer.gpuStats();
             SC_LOG("[world-gpu] frame=%llu pixels=%llu patches=%llu n=%llu total_ns=%llu peak_ns=%llu disjoint=%llu skipped=%llu errors=%llu prepare_n=%llu prepare_total_us=%llu submit_n=%llu submit_total_us=%llu",
-                probe.world_frame.header.frame_id,world_pixels.load(),world_patches.load(),gpu.samples,gpu.total_ns,gpu.peak_ns,gpu.disjoint,gpu.skipped,gpu.errors,
+                probe.world_header.frame_id,world_pixels.load(),world_patches.load(),gpu.samples,gpu.total_ns,gpu.peak_ns,gpu.disjoint,gpu.skipped,gpu.errors,
                 prepare_cpu.samples.load(),prepare_cpu.total_us.load(),submit_cpu.samples.load(),submit_cpu.total_us.load());
         }
     } else if (FAILED(result)) {

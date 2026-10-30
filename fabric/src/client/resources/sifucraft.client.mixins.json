@@ -12,6 +12,7 @@
 		"ContainerScreenAccessor",
 		"DevItemGuiMixin",
 		"FireworkRocketAccessor",
+		"CreateValueBoardMixin",
 		"GameRendererMixin",
 		"HudMixin",
 		"KeyMappingAccessor",

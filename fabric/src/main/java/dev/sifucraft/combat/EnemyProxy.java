@@ -19,8 +19,9 @@ import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
-/** An invisible target whose position, dimensions and life belong to Sifu. No independent AI. */
-public final class EnemyProxy extends Mob {
+/** An invisible target whose position, dimensions and life belong to Sifu. No independent AI.
+ * An Enemy, so iron golems hunt it; their hits reach Sifu as world-effect damage. */
+public final class EnemyProxy extends Mob implements net.minecraft.world.entity.monster.Enemy {
     private final dev.sifucraft.blocks.SignalSteps signalSteps=new dev.sifucraft.blocks.SignalSteps();
     public void updateSignals(){dev.sifucraft.blocks.RedstoneContacts.touch(this);signalSteps.update(this);}
     private boolean capturingDamage;
@@ -109,6 +110,10 @@ public final class EnemyProxy extends Mob {
     @Override public void remove(Entity.RemovalReason reason){MachineEffects.detached(this);super.remove(reason);}
     @Override protected boolean isAffectedByBlocks(){return BlockEnvironment.active(this)?!isRemoved():super.isAffectedByBlocks();}
 
+    /** Dispensers may put a carved pumpkin (or other head item) on; the client draws it on Sifu's head bone. */
+    @Override protected boolean canDispenserEquipIntoSlot(net.minecraft.world.entity.EquipmentSlot slot) {
+        return slot == net.minecraft.world.entity.EquipmentSlot.HEAD;
+    }
     @Override public boolean isPickable() { return !isRemoved() && isAlive(); }
     @Override public float getSecondsToDisableBlocking() { return ShieldBlocks.secondsToDisable(this); }
     @Override public boolean isPushable() { return false; }

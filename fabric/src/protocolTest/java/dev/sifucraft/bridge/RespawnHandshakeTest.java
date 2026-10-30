@@ -32,5 +32,15 @@ final class RespawnHandshakeTest {
         var suspended = McState.withoutPose(state.flags(), 10, 2, 4);
         check((suspended.flags() & Protocol.MC_HAS_POSE) == 0 && suspended.sifuSession() == 2 && suspended.worldGeneration() == 4,
                 "suspended snapshots retain the target lifetime/world and contain no pose");
+        var clicked = new RespawnHandshake();
+        check(clicked.tick(100, true, 2, frame(4, 10), true, true, true, true) == RespawnHandshake.Action.NONE && clicked.ready(),
+                "death screen keeps the pose and GUI while it waits for a click");
+        check(clicked.tick(60000, true, 2, frame(4, 10), true, true, true, true) == RespawnHandshake.Action.NONE, "no automatic respawn behind the death screen");
+        check(clicked.tick(60100, true, 2, frame(4, 10), true, false, false, false) == RespawnHandshake.Action.REQUEST &&
+                clicked.requestEpoch() == 10 && !clicked.ready(), "the clicked respawn re-anchors like an automatic one");
+        var leftScreen = new RespawnHandshake();
+        leftScreen.tick(100, true, 2, frame(4, 10), true, true, true, true);
+        check(leftScreen.tick(200, true, 2, frame(4, 10), true, true, true, false) == RespawnHandshake.Action.DIED,
+                "leaving Minecraft's view falls back to the automatic respawn");
     }
 }

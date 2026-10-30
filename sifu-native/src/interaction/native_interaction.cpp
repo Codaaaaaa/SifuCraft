@@ -80,6 +80,12 @@ bool PreserveDoorView(std::uintptr_t pawn, float correction_cm) {
     if (keep) g_door_corrections.fetch_add(1, std::memory_order_relaxed);
     return keep;
 }
+bool DoorAnimationActive() {
+    AcquireSRWLockShared(&g_lock);
+    const bool active = g_context.pose_owned && g_door_motion.Active(ScopeOf(g_context), GetTickCount64());
+    ReleaseSRWLockShared(&g_lock);
+    return active;
+}
 void Submit(const protocol::Event& event) {
     if (event.size != sizeof(protocol::InteractPayload)) return;
     AcquireSRWLockExclusive(&g_lock);

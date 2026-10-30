@@ -29,6 +29,7 @@
 #include "collision/change_watch.h"
 #include "collision/refresh_queue.h"
 #include "collision/walk_check.h"
+#include "combat/head_frame.h"
 #include "core/build_guard.h"
 #include "core/log.h"
 #include "core/safe_memory.h"
@@ -504,6 +505,25 @@ void TestAffine() {
     Expect(Near(AffineFromQuat(q, {}, {2, 3, 4}).MinAxisScale(), 2.0f) &&
                Near(AffineFromQuat(q, {}, {2, 3, 4}).MaxAxisScale(), 4.0f),
            "axis scales");
+}
+
+void TestHeadFrame() {
+    using namespace sifucraft::ue;
+    using sifucraft::combat::HeadFrame;
+    using sifucraft::combat::IsHeadBoneName;
+    // A scaled mesh turned -90 against its actor, and an arbitrary head bone reference orientation.
+    const Affine component = AffineFromRotator({0, -90, 0}, {100, 0, 0}) * AffineFromQuat({0, 0, 0, 1}, {}, {1.2f, 1.2f, 1.2f});
+    const Affine reference = AffineFromRotator({10, 30, -80}, {0, 0, 160});
+    FVector forward, up;
+    HeadFrame(component, reference, reference, {1, 0, 0}, &forward, &up);
+    Expect(NearV(forward, 1, 0, 0) && NearV(up, 0, 0, 1), "head in reference pose keeps the character's facing");
+    // Nod 30 degrees down in world space, expressed as a component-space bone pose.
+    const Affine nod = AffineFromRotator({0, 90, 0}, {}) * AffineFromRotator({-30, 0, 0}, {}) * AffineFromRotator({0, -90, 0}, {});
+    HeadFrame(component, nod * reference, reference, {1, 0, 0}, &forward, &up);
+    Expect(NearV(forward, 0.8660254f, 0, -0.5f) && NearV(up, 0.5f, 0, 0.8660254f), "head nod turns forward and up");
+    Expect(IsHeadBoneName("head") && IsHeadBoneName("Head") && IsHeadBoneName("Bip001 Head") && IsHeadBoneName("b_head") &&
+               !IsHeadBoneName("HeadEnd") && !IsHeadBoneName("head_top") && !IsHeadBoneName("forehead") && !IsHeadBoneName("hea"),
+           "head bone names");
 }
 
 void TestVoxels() {
@@ -1173,6 +1193,12 @@ void TestDoorViewHandover() {
     door.Arm(scope, 100, true);
     Expect(!door.Observe(scope, 104, 51) && !door.Observe(scope, 108, 1.1f), "large native snaps revoke the exception");
     door.Arm(scope, 100, true);
+    // Double doors warp the pawn smoothly past 50 cm (log: 50.5, 51.0, 51.6 cm ...), then attach it to a sequence anchor.
+    bool warped = true;
+    for (int i = 0; i < 200; ++i) warped = warped && door.Observe(scope, 104 + i * 4, 1.5f + i * 0.6f);
+    Expect(warped && door.Active(scope, 5000), "a slow door warp keeps MC view and covers the anchored tail");
+    Expect(!door.Observe(scope, 5004, 160) && !door.Active(scope, 5008), "a snap during the warp still revokes it");
+    door.Arm(scope, 100, true);
     Expect(!door.Observe(scope, 104, NAN), "invalid motion cannot suppress the native script guard");
     door.Arm(scope, 100, true); door.Arm(scope, 104, false);
     Expect(!door.Observe(scope, 108, 1.1f), "a new non-door use cannot inherit door motion permission");
@@ -1279,6 +1305,7 @@ int main(int argc, char** argv) {
     TestInputRouter();
     TestWorldTransform();
     TestAffine();
+    TestHeadFrame();
     TestGridPublication();
     TestVoxels();
     TestCollisionFiles();

@@ -97,20 +97,21 @@ bool Body(std::uintptr_t actor,motion::BodySample* out){
     probe::HealthSample hp;if(!probe::ReadHealthSample(out->health,&hp)||hp.health<=0||hp.down)return false;out->hp=hp.health;
     return std::isfinite(out->half)&&out->half>=out->radius&&out->half<=200&&out->radius>=10&&out->radius<=100;
 }
-bool Destination(const world_motion::Context& c,const Request& r,float radius,float half,std::uintptr_t except){
-    const ue::FVector feet{r.feet[0],r.feet[1],r.feet[2]};ue::FVector player{};
-    if(!ue::ReadWorldLocation(mem::ReadPtr(c.actors.pawn+off::AActor::RootComponent),&player))return false;
+// Feet stay exactly where MC asked: MC checked the floor, which may be a placed block this scene grid never sees.
+const char* Destination(const world_motion::Context& c,const ue::FVector& feet,float radius,float half,std::uintptr_t except){
+    ue::FVector player{};
+    if(!ue::ReadWorldLocation(mem::ReadPtr(c.actors.pawn+off::AActor::RootComponent),&player))return "player-location";
     const float dx=feet.x-player.x,dy=feet.y-player.y,dz=feet.z-player.z;
-    if(dx*dx+dy*dy+dz*dz>3000*3000||!collision::HasFloorSupport(*c.actors.grid,feet))return false;
+    if(dx*dx+dy*dy+dz*dz>3000*3000)return "destination-too-far";
     for(int z=collision::CellIndex(feet.z+collision::kCellCm);z<=collision::CellIndex(feet.z+half*2-1);z++)
         for(int y=collision::CellIndex(feet.y-radius);y<=collision::CellIndex(feet.y+radius);y++)
-            for(int x=collision::CellIndex(feet.x-radius);x<=collision::CellIndex(feet.x+radius);x++)if(c.actors.grid->Get(x,y,z))return false;
+            for(int x=collision::CellIndex(feet.x-radius);x<=collision::CellIndex(feet.x+radius);x++)if(c.actors.grid->Get(x,y,z))return "destination-blocked";
     auto overlaps=[&](std::uintptr_t actor){if(actor==except)return false;const auto root=mem::ReadPtr(actor+off::AActor::RootComponent);ue::FVector at{};if(!ue::ReadWorldLocation(root,&at))return true;
         const auto rr=mem::ReadOr<float>(root+off::UCapsuleComponent::CapsuleRadius,100),hh=mem::ReadOr<float>(root+off::UCapsuleComponent::CapsuleHalfHeight,100);
         return std::hypot(at.x-feet.x,at.y-feet.y)<rr+radius+2&&std::fabs(at.z-(feet.z+half))<hh+half;};
-    if(overlaps(c.actors.pawn))return false;
-    for(const auto& target:c.actors.targets)if(overlaps(target.actor))return false;
-    return true;
+    if(overlaps(c.actors.pawn))return "destination-occupied-by-player";
+    for(const auto& target:c.actors.targets)if(overlaps(target.actor))return "destination-occupied-by-npc";
+    return nullptr;
 }
 Reply Position(const Request& r,std::uintptr_t actor,std::uint32_t id,std::uint32_t spawn,const char* why){
     auto reply=Result(r,Status::Applied,why);motion::BodySample body;
@@ -138,8 +139,9 @@ std::optional<Request> g_clear;
 void StartSpawn(const world_motion::Context& c,const Request& r,std::uint64_t now){
     if(g_owned.size()>=8||now-g_last_spawn<1000){Complete(r,Result(r,Status::Refused,"spawn-limit-or-rate"));return;}
     const auto cls=ue::FindClass(kClasses[r.kind-1]);if(!ue::IsRegistered(cls)){Complete(r,Result(r,Status::Refused,"class-not-loaded"));return;}
-    if(!Destination(c,r,35,90,0)){Complete(r,Result(r,Status::Refused,"destination-unsupported-or-occupied"));return;}
-    alignas(16) float transform[12]{};transform[3]=1;transform[4]=r.feet[0];transform[5]=r.feet[1];transform[6]=r.feet[2]+90;transform[8]=transform[9]=transform[10]=1;
+    const ue::FVector feet{r.feet[0],r.feet[1],r.feet[2]};
+    if(const auto why=Destination(c,feet,35,90,0)){Complete(r,Result(r,Status::Refused,why));return;}
+    alignas(16) float transform[12]{};transform[3]=1;transform[4]=feet.x;transform[5]=feet.y;transform[6]=feet.z+90;transform[8]=transform[9]=transform[10]=1;
     Params begin;begin.put(g_calls.begin.ParamOffset("WorldContextObject"),c.actors.scope.world);begin.put(g_calls.begin.ParamOffset("ActorClass"),g_calls.spawner_class);begin.put(g_calls.begin.ParamOffset("SpawnTransform"),transform);
     g_calls.begin.Invoke(g_calls.statics,begin.bytes.data());auto spawner=Remember(begin.get<std::uintptr_t>(g_calls.begin.ParamOffset("ReturnValue")));
     if(!SameWorld(spawner,c.actors.scope.world)||ue::ClassOf(spawner.ptr)!=g_calls.spawner_class){Complete(r,Result(r,Status::Failed,"spawner-create"));return;}
@@ -220,10 +222,11 @@ void ApplyOnGameThread(std::uintptr_t base){
     if(std::find(retained.retained.begin(),retained.retained.end(),key)!=retained.retained.end()){Complete(r,Result(r,Status::Refused,"movement-authority-held"));return;}
     const auto movement=mem::ReadPtr(it->actor+off::ACharacter::CharacterMovement);const auto movement_id=ue::IdentityOf(movement);
     motion::Target target{it->actor,movement,it->id,it->spawn,it->identity.serial,movement_id.index,movement_id.serial};motion::BodySample before;
-    if(const auto refused=motion::CheckBody(c.actors,target,&before,false)){Complete(r,Result(r,Status::Refused,refused));return;}
-    if(!Destination(c,r,before.radius,before.half,it->actor)){Complete(r,Result(r,Status::Refused,"destination-unsupported-or-occupied"));return;}
+    if(const auto refused=motion::CheckBody(c.actors,target,&before,false)){auto reply=Result(r,Status::Refused,refused);reply.target=it->id;reply.spawn=it->spawn;Complete(r,reply);return;}
+    const ue::FVector feet{r.feet[0],r.feet[1],r.feet[2]};
+    if(const auto why=Destination(c,feet,before.radius,before.half,it->actor)){auto reply=Result(r,Status::Refused,why);reply.target=it->id;reply.spawn=it->spawn;Complete(r,reply);return;}
     ue::FRotator rotation;ue::FVector old;if(!ue::ReadWorldTransform(before.root,&old,&rotation)){Complete(r,Result(r,Status::Refused,"root-transform"));return;}
-    Params params;params.put(g_calls.destination,ue::FVector{r.feet[0],r.feet[1],r.feet[2]+before.half});params.put(g_calls.rotation,rotation);
+    Params params;params.put(g_calls.destination,ue::FVector{feet.x,feet.y,feet.z+before.half});params.put(g_calls.rotation,rotation);
     g_calls.teleport.Invoke(target.actor,params.bytes.data());
     auto reply=Position(r,target.actor,target.id,target.spawn,params.get<std::uint8_t>(g_calls.teleport_result)?"moved":"engine-refused");
     if(!params.get<std::uint8_t>(g_calls.teleport_result))reply.status=Status::Refused;

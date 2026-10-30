@@ -86,8 +86,11 @@ final class WorldLayerCapture implements AutoCloseable {
             }
             var target = mc.gameRenderer.mainRenderTarget();
             var encoder = RenderSystem.getDevice().createCommandEncoder();
-            if (now >= nextCaptureNs && projection != null && camera != null && camera.initialized) {
-                nextCaptureNs = now + 1_000_000_000L / FPS;
+            long interval = 1_000_000_000L / FPS;
+            if (now >= nextCaptureNs - interval / 4 && projection != null && camera != null && camera.initialized) {
+                // Same stable deadline and jitter slack as OverlayCapture: restarting at 'now' rounds 60 Hz down to ~47.
+                nextCaptureNs = nextCaptureNs == 0 || now - nextCaptureNs >= interval
+                        ? now + interval : nextCaptureNs + interval;
                 if (target.getColorTexture().getFormat() != GpuFormat.RGBA8_UNORM ||
                         target.getDepthTexture().getFormat() != GpuFormat.D32_FLOAT)
                     throw new IllegalStateException("world layer requires RGBA8/D32F");

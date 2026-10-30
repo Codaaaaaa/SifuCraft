@@ -162,22 +162,39 @@ public final class BoatPassengers {
             v.nativeStatus()!=null&&v.nativeStatus().flags()==0&&(!acquiring||(v.nativeStatus().capabilities()&PASSENGER_CAPABILITY)!=0)&&
             v.nativeStatus().atMs()<=now&&now-v.nativeStatus().atMs()<=200;
     }
-    public static boolean candidate(Entity boat,EnemyProxy proxy){
-        if(!(boat.level() instanceof ServerLevel level)||proxy.level()!=level||boat.isRemoved()||proxy.isRemoved()||!proxy.isAlive()||
-            proxy.isPassenger()||proxy.isVehicle()||!fits(boat,proxy)||holds(proxy.sifuKey())||
-            WorldWriter.clockMillis()<retry.getOrDefault(proxy.sifuKey(),0L)||
-            !boat.getBoundingBox().inflate(.2,-.01,.2).intersects(proxy.getBoundingBox())||
-            EnemyMirrors.hitAttacker(proxy.sifuKey().id(),proxy.sifuKey().spawn())!=proxy)return false;
-        var v=WorldMotionWorld.current();if(!valid(v,level)||!FluidMotion.currentGeometry(v)||v.requests().pending()>=20)return false;
+    public static boolean candidate(Entity boat,EnemyProxy proxy){return rejection(boat,proxy)==null;}
+    /** Why this NPC cannot board now, or null. */
+    private static String rejection(Entity boat,EnemyProxy proxy){
+        if(!(boat.level() instanceof ServerLevel level)||proxy.level()!=level||boat.isRemoved()||proxy.isRemoved()||!proxy.isAlive())return "removed";
+        if(proxy.isPassenger()||proxy.isVehicle()||!fits(boat,proxy))return "no-seat";
+        if(holds(proxy.sifuKey())||WorldWriter.clockMillis()<retry.getOrDefault(proxy.sifuKey(),0L))return "retry";
+        if(!boat.getBoundingBox().inflate(.2,-.01,.2).intersects(proxy.getBoundingBox()))return "not-touching";
+        if(EnemyMirrors.hitAttacker(proxy.sifuKey().id(),proxy.sifuKey().spawn())!=proxy)return "stale-mirror";
+        var v=WorldMotionWorld.current();
+        if(!valid(v,level))return "native-not-ready";
+        if(!FluidMotion.currentGeometry(v))return "geometry-not-current";
+        if(v.requests().pending()>=20)return "requests-full";
         var from=proxy.getEyePosition();var to=boat.getBoundingBox().getCenter();
-        return !SceneExplosions.blocked(v.scene(),from,to)&&level.clip(new ClipContext(from,to,ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,proxy)).getType()==HitResult.Type.MISS;
+        if(SceneExplosions.blocked(v.scene(),from,to)||level.clip(new ClipContext(from,to,ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,proxy)).getType()!=HitResult.Type.MISS)return "line-of-sight";
+        return null;
     }
+    private static final Map<EnemyFrame.Key,Long> rejectionLogged=new HashMap<>();
     /** Only adds native proxies to this boat's vanilla broadphase; free proxy pushing stays disabled. */
     public static List<Entity> candidates(Entity boat,AABB box,List<Entity> vanilla){
         if(!(boat.level() instanceof ServerLevel))return vanilla;
         var result=new ArrayList<>(vanilla);
-        for(var entity:boat.level().getEntities(boat,box,e->e instanceof EnemyProxy))
-            if(entity instanceof EnemyProxy proxy&&candidate(boat,proxy))result.add(proxy);
+        for(var entity:boat.level().getEntities(boat,box,e->e instanceof EnemyProxy))if(entity instanceof EnemyProxy proxy){
+            var why=rejection(boat,proxy);
+            // Vanilla itself never seats a mob in a boat a player steers; it only pushes it.
+            if(why==null)result.add(proxy); // as before: vanilla decides between seating and pushing
+            if(why==null&&boat.getControllingPassenger() instanceof net.minecraft.world.entity.player.Player)why="vanilla-player-steering";
+            if(why==null)continue;
+            long now=WorldWriter.clockMillis();
+            if(!why.equals("not-touching")&&!why.equals("retry")&&now>=rejectionLogged.getOrDefault(proxy.sifuKey(),0L)){
+                rejectionLogged.put(proxy.sifuKey(),now+2000);
+                org.slf4j.LoggerFactory.getLogger("sifucraft").info("[boat-passenger] not boarding target={} vehicle={} reason={}",proxy.sifuKey(),boat.getType().toShortString(),why);
+            }
+        }
         return result;
     }
     /** The original boat already checked capacity, size, tags and passenger status. */
@@ -234,7 +251,10 @@ public final class BoatPassengers {
         p.proxy.setYRot(p.facing-90);p.proxy.setYHeadRot(p.facing-90);p.proxy.setYBodyRot(p.facing-90);
     }
     private static void retire(Passenger p){
-        p.proxy.stopRiding();passengers.remove(p.initial.key());poses.remove(p.initial.key());retry.put(p.initial.key(),WorldWriter.clockMillis()+500);
+        p.proxy.stopRiding();passengers.remove(p.initial.key());poses.remove(p.initial.key());
+        // A seat refused before it was ever granted (a fighting NPC mid-order or moving) retries quickly to
+        // catch its brief pauses between attacks; a passenger that actually rode waits the usual 500 ms.
+        retry.put(p.initial.key(),WorldWriter.clockMillis()+(p.binding==null&&!p.resuming?100:500));
         if(p.failed)failed++;else if(p.phase!=Phase.MACHINE)released++;
     }
     private static void close(WorldMotionWorld.View v,Passenger p,boolean failed){
@@ -328,7 +348,7 @@ public final class BoatPassengers {
             if(!unexecuted){
                 boolean contact=identity&&p.operation==STEP&&(r.status()==4||r.status()==5)&&r.restored()==0&&r.health()==p.health;
                 if(!identity||p.operation==RESERVE&&r.status()!=1||p.operation!=RESERVE&&r.status()!=2&&!contact){
-                    org.slf4j.LoggerFactory.getLogger("sifucraft").info("[boat-passenger] receipt refused op={} id={} status={} flags={} serial={} token={} old_serial={} old_token={} native_age={} broker_failure={}",p.operation,r==null?0:r.id(),r==null?-1:r.status(),r==null?0:r.flags(),r==null?0:r.actorSerial(),r==null?0:r.componentToken(),p.binding==null?0:p.binding.actorSerial(),p.binding==null?0:p.binding.componentToken(),v==null||v.nativeStatus()==null?-1:now-v.nativeStatus().atMs(),v==null?"":v.requests().lastFailure());
+                    if(p.operation!=RESERVE||failureLogs<32)org.slf4j.LoggerFactory.getLogger("sifucraft").info("[boat-passenger] receipt refused op={} id={} status={} flags={} serial={} token={} old_serial={} old_token={} native_age={} broker_failure={}",p.operation,r==null?0:r.id(),r==null?-1:r.status(),r==null?0:r.flags(),r==null?0:r.actorSerial(),r==null?0:r.componentToken(),p.binding==null?0:p.binding.actorSerial(),p.binding==null?0:p.binding.componentToken(),v==null||v.nativeStatus()==null?-1:now-v.nativeStatus().atMs(),v==null?"":v.requests().lastFailure());
                     close(v,p,true);return;
                 }
                 p.last=r;
@@ -379,6 +399,6 @@ public final class BoatPassengers {
     }
     public static void stop(){
         var v=WorldMotionWorld.current();for(var p:new ArrayList<>(passengers.values()))close(v,p,false);
-        passengers.clear();poses.clear();retry.clear();activeServer=null;maintenance.set(false);
+        passengers.clear();poses.clear();retry.clear();rejectionLogged.clear();activeServer=null;maintenance.set(false);
     }
 }

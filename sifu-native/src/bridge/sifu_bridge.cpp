@@ -56,6 +56,7 @@ bool SifuBridge::Start() {
     manifest_ = At<CollisionManifest>(base, kCollisionManifestOffset);
     block_table_ = At<BlockTable>(base, kBlockTableOffset);
     enemy_table_ = At<EnemyTable>(base, kEnemyTableOffset);
+    enemy_heads_ = At<EnemyHeadTable>(base, kEnemyHeadOffset);
     interaction_ = At<InteractionSnapshot>(base, kInteractionOffset);
     doors_ = At<CollisionManifest>(base, kDoorManifestOffset);
     outgoing_ = At<EventRing>(base, kSifuToMcRingOffset);
@@ -350,8 +351,9 @@ void SifuBridge::PublishCollision(const CollisionInfo& info) {
     seq.store(start + 2, std::memory_order_release);
 }
 
-void SifuBridge::PublishEnemies(std::uint32_t world_generation, const std::vector<EnemyEntry>& entries) {
-    if (!enemy_table_) return;
+void SifuBridge::PublishEnemies(std::uint32_t world_generation, const std::vector<EnemyEntry>& entries,
+                                const std::vector<EnemyHeadEntry>& heads) {
+    if (!enemy_table_ || !enemy_heads_) return;
     EnemyTable& table = *enemy_table_;
     auto seq = Atomic(table.seq);
     const std::uint64_t start = seq.load(std::memory_order_relaxed) & ~1ull;
@@ -363,6 +365,17 @@ void SifuBridge::PublishEnemies(std::uint32_t world_generation, const std::vecto
     std::copy_n(entries.begin(), table.count, table.entries);
     CompilerBarrier();
     seq.store(start + 2, std::memory_order_release);
+    EnemyHeadTable& head_table = *enemy_heads_;
+    auto head_seq = Atomic(head_table.seq);
+    const std::uint64_t head_start = head_seq.load(std::memory_order_relaxed) & ~1ull;
+    head_seq.store(head_start + 1, std::memory_order_relaxed);
+    CompilerBarrier();
+    head_table.frame = frame_;
+    head_table.world_generation = world_generation;
+    head_table.count = static_cast<std::uint32_t>(std::min<std::size_t>(heads.size(), kMaxEnemies));
+    std::copy_n(heads.begin(), head_table.count, head_table.entries);
+    CompilerBarrier();
+    head_seq.store(head_start + 2, std::memory_order_release);
 }
 
 void SifuBridge::ReadPeerSnapshot() {

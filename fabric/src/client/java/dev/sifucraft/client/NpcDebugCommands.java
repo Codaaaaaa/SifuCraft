@@ -57,12 +57,14 @@ final class NpcDebugCommands {
             var box=new AABB(at.x-.35,at.y+.01,at.z-.35,at.x+.35,at.y+1.8,at.z+.35);
             if(!dev.sifucraft.blocks.SceneFluidGeometry.knownVolume(mc.level,box)){message("正在请求落点覆盖，请稍后重试");return 0;}
             if(!mc.level.noCollision(null,box)){message("落点存在方块/场景障碍");return 0;}
+            // Native only sees Sifu's scene; MC sees placed blocks too, so the floor is checked here.
+            if(mc.level.noCollision(null,new AABB(at.x-.3,at.y-.05,at.z-.3,at.x+.3,at.y,at.z+.3))){message("落点脚下没有方块/场景地面（y须为方块顶面）");return 0;}
         }
         var manifest=bridge.collisionManifest();
         if(manifest.path().isEmpty()){message("尚无实际场景目录");return 0;}
         var collision=Path.of(manifest.path()).toAbsolutePath().getParent();if(collision==null||collision.getParent()==null)return 0;
         var root=collision.getParent();
-        if(!Files.isRegularFile(root.resolve("npc-debug"))){message("Native调试未启用：先运行tools/npc-debug.ps1 -Enable，并正常重启Sifu");return 0;}
+        if(!Files.isRegularFile(root.resolve("npc-debug"))){message("Native调试未启用：在Sifu的SifuCraft目录下新建空文件npc-debug，并重启Sifu");return 0;}
         if(!pending.compareAndSet(false,true)){message("上一条命令仍在等待；不会自动重复生成/移动");return 0;}
         long now=WorldWriter.clockMillis(),id=ids.updateAndGet(old->Math.max(old+1,now));
         var r=new NpcDebugProtocol.Request(op,kind,id,now,v.scope().nativeSession(),v.scope().mc(),v.scope().world(),target,e==null?0:e.spawn(),
@@ -82,7 +84,7 @@ final class NpcDebugCommands {
                     }
                     Thread.sleep(75);
                 }
-                message("结果超时，可能已执行；先用list核对，工具不会自动重放。确认Native已开启npc-debug并重启。");
+                message("结果超时，可能已执行；先用list核对，工具不会自动重放。确认SifuCraft目录下有npc-debug文件并已重启Sifu。");
             }catch(InterruptedException error){Thread.currentThread().interrupt();}
             catch(Exception error){message("命令通信失败："+error.getMessage()+"；如已写请求，先核对实际角色，勿盲目重发");}
             finally{pending.set(false);}

@@ -79,11 +79,17 @@ public final class FluidMotion {
     private static final Map<EnemyFrame.Key,Pose> poses=new HashMap<>();
     private static final Map<EnemyFrame.Key,Handoff> handoffs=new HashMap<>();
     private static final Map<EnemyFrame.Key,Impulse> impulses=new HashMap<>();
+    /** A toss is waiting for its lease or already flying. */
+    public static boolean moving(EnemyFrame.Key key){return flights.containsKey(key)||impulses.containsKey(key);}
     static void explosionImpulse(EnemyProxy proxy,WorldMotionRequests.Scope expected,UUID source,Vec3 velocity,Reply receipt){
         explosionImpulse(proxy,expected,source,velocity,receipt,false);
     }
     /** The final vanilla explosion vector, after native HP acknowledgement; it is not a light-hit impulse. */
     static void explosionImpulse(EnemyProxy proxy,WorldMotionRequests.Scope expected,UUID source,Vec3 velocity,Reply receipt,boolean passenger){
+        explosionImpulse(proxy,expected,source,velocity,receipt,passenger,passenger?8000:1000);
+    }
+    /** {@code lifeMs}: how long the toss waits for Native to qualify the NPC (a hit reaction refuses it meanwhile). */
+    static void explosionImpulse(EnemyProxy proxy,WorldMotionRequests.Scope expected,UUID source,Vec3 velocity,Reply receipt,boolean passenger,long lifeMs){
         var v=WorldMotionWorld.current();
         if(receipt==null||(receipt.status()!=2&&receipt.status()!=4)||receipt.health()<=0||receipt.actorSerial()<=0||
             v==null||!expected.equals(v.scope())||!sameWorld(v,(ServerLevel)proxy.level())||v.nativeStatus()==null||
@@ -92,7 +98,7 @@ public final class FluidMotion {
         if(old!=null&&old.scope.equals(expected)&&old.source.equals(source))return;
         if(old!=null&&old.scope.equals(expected))velocity=velocity.add(old.velocity);
         long now=WorldWriter.clockMillis();
-        impulses.put(proxy.sifuKey(),new Impulse(expected,source,velocity,receipt.health(),receipt.actorSerial(),now,now+(passenger?8000:1000),EXPLOSION));
+        impulses.put(proxy.sifuKey(),new Impulse(expected,source,velocity,receipt.health(),receipt.actorSerial(),now,now+lifeMs,EXPLOSION));
         retry.remove(proxy.sifuKey());
     }
     /** A genuine passenger release continues gravity/water once, without inventing a piston source. */
@@ -313,7 +319,9 @@ public final class FluidMotion {
     private static void advance(Flight f){
         var v=WorldMotionWorld.current();long now=WorldWriter.clockMillis();
         if(f.phase==Phase.CANCEL){if(f.pending==null||f.pending.isDone()||now>f.deadline+1000)retire(f,false);return;}
-        if(!sameWorld(v,f.level)||!f.scope.equals(v.scope())||now>=f.deadline+(f.phase==Phase.RELEASE?1000:0)){cancel(v,f,now);return;}
+        // Native may first settle a fighting NPC for up to 1 s before answering a blast toss's RESERVE.
+        boolean settling=f.phase==Phase.ACQUIRE&&f.binding==null&&f.authoritySource==EXPLOSION;
+        if(!sameWorld(v,f.level)||!f.scope.equals(v.scope())||now>=f.deadline+(f.phase==Phase.RELEASE?1000:settling?1100:0)){cancel(v,f,now);return;}
         var proxy=NativeMotionSubjects.find(f.key);
         boolean yieldingPlayer=NativeMotionSubjects.player(f.key)&&proxy==null&&v.nativeStatus()!=null&&v.nativeStatus().playerStamp()==f.playerStamp;
         if(yieldingPlayer&&f.binding!=null&&f.phase!=Phase.CANCEL){
@@ -357,6 +365,7 @@ public final class FluidMotion {
             }
             if(r==null||r.status()!=1||r.actorSerial()<=0||r.rootRadius()<10||r.rootHalfHeight()<r.rootRadius()){retire(f,false);return;}
             f.binding=f.last=r;f.pending=null;
+            f.deadline=Math.max(f.deadline,now+400); // a settled NPC's Native lease starts at Prepared, not at our RESERVE
             long seed=((long)f.key.id()<<32)^f.key.spawn();
             f.body=NativeMotionSubjects.player(f.key)?new VanillaPlayerBody(f.level,r.rootRadius(),r.rootHalfHeight(),seed):new VanillaFluidBody(f.level,r.rootRadius(),r.rootHalfHeight(),seed,true);
             f.prediction=(MotionPrediction)f.body;if(NativeMotionSubjects.player(f.key)){f.body.setYRot(f.initial.yaw()-90);f.body.setXRot(0);}

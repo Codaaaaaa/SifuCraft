@@ -27,9 +27,9 @@ namespace sifucraft::protocol {
 
 inline constexpr std::uint32_t kMagic = 0x52434653;  // "SFCR"
 // The name carries no version so that mismatched builds see each other and report INCOMPATIBLE.
-inline constexpr std::uint32_t kVersion = 20;
+inline constexpr std::uint32_t kVersion = 21;
 inline constexpr wchar_t kMappingName[] = L"Local\\SifuCraft.Bridge";
-inline constexpr std::uint32_t kMappingSize = 0x10000;
+inline constexpr std::uint32_t kMappingSize = 0x10800;
 
 // A peer whose heartbeat has not advanced for this long is treated as gone.
 inline constexpr std::uint32_t kHeartbeatTimeoutMs = 2000;
@@ -230,6 +230,27 @@ struct EnemyTable {
     EnemyEntry entries[kMaxEnemies];
 };
 
+// Head bone pose of published enemies (a subset of EnemyTable, matched by id + spawn), for
+// head-worn Minecraft items. forward/up are unit vectors: the character's facing and up while
+// the head is in its reference pose, turned by however far the animation has moved the head.
+struct EnemyHeadEntry {
+    std::uint32_t id;
+    std::uint32_t spawn;
+    Vec3 location;              // head bone origin, Unreal cm
+    Vec3 forward;
+    Vec3 up;
+    std::uint32_t reserved;
+};
+
+struct EnemyHeadTable {
+    std::uint64_t seq;
+    std::uint64_t frame;        // SifuSnapshot.frame at publication
+    std::uint32_t world_generation;
+    std::uint32_t count;
+    std::uint8_t reserved[40];
+    EnemyHeadEntry entries[kMaxEnemies];
+};
+
 struct PingPayload {
     std::uint64_t nonce;
     std::uint64_t sent_unix_us;
@@ -355,6 +376,7 @@ inline constexpr std::uint32_t kBlockTableOffset = 0x9200;
 inline constexpr std::uint32_t kEnemyTableOffset = 0xF300;
 inline constexpr std::uint32_t kInteractionOffset = 0xFC00;
 inline constexpr std::uint32_t kDoorManifestOffset = 0xFD00;
+inline constexpr std::uint32_t kEnemyHeadOffset = 0x10000;
 
 static_assert(sizeof(ProtocolHeader) == 0x40);
 static_assert(sizeof(EndpointStatus) == 0x40);
@@ -394,6 +416,10 @@ static_assert(kEnemyTableOffset + sizeof(EnemyTable) <= kMappingSize);
 static_assert(kInteractionOffset >= kEnemyTableOffset + sizeof(EnemyTable));
 static_assert(kDoorManifestOffset >= kInteractionOffset + sizeof(InteractionSnapshot));
 static_assert(kDoorManifestOffset + sizeof(CollisionManifest) <= kMappingSize);
+static_assert(sizeof(EnemyHeadEntry) == 48 && offsetof(EnemyHeadEntry, forward) == 20 && offsetof(EnemyHeadEntry, up) == 32);
+static_assert(sizeof(EnemyHeadTable) == 0x640 && offsetof(EnemyHeadTable, entries) == 64);
+static_assert(kEnemyHeadOffset >= kDoorManifestOffset + sizeof(CollisionManifest));
+static_assert(kEnemyHeadOffset + sizeof(EnemyHeadTable) <= kMappingSize);
 
 // Hashed in this order by both sides; keep it identical to Protocol.LAYOUT_TABLE in Java.
 inline constexpr std::uint32_t kLayoutTable[] = {
@@ -518,6 +544,12 @@ inline constexpr std::uint32_t kLayoutTable[] = {
     offsetof(PlayerHitPayload, anchor_epoch),
     offsetof(PlayerHitPayload, dir_x),
     offsetof(PlayerHitPayload, dir_y),
+    kEnemyHeadOffset,
+    sizeof(EnemyHeadTable),
+    sizeof(EnemyHeadEntry),
+    offsetof(EnemyHeadEntry, location),
+    offsetof(EnemyHeadEntry, forward),
+    offsetof(EnemyHeadEntry, up),
 };
 
 // FNV-1a 64 over each table entry as 4 little-endian bytes.

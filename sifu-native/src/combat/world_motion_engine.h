@@ -38,6 +38,8 @@ public:
     // Commit a source claim only after the observed pose passes the request's
     // preconditions. A rejected reservation never consumes a motion event.
     virtual bool Bound(const Command&){return true;}
+    // A fighting NPC failed Bind only transiently: hold its AI decisions (never its movement) and retry Bind.
+    virtual bool Hold(const Command&){return false;}
     virtual bool Check(Body*)=0;
     virtual bool Observe(Body* body){return Check(body);} // final original-Tick pose, without requiring an idle AI
     virtual bool SupportsPlayer(Source)const{return false;}
@@ -53,7 +55,7 @@ public:
 // Pending reserve/release and completed replies remain bounded and replayable.
 class Engine {
 public:
-    enum class Phase { Free,Acquiring,Owned,Releasing };
+    enum class Phase { Free,Settling,Acquiring,Owned,Releasing };
     explicit Engine(Backend& backend,Ledger* shared=nullptr):backend_(backend),owned_(shared?nullptr:std::make_unique<Ledger>()),ledger_(shared?shared:owned_.get()){}
     void Update(Environment environment,std::uint64_t now) {
         const bool peer=env_.native!=environment.native||env_.peer!=environment.peer;
@@ -61,6 +63,7 @@ public:
         env_=environment;
         if(terminal_valid_&&(!Scope(source_)||now>terminal_until_))terminal_valid_=false;
         if(phase_==Phase::Free)return;
+        if(phase_==Phase::Settling){Settle(now);if(phase_!=Phase::Acquiring)return;} // a settled NPC is owned this same update
         if(!Scope(source_)||!env_.ready||env_.flags)BeginRelease(Status::TargetLost);
         else if(now>=deadline_)BeginRelease(Status::TimedOut);
         if(phase_==Phase::Acquiring||phase_==Phase::Owned) {
@@ -127,7 +130,7 @@ public:
         }
         // Releasing authority needs no ready movement world. A real pause must
         // not reject the owner's stop request as Busy.
-        if((command.op==Op::Cancel||command.op==Op::Release)&&phase_!=Phase::Free&&Owns(command)){
+        if((command.op==Op::Cancel||command.op==Op::Release)&&phase_!=Phase::Free&&phase_!=Phase::Settling&&Owns(command)){
             if(release_){Reject(command,Status::Busy,now);return true;}
             if(command.op==Op::Release&&(!env_.settled||command.shape_revision!=env_.revision||command.shape_revision<release_revision_)){Reject(command,Status::Stale,now);return true;}
             release_=command;BeginRelease(command.op==Op::Cancel?Status::Cancelled:Status::Released);return true;
@@ -161,12 +164,13 @@ public:
             if(!env_.settled){Reject(command,Status::Busy,now);return true;}
             if(command.shape_revision!=env_.revision||now-command.issued_ms>=command.duration_ms) {Reject(command,Status::Stale,now);return true;}
             Body body;
-            if(!backend_.Bind(command,&body)||!Expected(command,body)||!backend_.Bound(command)) {
-                backend_.Forget();Reject(command,Status::TargetLost,now);return true;
+            if(backend_.Bind(command,&body)&&Expected(command,body)&&backend_.Bound(command)){Acquire(command,body,command.issued_ms);return true;}
+            // A fighting NPC is mid-order or moving. Hold its AI decisions and let the order run out.
+            if(Settles(command)&&backend_.Hold(command)){
+                source_=command;body_={};reserve_=command;terminal_valid_=false;settle_failed_=false;settle_until_=now+kSettleMs;held_=0;
+                phase_=Phase::Settling;return true;
             }
-            source_=command;body_=body;terminal_valid_=false;deadline_=command.issued_ms+command.duration_ms;
-            observed_=restored_=restore_flags_=0;identity_lost_=player_handoff_=false;spent_=0;last_tick_=command.tick;last_progress_=command.progress;release_revision_=command.shape_revision;reason_=Status::Released;
-            phase_=Phase::Acquiring;reserve_=command;return true;
+            backend_.Forget();Reject(command,Status::TargetLost,now);return true;
         }
         if(phase_==Phase::Free||!Owns(command)) {Reject(command,Status::Stale,now);return true;}
         if(phase_!=Phase::Owned) {Reject(command,Status::Busy,now);return true;}
@@ -212,7 +216,12 @@ public:
         return true;
     }
     // Called before each hooked Tick. A world/identity/HP change releases immediately.
-    bool Skip(std::uint64_t now) {
+    // Settling holds only AI/behavior decisions; movement keeps ticking so the current order and speed run out.
+    bool Skip(std::uint64_t now,unsigned part=0) {
+        if(phase_==Phase::Settling){if(part==1||part==2||part==4)held_|=part;return part!=1&&!settle_failed_&&now<settle_until_;}
+        // After settling no tick runs free: one AI tick issues the next attack, and one movement tick
+        // applies the move the NPC still had in flight (path following is not gated). Settling already saw every hook fire.
+        if(phase_==Phase::Acquiring&&settled_)return (part&held_)!=0;
         if(phase_!=Phase::Owned)return false;
         Body current;
         if(now>=deadline_||!env_.ready||env_.flags||!backend_.Check(&current)||!SameBody(current,body_)) {
@@ -270,7 +279,32 @@ private:
         c.action==source_.action&&c.target==source_.target&&c.spawn==source_.spawn&&c.flags==source_.flags&&
         (c.source!=Source::Machine||(c.state_hash==source_.state_hash&&std::equal(c.block,c.block+3,source_.block)))&&
         c.actor_stamp==static_cast<std::uint64_t>(body_.serial)&&c.component_token==body_.token;}
+    static constexpr std::uint64_t kSettleMs=1000;
+    // Only seats and blast-like tosses may wait out a fighting NPC; machines and the player never do.
+    static bool Settles(const Command& c){return (c.source==Source::Passenger||c.source==Source::Explosion)&&!(c.flags&kPlayer);}
+    // The settled pose replaces the command's (the NPC finished its step meanwhile); identity, HP and size must not change.
+    static bool Settled(const Command& c,const Body& b){
+        return ValidBody(b)&&(!c.actor_stamp||c.actor_stamp==static_cast<std::uint64_t>(b.serial))&&(!c.component_token||c.component_token==b.token)&&
+            c.health==b.health&&std::fabs(c.radius-b.radius)<0.5&&std::fabs(c.half_height-b.half)<0.5;
+    }
+    void Acquire(const Command& command,const Body& body,std::uint64_t from){
+        source_=command;body_=body;terminal_valid_=false;deadline_=from+command.duration_ms;
+        observed_=restored_=restore_flags_=0;identity_lost_=player_handoff_=false;spent_=0;last_tick_=command.tick;last_progress_=command.progress;release_revision_=command.shape_revision;reason_=Status::Released;
+        phase_=Phase::Acquiring;reserve_=command;settled_=false;
+    }
+    void Settle(std::uint64_t now){
+        if(!Scope(source_)||!env_.ready||env_.flags||settle_failed_||now>=settle_until_){
+            if(!Room())return;
+            backend_.Forget();phase_=Phase::Free;if(reserve_)Finish(*reserve_,Status::TargetLost,now);reserve_.reset();return;
+        }
+        Body body;
+        // The lease starts now: settling never spends the owner's 500ms heartbeat.
+        if(env_.settled&&backend_.Bind(*reserve_,&body)&&Settled(*reserve_,body)&&backend_.Bound(*reserve_)){
+            Acquire(*reserve_,body,now);settled_=true;observed_=held_; // these hooks already proved themselves while settling
+        }
+    }
     void BeginRelease(Status reason){
+        if(phase_==Phase::Settling){settle_failed_=true;return;}
         if(phase_==Phase::Free||phase_==Phase::Releasing)return;
         phase_=Phase::Releasing;restored_=0;restore_flags_=0;reason_=reason;restore_deadline_=deadline_+500;restore_paused_=(env_.flags&kPaused)!=0;
     }
@@ -293,7 +327,8 @@ private:
     Backend& backend_;Environment env_;std::unique_ptr<Ledger> owned_;Ledger* ledger_;Phase phase_=Phase::Free;
     Command source_{};Body body_{};std::optional<Command> reserve_,release_;
     std::uint64_t deadline_=0,last_tick_=0,release_revision_=0,restore_deadline_=0;double spent_=0;float last_progress_=0;unsigned observed_=0,restored_=0,restore_flags_=0;
-    bool restore_paused_=false,identity_lost_=false,player_handoff_=false,terminal_valid_=false;
+    bool restore_paused_=false,identity_lost_=false,player_handoff_=false,terminal_valid_=false,settle_failed_=false;
+    std::uint64_t settle_until_=0;unsigned held_=0;bool settled_=false;
     std::uint64_t terminal_until_=0;
     Status reason_=Status::Released;std::deque<Reply> out_;
 };

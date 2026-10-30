@@ -340,6 +340,22 @@ inline constexpr std::uint32_t AnimScriptInstance = 0x6F0;
 inline constexpr std::uint32_t ParallelAnimationEvaluationTask = 0xBD0;
 inline constexpr std::uint32_t ParallelBlendPhysicsCompletionTask = 0xBD8;
 }
+namespace USkinnedMeshComponent {
+inline constexpr std::uint32_t SkeletalMesh = 0x4C0;
+inline constexpr std::uint32_t ComponentSpaceTransformsArray = 0x4F0;
+inline constexpr std::uint32_t CurrentReadComponentTransforms = 0x534;
+}
+namespace USkeletalMesh {
+inline constexpr std::uint32_t RefSkeleton = 0x1A8;
+}
+namespace FReferenceSkeleton {
+inline constexpr std::uint32_t FinalRefBoneInfo = 0x20;
+inline constexpr std::uint32_t FinalRefBonePose = 0x30;
+}
+namespace FMeshBoneInfo {
+inline constexpr std::uint32_t Name = 0x0;
+inline constexpr std::uint32_t ParentIndex = 0x8;
+}
 namespace UAnimInstance {
 inline constexpr std::uint32_t MontageInstances = 0x78;
 inline constexpr std::uint32_t RootMotionMontageInstance = 0x2D8;
@@ -694,6 +710,7 @@ inline constexpr std::uint32_t UObjectBase = 0x28;
 inline constexpr std::uint32_t FName = 0x8;
 inline constexpr std::uint32_t FNameEntryAllocator = 0x10010;
 inline constexpr std::uint32_t FTransform = 0x30;
+inline constexpr std::uint32_t FMeshBoneInfo = 0xC;
 inline constexpr std::uint32_t FKConvexElem = 0xB0;
 inline constexpr std::uint32_t FKBoxElem = 0x58;
 inline constexpr std::uint32_t FKSphereElem = 0x40;

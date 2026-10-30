@@ -173,6 +173,11 @@ MEMBERS = {
     "OrderManager": ["m_OrderList", "m_DelayedOrderCommand", "m_DelayedOrderCommandDuringPrediction"],
     "UFightingMovementComponent": ["m_bIsRushing", "m_LocalResyncRequest", "m_LocalTimedoutResyncRequest", "m_ResyncRequestOnReplica", "m_fInitialHeight"],
     "USkeletalMeshComponent": ["AnimScriptInstance", "ParallelAnimationEvaluationTask", "ParallelBlendPhysicsCompletionTask"],
+    # Read-only bone poses for head-worn items: current component-space pose against the reference pose.
+    "USkinnedMeshComponent": ["SkeletalMesh", "ComponentSpaceTransformsArray", "CurrentReadComponentTransforms"],
+    "USkeletalMesh": ["RefSkeleton"],
+    "FReferenceSkeleton": ["FinalRefBoneInfo", "FinalRefBonePose"],
+    "FMeshBoneInfo": ["Name", "ParentIndex"],
     "UAnimInstance": ["MontageInstances", "RootMotionMontageInstance", "RootMotionBlendQueue", "ExtractedRootMotion"],
     "FRootMotionMovementParams": ["bHasRootMotion"],
     "FRootMotionSourceGroup": ["RootMotionSources", "PendingAddRootMotionSources"],
@@ -255,7 +260,7 @@ MEMBERS = {
     "FGameplayAttributeData": ["BaseValue", "CurrentValue"],
 }
 
-SIZES = ["InternationalizationStore", "FCulture", "FUObjectItem", "UObjectBase", "FName", "FNameEntryAllocator", "FTransform", "FKConvexElem", "FKBoxElem", "FKSphereElem",
+SIZES = ["InternationalizationStore", "FCulture", "FUObjectItem", "UObjectBase", "FName", "FNameEntryAllocator", "FTransform", "FMeshBoneInfo", "FKConvexElem", "FKBoxElem", "FKSphereElem",
          "FKSphylElem", "FKTaperedCapsuleElem", "FInstancedStaticMeshInstanceData", "FDamageInfos",
          "FHitRequest", "FHitBox", "FHitboxDataRow", "FHitImpact", "FHitDescription", "FImpactResult", "GuardStackValue", "DataTableElement", "FGameplayTag", "FAnimNotifyEvent", "FRichCurveKey", "ComboAttackElement", "FHitResult"]
 

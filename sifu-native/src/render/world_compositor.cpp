@@ -164,6 +164,11 @@ void WorldCompositor::ResetGpu() {
     color_view_.reset(); color_texture_.reset(); color_width_ = color_height_ = 0;
 }
 void WorldCompositor::Reset() { ResetGpu(); points_.clear(); source_corners_.clear(); source_distances_.clear(); source_depths_.clear(); source_color_.clear(); prepared_id_ = 0; pixel_count_ = missing_depth_ = 0; constants_ = {}; }
+void WorldCompositor::TakePrepared(WorldCompositor& from) {
+    points_.swap(from.points_); source_color_.swap(from.source_color_); constants_ = from.constants_;
+    prepared_id_ = from.prepared_id_; pixel_count_ = from.pixel_count_; missing_depth_ = from.missing_depth_; upload_ = true;
+    from.prepared_id_ = 0;
+}
 HRESULT WorldCompositor::Prepare(const world_image::Frame& frame) {
     const auto& h = frame.header;
     if (h.frame_id == prepared_id_) return S_OK;

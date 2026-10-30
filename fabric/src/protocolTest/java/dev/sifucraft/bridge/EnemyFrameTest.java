@@ -90,6 +90,13 @@ public final class EnemyFrameTest {
             try { PlayerHit.decode(badHit); throw new AssertionError("accepted unscoped player hit"); }
             catch (IllegalArgumentException expected) { }
         }
+        var heads = ByteBuffer.allocate(Protocol.EnemyHeads.SIZE).order(ByteOrder.LITTLE_ENDIAN).putInt(20, 2);
+        heads.putInt(64, 42).putInt(68, 9).putFloat(72, 1).putFloat(76, 2).putFloat(80, 3)
+                .putFloat(84, 1).putFloat(104, 1); // forward +X, up +Z
+        heads.putInt(112, 43).putInt(116, 9).putFloat(132, 2).putFloat(152, 1); // forward not unit
+        var head = EnemyHeads.decode(MemorySegment.ofArray(heads.array()));
+        check(head.heads().size() == 1 && head.get(new EnemyFrame.Key(42, 9)).location().z() == 3 &&
+                head.get(new EnemyFrame.Key(42, 9)).up().z() == 1, "golden C++ EnemyHeadEntry layout, malformed entry dropped");
         System.out.printf("EnemyFrame/PlayerHit tests PASS; protocol v%d layout=%016X%n", Protocol.VERSION, Protocol.LAYOUT_HASH);
     }
 }

@@ -99,8 +99,9 @@ public:
     bool SendOwnerChanged(protocol::InputOwner owner);
     // Publishes the manifest of the current collision grid; call when it changes.
     void PublishCollision(const CollisionInfo& info);
-    // Replaces the whole nearby-enemy table (Sifu owns enemy state). Runtime thread only.
-    void PublishEnemies(std::uint32_t world_generation, const std::vector<protocol::EnemyEntry>& entries);
+    // Replaces the whole nearby-enemy table and its head poses (Sifu owns enemy state). Runtime thread only.
+    void PublishEnemies(std::uint32_t world_generation, const std::vector<protocol::EnemyEntry>& entries,
+                        const std::vector<protocol::EnemyHeadEntry>& heads = {});
     void PublishInteraction(const protocol::InteractionSnapshot& snapshot);
     void PublishDoors(const CollisionInfo& info);
     bool SendInteractionResult(const protocol::InteractResultPayload& result);
@@ -140,6 +141,7 @@ private:
     protocol::CollisionManifest* manifest_ = nullptr;
     protocol::BlockTable* block_table_ = nullptr;
     protocol::EnemyTable* enemy_table_ = nullptr;
+    protocol::EnemyHeadTable* enemy_heads_ = nullptr;
     protocol::InteractionSnapshot* interaction_ = nullptr;
     protocol::CollisionManifest* doors_ = nullptr;
     protocol::EventRing* outgoing_ = nullptr;

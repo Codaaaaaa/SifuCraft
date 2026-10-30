@@ -30,7 +30,7 @@ struct BodySample {
 };
 struct SweepResult { BodySample body;bool invoked=false,returned=false,blocking=false,penetrating=false;ue::FVector normal{}; };
 const char* CheckWorld(std::uintptr_t base,const Context& context,std::uint64_t now);
-const char* CheckBody(const Context& context,const Target& target,BodySample* sample,bool geometry,bool ground=true);
+const char* CheckBody(const Context& context,const Target& target,BodySample* sample,bool geometry,bool ground=true,bool airborne=false);
 const char* CheckPlayerBody(const Context& context,const Target& target,BodySample* sample,bool geometry);
 const char* CheckPeers(std::uintptr_t base,const Context& context,const Target& target,Peers* peers,bool idle);
 bool SweepBody(const Context& context,const Target& target,const BodySample& before,const ue::FVector& delta,SweepResult* result,bool player=false,const float* facing=nullptr);

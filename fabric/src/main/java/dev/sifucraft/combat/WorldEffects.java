@@ -146,7 +146,11 @@ public final class WorldEffects {
         if(source.is(DamageTypes.FALL)&&floor!=null&&floor.target==proxy&&WorldMotionWorld.current()!=null&&floor.scope.equals(WorldMotionWorld.current().scope()))return new Evidence("minecraft:fall",floor.pos,null,floor.source);
         var machine=MachineProjectiles.evidence(proxy,source);
         if(machine!=null)return new Evidence(source.typeHolder().unwrapKey().orElseThrow().identifier().toString(),machine.pos(),machine);
+        if(source.is(DamageTypes.MOB_ATTACK)&&source.getEntity() instanceof net.minecraft.world.entity.animal.golem.IronGolem golem&&source.getDirectEntity()==golem&&golem.isAlive())
+            // A golem's own melee swing; one id per golem and tick lets Native pair this hit with its single toss.
+            return new Evidence("minecraft:mob_attack",golem.blockPosition(),null,new java.util.UUID(golem.getUUID().getMostSignificantBits(),golem.level().getGameTime()));
         if(source.getEntity()!=null||source.getDirectEntity()!=null)return null; // machine projectiles need their separate origin credential
+        var saw=CreateSaws.contact(proxy,source);if(saw!=null)return new Evidence("create:saw",saw);
         if(source.is(DamageTypes.IN_WALL)){var pos=suffocation(proxy);return pos==null?null:new Evidence("minecraft:in_wall",pos);}
         var path=pathProof.get();
         if(path!=null&&path.target==proxy&&WorldMotionWorld.current()!=null&&path.scope.equals(WorldMotionWorld.current().scope())){
@@ -175,6 +179,17 @@ public final class WorldEffects {
         return null;
     }
     public static boolean canCapture(EnemyProxy proxy,DamageSource source){return view(proxy)!=null&&evidence(proxy,source)!=null;}
+    private record GolemHit(EnemyProxy proxy,WorldMotionRequests.Scope scope,java.util.UUID id,java.util.concurrent.CompletableFuture<Reply> damage){}
+    private static GolemHit golemHit; // server thread: set by the hit, taken by the same doHurtTarget
+    /** After Native confirms the golem's hit, its toss flies like a blast's: an NPC in combat is lifted too. */
+    public static void golemToss(EnemyProxy proxy,net.minecraft.world.phys.Vec3 velocity){
+        var hit=golemHit;golemHit=null;if(hit==null||hit.proxy!=proxy)return;
+        boolean passenger=BoatPassengers.holds(proxy.sifuKey());
+        hit.damage.whenComplete((receipt,error)->proxy.level().getServer().execute(()->{
+            if(error==null&&!proxy.isRemoved()&&!(proxy.getVehicle() instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat))
+                FluidMotion.explosionImpulse(proxy,hit.scope,hit.id,velocity,receipt,passenger,2500); // outlasts the ~0.9 s hit reaction
+        }));
+    }
     static boolean effectsReady(EnemyProxy proxy){return view(proxy)!=null;}
     public static void record(EnemyProxy proxy,DamageSource source,float amount){
         var view=view(proxy);var proof=evidence(proxy,source);if(view==null||proof==null||!Float.isFinite(amount)||amount<=0)return;
@@ -190,6 +205,7 @@ public final class WorldEffects {
                 if(error!=null)lost++;else if(reply.status()==2)applied++;else rejected++;
                 if(logged++<80)LoggerFactory.getLogger("sifucraft").info("[world-effects] type={} target={}/{} mc_final={} receipt={} native_HP={} error={}",proof.type,entry.id(),entry.spawn(),amount,reply==null?-1:reply.status(),reply==null?-1:reply.health(),error==null?"":error.toString());
             }));
+        if(proof.type.equals("minecraft:mob_attack"))golemHit=new GolemHit(proxy,view.scope(),proof.causal,future);
         SceneExplosions.damageSubmitted(proxy,source,future);
         if(SceneExplosions.proof(proxy,source)!=null)BoatPassengers.damageSubmitted(proxy,view,future);
     }

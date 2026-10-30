@@ -167,6 +167,8 @@ loom {
 			property "sifucraft.playerDamageTest", providers.gradleProperty("sifucraft.playerDamageTest").getOrElse("false")
 			property "sifucraft.playerHitSelfTest", providers.gradleProperty("sifucraft.playerHitSelfTest").getOrElse("false")
 			property "sifucraft.respawnSelfTest", providers.gradleProperty("sifucraft.respawnSelfTest").getOrElse("false")
+			def username = providers.gradleProperty("sifucraft.username").getOrNull()
+			if (username) programArgs "--username", username
 		}
 	}
 }

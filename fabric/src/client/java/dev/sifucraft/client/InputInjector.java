@@ -43,6 +43,7 @@ final class InputInjector {
     private double lastScroll;
     private final GuiCursor cursor = new GuiCursor();
     private boolean guiMode;
+    private double warpX = Double.NaN, warpY = Double.NaN;
     private int guiInputAck;
     private boolean haveGuiBaseline;
     private double guiBaselineX, guiBaselineY, guiBaselineScroll;
@@ -136,7 +137,10 @@ final class InputInjector {
             if (next && haveGuiBaseline)
                 cursor.move(guiBaselineX, guiBaselineY, guiBaselineScroll, SifuCraftClient.cursorReferenceWidth(), SifuCraftClient.cursorReferenceHeight());
             if (!next) haveGuiBaseline = false;
-            releaseAll();
+            if (next && !Double.isNaN(warpX)) cursor.warp(warpX, warpY);
+            warpX = warpY = Double.NaN;
+            // Create's value board opens while Use is still held and saves on its release: keep it held.
+            if (!(next && SifuCraftClient.valueBoard(minecraft.gui.screen()))) releaseAll();
             mouse.sifucraft$setAccumulatedDX(0); mouse.sifucraft$setAccumulatedDY(0);
             mouse.sifucraft$setIgnoreFirstMove(false);
         }
@@ -149,6 +153,17 @@ final class InputInjector {
                 minecraft.mouseHandler.handleAccumulatedMovement();
             }
         }
+    }
+
+    /** A screen warped the (hidden) OS cursor to window pixels; mirror it on the Sifu pointer. */
+    void warp(double px, double py) {
+        var window = minecraft.getWindow();
+        if (window.getScreenWidth() <= 0 || window.getScreenHeight() <= 0) return;
+        double nx = px / window.getScreenWidth(), ny = py / window.getScreenHeight();
+        if (!guiMode) { warpX = nx; warpY = ny; return; } // the board's init runs before the mode switch
+        cursor.warp(nx, ny);
+        minecraft.mouseHandler.onMove(window(), cursor.x(window.getScreenWidth()), cursor.y(window.getScreenHeight()), 0, 0);
+        minecraft.mouseHandler.handleAccumulatedMovement();
     }
 
     void guiMotion(double x, double y, double scroll) {

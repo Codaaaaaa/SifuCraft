@@ -94,7 +94,7 @@ public final class McBridge implements AutoCloseable {
     private MemorySegment mcSnapshot;
     private MemorySegment manifest;
     private MemorySegment blockTable;
-    private MemorySegment enemyTable;
+    private MemorySegment enemyTable, enemyHeadTable;
     private MemorySegment interactionSnapshot, doorManifest;
     private NativeInteraction interaction;
     private CollisionManifest doors = CollisionManifest.NONE;
@@ -134,6 +134,8 @@ public final class McBridge implements AutoCloseable {
     private int blockGeneration;
     private EnemyFrame enemies;
     private long enemySeq;
+    private EnemyHeads enemyHeads = EnemyHeads.NONE;
+    private long enemyHeadSeq;
     private final Object observationLock=new Object();
     private record ObservationSource(MemorySegment status,MemorySegment table){}
     private ObservationSource observationSource;
@@ -155,6 +157,7 @@ public final class McBridge implements AutoCloseable {
         manifest = base.asSlice(Protocol.COLLISION_MANIFEST_OFFSET, Protocol.Manifest.SIZE);
         blockTable = base.asSlice(Protocol.BLOCK_TABLE_OFFSET, Protocol.Blocks.SIZE);
         enemyTable = base.asSlice(Protocol.ENEMY_TABLE_OFFSET, Protocol.Enemies.SIZE);
+        enemyHeadTable = base.asSlice(Protocol.ENEMY_HEAD_OFFSET, Protocol.EnemyHeads.SIZE);
         interactionSnapshot = base.asSlice(Protocol.INTERACTION_OFFSET, Protocol.INTERACTION_SIZE);
         doorManifest = base.asSlice(Protocol.DOOR_MANIFEST_OFFSET, Protocol.Manifest.SIZE);
         outgoing = base.asSlice(Protocol.MC_TO_SIFU_RING_OFFSET, Ring.SIZE);
@@ -217,6 +220,7 @@ public final class McBridge implements AutoCloseable {
             readSifuSnapshot();
             readManifest();
             readEnemies(nowMs);
+            readEnemyHeads();
             readInteraction(nowMs);
             readDoors();
         }
@@ -283,6 +287,7 @@ public final class McBridge implements AutoCloseable {
         peerConnected = false;
         latest = null;
         enemies = null;
+        enemyHeads = EnemyHeads.NONE;
     }
 
     public boolean peerConnected() {
@@ -345,6 +350,7 @@ public final class McBridge implements AutoCloseable {
     }
 
     public EnemyFrame enemies() { return enemies; }
+    public EnemyHeads enemyHeads() { return enemyHeads; }
     public EnemyFrame worldEnemies(){return worldEnemies;}
     /** Dedicated world IPC worker: read-only seqlock sampling, no input/event/UI callbacks. */
     public void sampleWorldObservations(){
@@ -439,6 +445,8 @@ public final class McBridge implements AutoCloseable {
         manifestSeq = 0;
         enemies = null;
         enemySeq = 0;
+        enemyHeads = EnemyHeads.NONE;
+        enemyHeadSeq = 0;
         interaction = null; interactionSeq = 0; doors = CollisionManifest.NONE; doorSeq = 0;
         // Events are addressed to one peer session; answers to them can no longer arrive.
         stats.pingsAbandoned += pendingPings.size();
@@ -680,6 +688,21 @@ public final class McBridge implements AutoCloseable {
                 enemies = null;
                 if (++stats.enemyTablesInvalid <= 5) listener.log("invalid enemy table: " + e.getMessage());
             }
+            return;
+        }
+    }
+
+    private void readEnemyHeads() {
+        for (int attempt = 0; attempt < SEQLOCK_ATTEMPTS; attempt++) {
+            long before = getLongAcquire(enemyHeadTable, Protocol.EnemyHeads.SEQ);
+            if (before == 0 || before == enemyHeadSeq) return;
+            if ((before & 1) != 0) continue;
+            byte[] bytes = enemyHeadTable.toArray(JAVA_BYTE);
+            VarHandle.loadLoadFence();
+            if (getLongAcquire(enemyHeadTable, Protocol.EnemyHeads.SEQ) != before) continue;
+            enemyHeadSeq = before;
+            try { enemyHeads = EnemyHeads.decode(MemorySegment.ofArray(bytes)); }
+            catch (IllegalArgumentException e) { enemyHeads = EnemyHeads.NONE; }
             return;
         }
     }
