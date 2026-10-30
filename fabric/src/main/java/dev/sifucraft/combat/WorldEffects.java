@@ -150,6 +150,7 @@ public final class WorldEffects {
             // A golem's own melee swing; one id per golem and tick lets Native pair this hit with its single toss.
             return new Evidence("minecraft:mob_attack",golem.blockPosition(),null,new java.util.UUID(golem.getUUID().getMostSignificantBits(),golem.level().getGameTime()));
         if(source.getEntity()!=null||source.getDirectEntity()!=null)return null; // machine projectiles need their separate origin credential
+        var saw=CreateSaws.contact(proxy,source);if(saw!=null)return new Evidence("create:saw",saw);
         if(source.is(DamageTypes.IN_WALL)){var pos=suffocation(proxy);return pos==null?null:new Evidence("minecraft:in_wall",pos);}
         var path=pathProof.get();
         if(path!=null&&path.target==proxy&&WorldMotionWorld.current()!=null&&path.scope.equals(WorldMotionWorld.current().scope())){

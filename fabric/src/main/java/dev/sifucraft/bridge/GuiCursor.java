@@ -5,6 +5,8 @@ public final class GuiCursor {
     private double x = .5, y = .5, previousX, previousY, previousScroll;
     private boolean baseline;
     public void reset() { x = y = .5; baseline = false; }
+    /** A screen placed the pointer itself (normalized 0..1); later motion stays relative to it. */
+    public void warp(double nx, double ny) { if (Double.isFinite(nx) && Double.isFinite(ny)) { x = Math.clamp(nx, 0, 1); y = Math.clamp(ny, 0, 1); } }
     public double move(double totalX, double totalY, double scroll, int viewportWidth, int viewportHeight) {
         if (!Double.isFinite(totalX) || !Double.isFinite(totalY) || !Double.isFinite(scroll) ||
                 viewportWidth <= 0 || viewportHeight <= 0) return 0;

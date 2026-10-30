@@ -642,8 +642,14 @@ public final class SifuCraftClient implements ClientModInitializer {
         return client != null && client.input.minecraftOwnsInput() && client.guiAvailable(client.bridge.latest()) &&
                 (client.minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> ||
                  client.minecraft.gui.screen() instanceof DeathScreen ||
-                 client.minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.ChatScreen);
+                 client.minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.ChatScreen ||
+                 valueBoard(client.minecraft.gui.screen()));
     }
+    /** Create's hold-Use value board (motor speed, delays...); optional, matched by name. */
+    static boolean valueBoard(Screen screen) {
+        return screen != null && screen.getClass().getName().equals("com.zurrtum.create.client.foundation.blockEntity.ValueSettingsScreen");
+    }
+    public static void warpPointer(double px, double py) { if (instance != null) instance.input.warp(px, py); }
     static int cursorReferenceWidth() {
         return instance.overlay.viewportWidth() > 0 ? instance.overlay.viewportWidth() : instance.minecraft.getWindow().getWidth();
     }
