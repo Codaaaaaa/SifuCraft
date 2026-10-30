@@ -57,6 +57,8 @@ final class NpcDebugCommands {
             var box=new AABB(at.x-.35,at.y+.01,at.z-.35,at.x+.35,at.y+1.8,at.z+.35);
             if(!dev.sifucraft.blocks.SceneFluidGeometry.knownVolume(mc.level,box)){message("正在请求落点覆盖，请稍后重试");return 0;}
             if(!mc.level.noCollision(null,box)){message("落点存在方块/场景障碍");return 0;}
+            // Native only sees Sifu's scene; MC sees placed blocks too, so the floor is checked here.
+            if(mc.level.noCollision(null,new AABB(at.x-.3,at.y-.05,at.z-.3,at.x+.3,at.y,at.z+.3))){message("落点脚下没有方块/场景地面（y须为方块顶面）");return 0;}
         }
         var manifest=bridge.collisionManifest();
         if(manifest.path().isEmpty()){message("尚无实际场景目录");return 0;}

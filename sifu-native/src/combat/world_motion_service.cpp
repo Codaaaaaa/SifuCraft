@@ -86,12 +86,13 @@ public:
         // Original terrain and MC platforms share the actual root sweep. Do not
         // infer eligibility from UE Walking alone: Sifu's verified idle grunts use
         // mode None(0), including the successful M1/M3 live fixtures.
-        if(const auto why=motion::CheckBody(g_current.actors,target_,&sample_,true,false))return Refuse(why);
+        fluid_=c.source==Source::Fluid;
+        if(const auto why=motion::CheckBody(g_current.actors,target_,&sample_,true,false,fluid_))return Refuse(why);
         passenger_return_=g_passenger_returns.Candidate(c,target_.serial,sample_.hp,GetTickCount64());
         if(passenger_return_)SC_LOG("[passenger-effect] return candidate target=%u/%u source=%u",c.target,c.spawn,static_cast<unsigned>(c.source));
-        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers_,(!explosion_&&!passenger_&&!passenger_return_)||wind_))return Refuse(why);
-        // A seated NPC may already be fighting: like a blast, hold its unchanged running AI instead of demanding idle.
-        if(((explosion_&&!wind_)||passenger_||passenger_return_)&&!ExplosionPeers(true))return Refuse("world-effect-ai-state");
+        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers_,(!explosion_&&!passenger_&&!passenger_return_&&!fluid_)||wind_))return Refuse(why);
+        // A seated, fighting or falling-into-water NPC: like a blast, hold its unchanged running AI instead of demanding idle.
+        if(((explosion_&&!wind_)||passenger_||passenger_return_||fluid_)&&!ExplosionPeers(true))return Refuse("world-effect-ai-state");
         hit_=mem::ReadPtr(target_.actor+off::AFightingCharacter::m_HitCapsule);hit_id_=ue::IdentityOf(hit_);
         if(!hit_id_.valid()||ue::OuterOf(hit_)!=target_.actor)return false;
         const auto health_id=ue::IdentityOf(sample_.health);if(!health_id.valid())return false;
@@ -175,11 +176,11 @@ public:
         if(const auto why=motion::CheckWorld(g_base,g_current.actors,GetTickCount64()))return CheckRefused(why);
         if(player_){if(motion::CheckPlayerBody(g_current.actors,target_,&sample_,false)||sample_.mode!=mode_)return false;return Convert(sample_,out);}
         motion::Peers peers;
-        if(const auto why=motion::CheckBody(g_current.actors,target_,&sample_,false,false))return CheckRefused(why);
+        if(const auto why=motion::CheckBody(g_current.actors,target_,&sample_,false,false,fluid_))return CheckRefused(why);
         if(sample_.mode!=mode_)return CheckRefused("movement-mode");
-        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers,(!explosion_&&!passenger_&&!passenger_return_)||wind_))return CheckRefused(why);
+        if(const auto why=motion::CheckPeers(g_base,g_current.actors,target_,&peers,(!explosion_&&!passenger_&&!passenger_return_&&!fluid_)||wind_))return CheckRefused(why);
         if(peers!=peers_)return CheckRefused("brain-identity");
-        if(((explosion_&&!wind_)||passenger_||passenger_return_)&&!ExplosionPeers(false))return CheckRefused("world-effect-ai-state");
+        if(((explosion_&&!wind_)||passenger_||passenger_return_||fluid_)&&!ExplosionPeers(false))return CheckRefused("world-effect-ai-state");
         return Convert(sample_,out);
     }
     bool Observe(Body* out)override{
@@ -193,14 +194,22 @@ public:
     Sweep Move(const Body&,const std::array<float,3>& delta)override {
         motion::SweepResult result;
         const bool valid=motion::SweepBody(g_current.actors,target_,sample_,{delta[0],delta[1],delta[2]},&result,player_);
-        if(result.invoked)sample_=result.body;
+        if(result.invoked){sample_=result.body;ResetFall();}
         Body body;const bool anchor=Convert(sample_,&body);
         return {body,result.invoked,valid&&anchor,result.returned,result.blocking,result.penetrating,{result.normal.x,result.normal.y,result.normal.z}};
+    }
+    // MC water clears fall distance. A caught falling NPC must not keep Sifu's original drop height or
+    // velocity, or the hand-back lands it with the full fall it never finished.
+    void ResetFall(){
+        if(player_||!fluid_||mode_!=3||!hooks::MovementHookOwns(target_.movement))return;
+        *reinterpret_cast<volatile float*>(target_.movement+off::UFightingMovementComponent::m_fInitialHeight)=sample_.position.z;
+        auto* velocity=reinterpret_cast<volatile float*>(target_.movement+off::UMovementComponent::Velocity);velocity[0]=velocity[1]=velocity[2]=0;
+        sample_.velocity={};
     }
     Sweep MovePose(const Body&,const std::array<float,3>& delta,float facing)override {
         motion::SweepResult result;
         const bool valid=motion::SweepBody(g_current.actors,target_,sample_,{delta[0],delta[1],delta[2]},&result,false,&facing);
-        if(result.invoked)sample_=result.body;
+        if(result.invoked){sample_=result.body;ResetFall();}
         Body body;const bool anchor=Convert(sample_,&body);
         return {body,result.invoked,valid&&anchor,result.returned,result.blocking,result.penetrating,{result.normal.x,result.normal.y,result.normal.z}};
     }
@@ -276,7 +285,7 @@ public:
         if(!player_){AcquireSRWLockExclusive(&g_lock);g_retained.Release(retained_world_,target_.id,target_.spawn,GetTickCount64());ReleaseSRWLockExclusive(&g_lock);}retained_world_=0;
         for(auto& watch:g_watches[slot_])watch.store(0);
         if(gate_){gate_=false;if(g_gate_users&&!--g_gate_users&&!combat::ai_gate::Uninstall())SC_LOG("[world-motion] cleanup slot changed; all filters cleared");}
-        target_={};peers_={};sample_={};token_=0;hit_=0;hit_id_={};player_=false;explosion_=passenger_=passenger_return_=observed_handback_=false;
+        target_={};peers_={};sample_={};token_=0;hit_=0;hit_id_={};player_=false;explosion_=passenger_=passenger_return_=observed_handback_=fluid_=false;
     }
 private:
     bool CheckRefused(const char* why)const{SC_LOG("[world-motion] control invalidated target=%u/%u reason=%s",target_.id,target_.spawn,why);return false;}
@@ -336,7 +345,7 @@ private:
         *out={target_.serial,token_,{position.x,position.y,position.z},s.hp,radius,half,
             {s.position.x-position.x,s.position.y-position.y,s.position.z-position.z},s.radius,s.half};return true;
     }
-    motion::Target target_;motion::Peers peers_;motion::BodySample sample_;std::uint64_t token_=0;std::size_t slot_=0;bool gate_=false,player_=false;int mode_=-1;
+    motion::Target target_;motion::Peers peers_;motion::BodySample sample_;std::uint64_t token_=0;std::size_t slot_=0;bool gate_=false,player_=false,fluid_=false;int mode_=-1;
     std::uintptr_t hit_=0;ue::ObjectIdentity hit_id_;std::uint32_t retained_world_=0;
 };
 std::array<NativeBackend,kTargets> g_backends;

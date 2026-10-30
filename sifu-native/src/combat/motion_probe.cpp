@@ -115,11 +115,13 @@ const char* WorldSafe(const Context& c,std::uint64_t now) {
 }
 using Sample=BodySample;
 bool CurrentPlayer(const Context& c,const Target& t){return t.actor==c.pawn&&ue::ObjectIdentity{static_cast<int>(t.id),t.serial}==c.pawn_identity;}
-const char* Inspect(const Context& c,const Target& t,Sample* s,bool geometry,bool ground=true,bool player=false) {
+// `airborne`: a fluid flight may catch an NPC Sifu is already dropping (Falling mode, falling velocity).
+const char* Inspect(const Context& c,const Target& t,Sample* s,bool geometry,bool ground=true,bool player=false,bool airborne=false) {
     if(!Same(t) || (player?!CurrentPlayer(c,t):!CurrentTarget(c,t)||t.actor==c.pawn) || !ue::IsLive(t.actor) || !ue::IsLive(t.movement)) return "identity";
     if(player&&(input::Router().owner()!=protocol::InputOwner::Sifu||hooks::PoseActive()))return "player-input-owner";
     const auto cls=ue::ClassName(t.actor);
-    if(player?cls!="BP_FightingPlayer_C":cls!="BP_AICharacter_Grunt_M_HD1_Fighter_21_C" && cls!="BP_AICharacter_Grunt_M_HD1_Fighter_11_C") return "class-not-allowed";
+    // Any real AI fighter; the body checks below reject scripted, pooled and physics states.
+    if(player?cls!="BP_FightingPlayer_C":!cls.starts_with("BP_AICharacter_")) return "class-not-allowed";
     const auto pooled=mem::ReadOr<std::uint8_t>(t.actor+off::ASCCharacter::m_bIsPooled,255);
     const auto active=mem::ReadOr<std::uint8_t>(t.actor+off::ASCCharacter::m_bPooledActorActive,255);
     if(pooled>1 || active>1 || (pooled && !active)) return "pooled";
@@ -153,7 +155,7 @@ const char* Inspect(const Context& c,const Target& t,Sample* s,bool geometry,boo
         }
     }
     s->mode=mem::ReadOr<std::uint8_t>(t.movement+off::UCharacterMovementComponent::MovementMode,255);
-    if(s->mode>2 || mem::ReadOr<std::uint8_t>(t.movement+off::UFightingMovementComponent::m_bIsRushing,255)) return "mode-or-rush";
+    if((s->mode>2&&!(airborne&&s->mode==3)) || mem::ReadOr<std::uint8_t>(t.movement+off::UFightingMovementComponent::m_bIsRushing,255)) return "mode-or-rush";
     if(player&&s->mode!=1&&s->mode!=2)return "player-not-walking";
     const auto order=mem::ReadPtr(t.actor+off::ABaseCharacter::m_OrderComponent);
     if(!ue::IsLive(order)) return "order-component";
@@ -178,7 +180,7 @@ const char* Inspect(const Context& c,const Target& t,Sample* s,bool geometry,boo
     if(!ue::ReadWorldTransform(s->root,&s->position,&s->rotation) || !Finite(s->position) ||
        !std::isfinite(s->rotation.pitch) || !std::isfinite(s->rotation.yaw) || !std::isfinite(s->rotation.roll) ||
        !ue::ReadComponentToWorld(s->root,&transform) || !mem::Read(t.movement+off::UMovementComponent::Velocity,&s->velocity) ||
-       !Finite(s->velocity) || std::fabs(s->velocity.x)+std::fabs(s->velocity.y)+std::fabs(s->velocity.z)>1) return "pose-or-velocity";
+       !Finite(s->velocity) || (s->mode!=3&&std::fabs(s->velocity.x)+std::fabs(s->velocity.y)+std::fabs(s->velocity.z)>1)) return "pose-or-velocity";
     if(player){
         ue::FVector acceleration{},last{};
         if(!mem::Read(t.movement+off::UCharacterMovementComponent::Acceleration,&acceleration)||!Finite(acceleration)||
@@ -375,7 +377,7 @@ void Move(const Command& cmd,const Context& c,const Target& target,const Sample&
 }
 
 const char* CheckWorld(std::uintptr_t base,const Context& c,std::uint64_t now) { return WorldSafeImpl(base,c,now); }
-const char* CheckBody(const Context& c,const Target& t,BodySample* s,bool geometry,bool ground) { return Inspect(c,t,s,geometry,ground); }
+const char* CheckBody(const Context& c,const Target& t,BodySample* s,bool geometry,bool ground,bool airborne) { return Inspect(c,t,s,geometry,ground,false,airborne); }
 const char* CheckPlayerBody(const Context& c,const Target& t,BodySample* s,bool geometry) { return Inspect(c,t,s,geometry,false,true); }
 const char* CheckPeers(std::uintptr_t base,const Context& c,const Target& t,Peers* p,bool idle) { return InspectPeers(base,c,t,p,idle); }
 bool SweepBody(const Context& c,const Target& t,const BodySample& before,const ue::FVector& delta,SweepResult* result,bool player,const float* facing) {
