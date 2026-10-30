@@ -171,7 +171,7 @@ public final class SifuCraftClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        EntityRenderers.register(EnemyEntities.ENEMY_PROXY, NoopRenderer::new);
+        EntityRenderers.register(EnemyEntities.ENEMY_PROXY, EnemyProxyRenderer::new);
         EntityRenderers.register(dev.sifucraft.blocks.SignalEntities.PLAYER_BODY, NoopRenderer::new);
         minecraft = Minecraft.getInstance();
         if(Boolean.getBoolean("sifucraft.cannonSelfTest")&&!Boolean.getBoolean("sifucraft.cannonLive")){CannonCheck.install();return;}
@@ -608,6 +608,10 @@ public final class SifuCraftClient implements ClientModInitializer {
         var c = instance;
         return c != null && (overlayActive() || (c.worldLayers.enabled() && c.worldScope() != null));
     }
+    static dev.sifucraft.bridge.EnemyHeads.Head enemyHead(dev.sifucraft.bridge.EnemyFrame.Key key) {
+        return instance == null ? null : instance.bridge.enemyHeads().get(key);
+    }
+    static MapPlacement worldPlacement() { return instance == null ? null : instance.space.placement(); }
     public static dev.sifucraft.bridge.WorldView nativeWorldView() {
         var c = instance;
         if (c == null || !c.worldLayers.enabled() || !WorldEffects.active() || c.worldScope() == null) return null;

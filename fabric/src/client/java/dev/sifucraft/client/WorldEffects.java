@@ -37,7 +37,8 @@ public final class WorldEffects {
         var mc = net.minecraft.client.Minecraft.getInstance();
         boolean avatarVisible = SifuCraftClient.minecraftOwnsInput() && mc.player != null &&
                 !mc.options.getCameraType().isFirstPerson();
-        state.entityRenderStates.removeIf(entity -> entity.entityType == EnemyEntities.ENEMY_PROXY ||
+        state.entityRenderStates.removeIf(entity -> entity.entityType == EnemyEntities.ENEMY_PROXY &&
+                !(entity instanceof EnemyProxyRenderer.State proxy && !proxy.head.isEmpty()) ||
                 entity.entityType == dev.sifucraft.blocks.SignalEntities.PLAYER_BODY ||
                 entity instanceof AvatarRenderState avatar && (!avatarVisible || avatar.id != mc.player.getId()));
         for (var entity : state.entityRenderStates) {

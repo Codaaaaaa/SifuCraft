@@ -110,6 +110,10 @@ public final class EnemyProxy extends Mob implements net.minecraft.world.entity.
     @Override public void remove(Entity.RemovalReason reason){MachineEffects.detached(this);super.remove(reason);}
     @Override protected boolean isAffectedByBlocks(){return BlockEnvironment.active(this)?!isRemoved():super.isAffectedByBlocks();}
 
+    /** Dispensers may put a carved pumpkin (or other head item) on; the client draws it on Sifu's head bone. */
+    @Override protected boolean canDispenserEquipIntoSlot(net.minecraft.world.entity.EquipmentSlot slot) {
+        return slot == net.minecraft.world.entity.EquipmentSlot.HEAD;
+    }
     @Override public boolean isPickable() { return !isRemoved() && isAlive(); }
     @Override public float getSecondsToDisableBlocking() { return ShieldBlocks.secondsToDisable(this); }
     @Override public boolean isPushable() { return false; }

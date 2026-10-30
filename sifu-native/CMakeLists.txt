@@ -42,6 +42,7 @@ add_library(sifucraft_native SHARED
     src/core/config.cpp
     src/core/safe_memory.cpp
     src/combat/enemies.cpp
+    src/combat/enemy_heads.cpp
     src/combat/motion_probe.cpp
     src/combat/world_motion_service.cpp
     src/combat/npc_debug.cpp

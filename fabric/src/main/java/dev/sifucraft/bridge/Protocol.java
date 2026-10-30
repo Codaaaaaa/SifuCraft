@@ -9,12 +9,12 @@ public final class Protocol {
     private Protocol() {}
 
     public static final int MAGIC = 0x52434653; // "SFCR"
-    public static final int VERSION = 20;
+    public static final int VERSION = 21;
     public static final int EVENT_NATIVE_INTERACT = 12, EVENT_NATIVE_INTERACT_RESULT = 13;
     public static final int INTERACTION_OFFSET = 0xFC00, DOOR_MANIFEST_OFFSET = 0xFD00;
     public static final int INTERACTION_SIZE = 128, INTERACT_AVAILABLE = 1;
     public static final String MAPPING_NAME = "Local\\SifuCraft.Bridge";
-    public static final int MAPPING_SIZE = 0x10000;
+    public static final int MAPPING_SIZE = 0x10800;
 
     public static final int HEARTBEAT_TIMEOUT_MS = 2000;
     public static final int RING_CAPACITY = 256;
@@ -86,6 +86,7 @@ public final class Protocol {
     public static final int COLLISION_MANIFEST_OFFSET = 0x9000;
     public static final int BLOCK_TABLE_OFFSET = 0x9200;
     public static final int ENEMY_TABLE_OFFSET = 0xF300;
+    public static final int ENEMY_HEAD_OFFSET = 0x10000;
 
     public static final int ENEMY_ALIVE = 1;
     public static final int ENEMY_DOWN = 1 << 1;
@@ -211,6 +212,20 @@ public final class Protocol {
         public static final int FLAGS = 40;
         public static final int FACTION = 44;
         public static final int VELOCITY = 48;
+    }
+
+    /** Head bone poses, a subset of {@link Enemies} matched by id + spawn. */
+    public static final class EnemyHeads {
+        public static final int SIZE = 0x640;
+        public static final int SEQ = 0;
+        public static final int COUNT = 20;
+        public static final int ENTRIES = 64;
+        public static final int ENTRY_SIZE = 48;
+        public static final int ID = 0;
+        public static final int SPAWN = 4;
+        public static final int LOCATION = 8;
+        public static final int FORWARD = 20;
+        public static final int UP = 32;
     }
 
     /** One event slot. */
@@ -386,6 +401,12 @@ public final class Protocol {
         PlayerHit.ANCHOR_EPOCH,
         PlayerHit.DIR_X,
         PlayerHit.DIR_Y,
+        ENEMY_HEAD_OFFSET,
+        EnemyHeads.SIZE,
+        EnemyHeads.ENTRY_SIZE,
+        EnemyHeads.LOCATION,
+        EnemyHeads.FORWARD,
+        EnemyHeads.UP,
     };
 
     public static final long LAYOUT_HASH = layoutHash();
